@@ -1,0 +1,52 @@
+{
+  "version": 1,
+  "enabledByDefault": false,
+  "projectLabel": "my-project",
+  "featurePathPatterns": [
+    "**/*.feature",
+    "**/tests/features/**"
+  ],
+  "testPathPatterns": [
+    "**/*.test.ts",
+    "**/*.test.tsx",
+    "**/tests/unit/**",
+    "**/tests/integration/**",
+    "**/tests/e2e/**",
+    "**/tests/features/_steps/**",
+    "**/tests/features/_generated/**",
+    "**/tests/features/_harnesses/**"
+  ],
+  "implementationPathPatterns": [
+    "**/src/**",
+    "**/app/**",
+    "**/packages/**/src/**",
+    "**/components/**",
+    "**/hooks/**",
+    "**/server/**",
+    "**/domain/**",
+    "**/application/**",
+    "**/infrastructure/**"
+  ],
+  "docsPathPatterns": [
+    "**/docs/**",
+    "**/AGENTS.md",
+    "**/TARGET_PUBLIC.md",
+    "**/*example*map*"
+  ],
+  "configPathPatterns": [
+    "**/.pi/bdd.json",
+    "**/package.json",
+    "**/tsconfig*.json"
+  ],
+  "alwaysAllowPathPatterns": [
+    "**/tests/features/_generated/**",
+    "**/messages/**/*.json"
+  ],
+  "commands": {
+    "unitTest": "bun test",
+    "acceptanceTest": "bun run gherkin:test",
+    "acceptanceGenerate": "bun run gherkin:generate",
+    "typecheck": "bun run typecheck"
+  },
+  "_comment": "Copy to <repo>/.pi/bdd.json (gitignored). Or run /bdd init. package.json scripts are the fallback."
+}

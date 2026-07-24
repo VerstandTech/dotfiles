@@ -1,5 +1,5 @@
 {
-  "defaultConcurrency": 12,
+  "defaultConcurrency": 8,
   "defaultVerifyCount": 3,
   "asyncByDefault": true,
   "autoRaiseCaps": false,
@@ -22,5 +22,6 @@
     "review": "xai/grok-4.5",
     "ux": "xai/grok-4.5"
   },
-  "_comment_models": "Prefer native provider ids (anthropic/…, openai-codex/…, xai/…). OpenRouter ids are rewritten to native when that provider is authenticated; OpenRouter is fallback only."
+  "_comment_models": "Prefer native provider ids (anthropic/\u2026, openai-codex/\u2026, xai/\u2026). OpenRouter ids are rewritten to native when that provider is authenticated; OpenRouter is fallback only.",
+  "_comment_project": "defaultConcurrency 8: prefer smaller fleets by default. Per-repo overlays via <cwd>/.pi/fleet.json are optional and gitignored."
 }

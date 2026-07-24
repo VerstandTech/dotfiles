@@ -180,3 +180,7 @@ bash ~/dotfiles/agents-shared/.agents/skills/pi-extension-creator/scripts/scaffo
 Then `/reload` in Pi and commit under `~/dotfiles`.
 
 Do not put secrets here. Machine-local state belongs outside this tree.
+
+## Project BDD template
+
+Copy `../templates/bdd.project.json` → `<repo>/.pi/bdd.json` (local/gitignored), or run `/bdd init`.
