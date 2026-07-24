@@ -1,5 +1,6 @@
 /**
  * Pure layout helpers for the full-height worktree rail overlay.
+ * Borderless panel — caller applies a slight darker background per line.
  */
 
 export interface RailCardLine {
@@ -9,6 +10,14 @@ export interface RailCardLine {
 	focused?: boolean;
 	busy?: boolean;
 	dirty?: boolean;
+}
+
+export type RailLineKind = "title" | "spacer" | "card" | "detail" | "hint" | "blank" | "selected";
+
+export interface RailLaidOutLine {
+	kind: RailLineKind;
+	/** Plain text, already pad-truncated to width (no ANSI). */
+	text: string;
 }
 
 export interface RailLayoutInput {
@@ -31,37 +40,41 @@ export function padTruncate(s: string, width: number): string {
 }
 
 /**
- * Build a full-height bordered rail (plain text lines).
- * Caller applies theme colors when rendering in the TUI.
+ * Build a full-height borderless rail (plain text + kind tags).
+ * No box-drawing characters — use background fill in the TUI for separation.
  */
-export function buildFullHeightRail(input: RailLayoutInput): string[] {
+export function buildFullHeightRailLines(input: RailLayoutInput): RailLaidOutLine[] {
 	const w = Math.max(12, Math.floor(input.width));
 	const h = Math.max(8, Math.floor(input.height));
-	const inner = Math.max(1, w - 2);
 	const title = input.title ?? "Worktrees";
 	const hints = input.footerHints ?? ["↑↓ enter · esc"];
 
-	const lines: string[] = [];
-	lines.push(`╭${"─".repeat(inner)}╮`);
-	lines.push(`│${padTruncate(` ${title}`, inner)}│`);
-	lines.push(`├${"─".repeat(inner)}┤`);
+	const out: RailLaidOutLine[] = [];
+	out.push({ kind: "title", text: padTruncate(` ${title}`, w) });
+	out.push({ kind: "spacer", text: padTruncate("", w) });
 
-	// Body: one line per card + optional detail; fill rest with blanks
-	const bodyBudget = Math.max(1, h - 5 - hints.length); // borders+title+sep+footer seps
-	const cardBlocks: string[][] = input.cards.map((c, i) => {
+	const footerBudget = hints.length + 1; // spacer + hints
+	const bodyBudget = Math.max(1, h - 2 - footerBudget);
+
+	const cardBlocks: RailLaidOutLine[][] = input.cards.map((c, i) => {
 		const sel = i === input.selectedIndex;
 		const mark = c.focused ? "●" : "○";
 		const arrow = sel ? "→" : " ";
 		const flags = `${c.dirty ? "*" : ""}${c.busy ? " busy" : ""}`;
 		const main = `${arrow}${mark} ${c.id}  ${c.label}${flags}`;
-		const block = [padTruncate(main, inner)];
+		const block: RailLaidOutLine[] = [
+			{
+				kind: sel ? "selected" : "card",
+				text: padTruncate(main, w),
+			},
+		];
 		if (c.detail && bodyBudget >= input.cards.length * 2) {
-			block.push(padTruncate(`  ${c.detail}`, inner));
+			block.push({ kind: "detail", text: padTruncate(`  ${c.detail}`, w) });
 		}
 		return block;
 	});
 
-	const body: string[] = [];
+	const body: RailLaidOutLine[] = [];
 	for (const b of cardBlocks) {
 		for (const row of b) {
 			if (body.length >= bodyBudget) break;
@@ -69,25 +82,27 @@ export function buildFullHeightRail(input: RailLayoutInput): string[] {
 		}
 		if (body.length >= bodyBudget) break;
 	}
-	while (body.length < bodyBudget) body.push(padTruncate("", inner));
-
-	for (const row of body) {
-		lines.push(`│${row}│`);
+	while (body.length < bodyBudget) {
+		body.push({ kind: "blank", text: padTruncate("", w) });
 	}
+	out.push(...body);
 
-	lines.push(`├${"─".repeat(inner)}┤`);
+	out.push({ kind: "spacer", text: padTruncate("", w) });
 	for (const hint of hints) {
-		lines.push(`│${padTruncate(` ${hint}`, inner)}│`);
+		out.push({ kind: "hint", text: padTruncate(` ${hint}`, w) });
 	}
-	lines.push(`╰${"─".repeat(inner)}╯`);
 
-	// Exact height: pad or trim
-	while (lines.length < h) {
-		// insert blank body rows before footer separator
-		const insertAt = lines.length - (2 + hints.length);
-		lines.splice(Math.max(3, insertAt), 0, `│${padTruncate("", inner)}│`);
+	while (out.length < h) {
+		// grow blank body before footer
+		const insertAt = Math.max(2, out.length - footerBudget);
+		out.splice(insertAt, 0, { kind: "blank", text: padTruncate("", w) });
 	}
-	return lines.slice(0, h);
+	return out.slice(0, h);
+}
+
+/** Plain strings only (tests / legacy). */
+export function buildFullHeightRail(input: RailLayoutInput): string[] {
+	return buildFullHeightRailLines(input).map((l) => l.text);
 }
 
 export function defaultRailOverlayOptions(): {

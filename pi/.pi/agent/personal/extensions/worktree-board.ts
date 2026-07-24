@@ -17,7 +17,7 @@ import { discoverWorktrees } from "../lib/worktree/discover.ts";
 import { loadRegistry, saveRegistry } from "../lib/worktree/io.ts";
 import { addWorktree } from "../lib/worktree/new-worktree.ts";
 import {
-	buildFullHeightRail,
+	buildFullHeightRailLines,
 	defaultRailOverlayOptions,
 	type RailCardLine,
 } from "../lib/worktree/rail-layout.ts";
@@ -151,9 +151,8 @@ async function openBoardOverlay(_pi: ExtensionAPI, ctx: ExtensionContext): Promi
 
 			const paint = (width: number): string[] => {
 				const rows = tui.terminal?.rows ?? process.stdout.rows ?? 24;
-				// Use almost full terminal height; overlay maxHeight is 100%
 				const height = Math.max(10, rows);
-				const plain = buildFullHeightRail({
+				const laid = buildFullHeightRailLines({
 					width,
 					height,
 					title: "Worktrees · no silent cd",
@@ -161,21 +160,18 @@ async function openBoardOverlay(_pi: ExtensionAPI, ctx: ExtensionContext): Promi
 					selectedIndex,
 					footerHints: ["↑↓ move · enter focus · esc close"],
 				});
-				return plain.map((line, i) => {
-					// Color borders + header; keep selection readable
-					if (i === 0 || i === plain.length - 1 || line.startsWith("├") || line.startsWith("╭") || line.startsWith("╰")) {
-						return theme.fg("border", line);
+				// Borderless panel: slight darker bg on every row
+				const panel = (text: string) => theme.bg("customMessageBg", text);
+				return laid.map((row) => {
+					if (row.kind === "selected") {
+						return theme.bg("selectedBg", theme.fg("accent", row.text));
 					}
-					if (i === 1) return theme.fg("accent", line);
-					if (line.includes("→")) return theme.fg("accent", line);
-					if (line.trimStart().startsWith("…") || line.includes("/")) {
-						// path detail rows
-						if (line.includes("│  ") || line.match(/│\s+\//) || line.includes("…")) {
-							return theme.fg("dim", line);
-						}
-					}
-					if (line.includes("↑↓") || line.includes("esc")) return theme.fg("dim", line);
-					return line;
+					let fg = row.text;
+					if (row.kind === "title") fg = theme.fg("accent", theme.bold(row.text));
+					else if (row.kind === "detail" || row.kind === "hint" || row.kind === "spacer" || row.kind === "blank")
+						fg = theme.fg("dim", row.text);
+					else if (row.kind === "card") fg = theme.fg("text", row.text);
+					return panel(fg);
 				});
 			};
 

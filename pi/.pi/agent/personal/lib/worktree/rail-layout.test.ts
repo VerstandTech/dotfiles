@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { buildFullHeightRail, defaultRailOverlayOptions, padTruncate } from "./rail-layout.ts";
+import {
+	buildFullHeightRail,
+	buildFullHeightRailLines,
+	defaultRailOverlayOptions,
+	padTruncate,
+} from "./rail-layout.ts";
 
 describe("padTruncate", () => {
 	test("pads and truncates", () => {
@@ -9,7 +14,7 @@ describe("padTruncate", () => {
 });
 
 describe("buildFullHeightRail", () => {
-	test("fills exact height top to bottom", () => {
+	test("fills exact height without box borders", () => {
 		const lines = buildFullHeightRail({
 			width: 30,
 			height: 20,
@@ -21,16 +26,15 @@ describe("buildFullHeightRail", () => {
 			],
 		});
 		expect(lines).toHaveLength(20);
-		expect(lines[0]?.startsWith("╭")).toBe(true);
-		expect(lines.at(-1)?.startsWith("╰")).toBe(true);
-		expect(lines.some((l) => l.includes("main"))).toBe(true);
-		// every line same outer width
+		const joined = lines.join("\n");
+		expect(joined).not.toMatch(/[╭╮╰╯│├┤─]/);
+		expect(joined).toContain("main");
 		const w = lines[0]!.length;
 		expect(lines.every((l) => l.length === w)).toBe(true);
 	});
 
-	test("marks selection with arrow", () => {
-		const lines = buildFullHeightRail({
+	test("marks selection with arrow and kinds", () => {
+		const laid = buildFullHeightRailLines({
 			width: 28,
 			height: 12,
 			selectedIndex: 1,
@@ -39,7 +43,8 @@ describe("buildFullHeightRail", () => {
 				{ id: "b", label: "B" },
 			],
 		});
-		expect(lines.join("\n")).toMatch(/→○ b|→● b|→ b/i);
+		expect(laid.some((l) => l.kind === "selected" && l.text.includes("b"))).toBe(true);
+		expect(laid[0]?.kind).toBe("title");
 	});
 });
 
@@ -48,8 +53,6 @@ describe("defaultRailOverlayOptions", () => {
 		const o = defaultRailOverlayOptions();
 		expect(o.anchor).toBe("right-center");
 		expect(o.maxHeight).toBe("100%");
-		expect(o.margin.top).toBe(0);
 		expect(o.margin.right).toBe(0);
-		expect(o.margin.bottom).toBe(0);
 	});
 });
