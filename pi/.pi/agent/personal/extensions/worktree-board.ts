@@ -12,11 +12,15 @@
 import { execFileSync } from "node:child_process";
 import { resolve } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { DynamicBorder } from "@earendil-works/pi-coding-agent";
-import { Container, type SelectItem, SelectList, Text } from "@earendil-works/pi-tui";
+import { matchesKey } from "@earendil-works/pi-tui";
 import { discoverWorktrees } from "../lib/worktree/discover.ts";
 import { loadRegistry, saveRegistry } from "../lib/worktree/io.ts";
 import { addWorktree } from "../lib/worktree/new-worktree.ts";
+import {
+	buildFullHeightRail,
+	defaultRailOverlayOptions,
+	type RailCardLine,
+} from "../lib/worktree/rail-layout.ts";
 import {
 	acquireWriter,
 	boardToRegistry,
@@ -113,76 +117,106 @@ function notify(
 	if (ctx.hasUI) ctx.ui.notify(text.slice(0, 400), kind);
 }
 
-async function openBoardOverlay(pi: ExtensionAPI, ctx: ExtensionContext): Promise<void> {
+async function openBoardOverlay(_pi: ExtensionAPI, ctx: ExtensionContext): Promise<void> {
 	const board = loadBoard(ctx);
-	const items: SelectItem[] = board.cards.map((c) => ({
-		value: c.id,
-		label: `${board.focusedId === c.id ? "●" : "○"} ${c.id}  ${c.branch ?? "?"}${c.busy === "busy" ? " [busy]" : ""}${c.dirty ? " *" : ""}`,
-		description: c.path,
-	}));
-	if (items.length === 0) {
+	if (board.cards.length === 0) {
 		notify(ctx, "No worktrees discovered for this repo", "warning");
 		return;
 	}
 
-	// Keep a non-modal summary above the editor while the overlay is usable
-	showBoardWidget(ctx, board);
-
 	if (!ctx.hasUI) {
-		// headless: never spam; caller can /wt list chat
 		return;
 	}
 
+	// Clear the above-editor strip so only the full-height rail is visible
+	clearBoardWidget(ctx);
+
+	const railCards: RailCardLine[] = board.cards.map((c) => ({
+		id: c.id,
+		label: c.branch ?? (c.detached ? "(detached)" : "?"),
+		detail: c.path,
+		focused: board.focusedId === c.id,
+		busy: c.busy === "busy",
+		dirty: Boolean(c.dirty),
+	}));
+
+	const initialIndex = Math.max(
+		0,
+		railCards.findIndex((c) => c.focused),
+	);
+
 	const selected = await ctx.ui.custom<string | null>(
 		(tui, theme, _kb, done) => {
-			const container = new Container();
-			container.addChild(new DynamicBorder((str) => theme.fg("accent", str)));
-			container.addChild(
-				new Text(theme.fg("accent", theme.bold("Worktrees")) + theme.fg("dim", "  (no silent cd)")),
-			);
+			let selectedIndex = initialIndex >= 0 ? initialIndex : 0;
 
-			const selectList = new SelectList(items, Math.min(items.length, 14), {
-				selectedPrefix: (text) => theme.fg("accent", text),
-				selectedText: (text) => theme.fg("accent", text),
-				description: (text) => theme.fg("muted", text),
-				scrollInfo: (text) => theme.fg("dim", text),
-				noMatch: (text) => theme.fg("warning", text),
-			});
-			selectList.onSelect = (item) => done(item.value);
-			selectList.onCancel = () => done(null);
-			container.addChild(selectList);
-			container.addChild(new Text(theme.fg("dim", "↑↓ · enter focus · esc close")));
-			container.addChild(new DynamicBorder((str) => theme.fg("accent", str)));
+			const paint = (width: number): string[] => {
+				const rows = tui.terminal?.rows ?? process.stdout.rows ?? 24;
+				// Use almost full terminal height; overlay maxHeight is 100%
+				const height = Math.max(10, rows);
+				const plain = buildFullHeightRail({
+					width,
+					height,
+					title: "Worktrees · no silent cd",
+					cards: railCards,
+					selectedIndex,
+					footerHints: ["↑↓ move · enter focus · esc close"],
+				});
+				return plain.map((line, i) => {
+					// Color borders + header; keep selection readable
+					if (i === 0 || i === plain.length - 1 || line.startsWith("├") || line.startsWith("╭") || line.startsWith("╰")) {
+						return theme.fg("border", line);
+					}
+					if (i === 1) return theme.fg("accent", line);
+					if (line.includes("→")) return theme.fg("accent", line);
+					if (line.trimStart().startsWith("…") || line.includes("/")) {
+						// path detail rows
+						if (line.includes("│  ") || line.match(/│\s+\//) || line.includes("…")) {
+							return theme.fg("dim", line);
+						}
+					}
+					if (line.includes("↑↓") || line.includes("esc")) return theme.fg("dim", line);
+					return line;
+				});
+			};
 
 			return {
 				render(width: number) {
-					return container.render(width);
+					return paint(width);
 				},
-				invalidate() {
-					container.invalidate();
-				},
+				invalidate() {},
 				handleInput(data: string) {
-					selectList.handleInput(data);
-					tui.requestRender();
+					if (matchesKey(data, "escape") || matchesKey(data, "ctrl+c")) {
+						done(null);
+						return;
+					}
+					if (matchesKey(data, "up") || data === "k") {
+						selectedIndex = Math.max(0, selectedIndex - 1);
+						tui.requestRender();
+						return;
+					}
+					if (matchesKey(data, "down") || data === "j") {
+						selectedIndex = Math.min(railCards.length - 1, selectedIndex + 1);
+						tui.requestRender();
+						return;
+					}
+					if (matchesKey(data, "return") || matchesKey(data, "enter")) {
+						const card = railCards[selectedIndex];
+						done(card?.id ?? null);
+					}
 				},
 			};
 		},
 		{
 			overlay: true,
-			overlayOptions: {
-				// Dock left; avoid covering the whole chat column on wide terms
-				anchor: "left-center",
-				width: 40,
-				minWidth: 28,
-				maxWidth: 48,
-				maxHeight: "70%",
-				margin: { left: 0, top: 2, right: 2, bottom: 2 },
-				visible: (w: number) => w >= 72,
-			},
+			overlayOptions: defaultRailOverlayOptions(),
 		},
 	);
 
-	if (!selected) return;
+	if (!selected) {
+		// restore compact widget after dismiss if something was focused
+		if (board.focusedId) showBoardWidget(ctx, board);
+		return;
+	}
 	const reg = setFocused(boardToRegistry(board), selected);
 	saveRegistry(board.repoRoot, reg);
 	const next = { ...board, focusedId: selected };

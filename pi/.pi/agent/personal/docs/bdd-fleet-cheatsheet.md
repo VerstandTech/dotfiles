@@ -267,8 +267,8 @@ Mission-control for git worktrees (no silent `cd` of the root session).
 
 | Command | Effect |
 |---------|--------|
-| `/wt` · `/wt-board` · **Ctrl+Alt+W** | Left overlay picker (not chat) |
-| `/wt list` | Board **widget above editor** (no transcript) |
+| `/wt` · `/wt-board` · **Ctrl+Alt+W** | **Full-height right rail** picker (top→bottom, Esc closes) |
+| `/wt list` | Compact **widget above editor** (no transcript) |
 | `/wt list chat` | Dump board into chat (escape hatch) |
 | `/wt list hide` | Clear board widget |
 | `/wt status` | Focus + busy + session cwd |
