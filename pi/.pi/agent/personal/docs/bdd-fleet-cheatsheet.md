@@ -261,10 +261,24 @@ User fleet models/caps: `~/.pi/agent/fleet.json`
 
 ---
 
-## Worktree board (planned)
+## Worktree board (`/wt`)
 
-Mission-control left rail / `/wt` — plan & progress: [`worktree-board-plan.md`](./worktree-board-plan.md) (also `/tmp/pi-worktree-board-plan.md`).
+Mission-control for git worktrees (no silent `cd` of the root session).
+
+| Command | Effect |
+|---------|--------|
+| `/wt` · `/wt list` | List cards |
+| `/wt status` | Focus + busy + session cwd |
+| `/wt new <branch> [path]` | `git worktree add` under `.worktrees/` + registry |
+| `/wt focus <id\|branch\|path>` | Focus card (footer chip); **cwd unchanged** |
+| `/wt prune` | Drop stale registry entries |
+| `/wt acquire\|release <id>` | Writer busy slots (max 2) |
+| `/wt run ship\|review <id>` | Kick ship/review on that tree |
+| `/wt open <id>` | tmux window `pi` in tree (best-effort) |
+| `/wt-board` · **Ctrl+Alt+W** | Left overlay picker |
+
+Registry: `<repo>/.pi/worktree-board.json` · Plan: [`worktree-board-plan.md`](./worktree-board-plan.md)
 
 ---
 
-*Last updated: P0.4–P0.6 + P1; worktree-board plan drafted.*
+*Last updated: worktree-board v1 shipped on `feat/pi-worktree-board`.*

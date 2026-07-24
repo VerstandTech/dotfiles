@@ -19,6 +19,19 @@ Project agent (not global) overrides builtin researcher so children use **`xai_w
 
 Only active when Pi cwd is that project (project agent discovery). `/reload` after edits.
 
+## Bundled: `worktree-board.ts`
+
+Mission-control for **git worktrees** from a root Pi session.
+
+| Surface | Name |
+|---------|------|
+| Commands | `/wt`, `/wt-board` |
+| Shortcut | **Ctrl+Alt+W** (left overlay) |
+| Lib | `lib/worktree/*` |
+| Registry | `<repo>/.pi/worktree-board.json` |
+
+Does **not** change session cwd on focus. Writer cap default 2 (`/wt acquire`).
+
 ## Bundled: `ops-hud.ts`
 
 Richer TUI while multi-agent / multi-web work is running:

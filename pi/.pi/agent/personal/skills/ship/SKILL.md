@@ -35,7 +35,7 @@ Then ask the user to pick **exactly one**:
 | Choice | Meaning | Typical action (only after they confirm) |
 |--------|---------|------------------------------------------|
 | **A. New branch here** | Stay in this checkout; create/switch a feature branch | `git checkout -b <type>/<id>-short-slug` (or project naming) |
-| **B. New git worktree** | Isolated directory + branch; ship continues **in that cwd** | e.g. `git worktree add .worktrees/<slug> -b <branch>` (or repo convention like `../.worktrees/...`) then all later steps use that path |
+| **B. New git worktree** | Isolated directory + branch; ship continues **in that cwd** | Prefer `/wt new <branch>` from root Pi (registers board card), or `git worktree add .worktrees/<slug> -b <branch>` then `/wt focus` |
 | **C. Stay put** | Already on the correct branch and/or worktree | Confirm name; no create |
 
 Also confirm:

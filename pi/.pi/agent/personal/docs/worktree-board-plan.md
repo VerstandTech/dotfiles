@@ -1,6 +1,6 @@
 # Worktree Board — implementation plan & progress
 
-**Status:** planning  
+**Status:** P0–P2 shipped (v1); P3 partial; P4 best-effort tmux  
 **Created:** 2026-07-24  
 **Owner:** Leo + Pi personal package  
 **Canonical copy:** `~/dotfiles/pi/.pi/agent/personal/docs/worktree-board-plan.md`  
@@ -53,13 +53,13 @@ Update the **Progress log** at the bottom on every meaningful step.
 
 | ID | Task | Status | Notes |
 |----|------|--------|-------|
-| P0.1 | Example Map (rules/examples/questions) for board | [ ] | Issue or section below |
-| P0.2 | `lib/worktree/types.ts` — `WorktreeCard`, board state | [ ] | |
-| P0.3 | `lib/worktree/discover.ts` — parse `git worktree list --porcelain` | [ ] | |
-| P0.4 | `lib/worktree/registry.ts` — merge discovery + optional `.pi/worktree-board.json` | [ ] | |
-| P0.5 | `lib/worktree/status.ts` — dirty, branch, optional BDD phase file peek | [ ] | |
-| P0.6 | Caps: `maxBusyWriters`, cost/warn helpers | [ ] | Align with fleet N>5 spirit |
-| P0.7 | Unit tests for discover/registry/status | [ ] | bun test |
+| P0.1 | Example Map (rules/examples/questions) for board | [x] | Issue or section below |
+| P0.2 | `lib/worktree/types.ts` — `WorktreeCard`, board state | [x] | |
+| P0.3 | `lib/worktree/discover.ts` — parse `git worktree list --porcelain` | [x] | |
+| P0.4 | `lib/worktree/registry.ts` — merge discovery + optional `.pi/worktree-board.json` | [x] | |
+| P0.5 | `lib/worktree/status.ts` — dirty, branch, optional BDD phase file peek | [x] | |
+| P0.6 | Caps: `maxBusyWriters`, cost/warn helpers | [x] | Align with fleet N>5 spirit |
+| P0.7 | Unit tests for discover/registry/status | [x] | bun test |
 
 **Exit:** `bun test lib/worktree` green; no extension wiring required.
 
@@ -89,14 +89,14 @@ Update the **Progress log** at the bottom on every meaningful step.
 
 | ID | Task | Status | Notes |
 |----|------|--------|-------|
-| P1.1 | Extension stub `extensions/worktree-board.ts` | [ ] | |
-| P1.2 | `/wt` · `/wt list` · `/wt status` | [ ] | |
-| P1.3 | `/wt new <branch> [path]` — wrap `git worktree add` + registry | [ ] | Reuse ship naming |
-| P1.4 | `/wt focus <id\|path\|branch>` — set focused card; footer chip | [ ] | No silent chdir |
-| P1.5 | `/wt prune` — drop stale registry entries | [ ] | |
-| P1.6 | Footer `setStatus('wt', …)` via ops-hud-like pattern | [ ] | |
-| P1.7 | Wire package.json / settings if needed | [ ] | personal package already globs extensions |
-| P1.8 | Docs blurb in cheatsheet | [ ] | |
+| P1.1 | Extension stub `extensions/worktree-board.ts` | [x] | |
+| P1.2 | `/wt` · `/wt list` · `/wt status` | [x] | |
+| P1.3 | `/wt new <branch> [path]` — wrap `git worktree add` + registry | [x] | Reuse ship naming |
+| P1.4 | `/wt focus <id\|path\|branch>` — set focused card; footer chip | [x] | No silent chdir |
+| P1.5 | `/wt prune` — drop stale registry entries | [x] | |
+| P1.6 | Footer `setStatus('wt', …)` via ops-hud-like pattern | [x] | |
+| P1.7 | Wire package.json / settings if needed | [x] | personal package already globs extensions |
+| P1.8 | Docs blurb in cheatsheet | [x] | |
 
 **Exit:** From root repo, operator can list/new/focus/prune worktrees in Pi.
 
@@ -108,12 +108,12 @@ Update the **Progress log** at the bottom on every meaningful step.
 
 | ID | Task | Status | Notes |
 |----|------|--------|-------|
-| P2.1 | `WorktreeBoardView` component (SelectList / custom) | [ ] | TUI docs Pattern 1 |
-| P2.2 | `ui.custom(..., { overlay: true, overlayOptions })` dock left if API allows | [ ] | Fall back to centered overlay |
-| P2.3 | Keybinding `Ctrl+Alt+W` toggle | [ ] | keybindings.md style |
-| P2.4 | j/k navigate, Enter detail, `n` new, `x` clear focus | [ ] | |
-| P2.5 | Detail strip: path, branch, dirty, last agent, BDD phase | [ ] | |
-| P2.6 | Live refresh on timer / git hooks optional | [ ] | Keep simple: refresh on open + command |
+| P2.1 | `WorktreeBoardView` component (SelectList / custom) | [x] | TUI docs Pattern 1 |
+| P2.2 | `ui.custom(..., { overlay: true, overlayOptions })` dock left if API allows | [x] | Fall back to centered overlay |
+| P2.3 | Keybinding `Ctrl+Alt+W` toggle | [x] | keybindings.md style |
+| P2.4 | j/k navigate, Enter detail, `n` new, `x` clear focus | [~] | |
+| P2.5 | Detail strip: path, branch, dirty, last agent, BDD phase | [~] | |
+| P2.6 | Live refresh on timer / git hooks optional | [x] | Keep simple: refresh on open + command |
 
 **Exit:** Keyboard-driven board feels like a left rail; works in Ghostty/iTerm.
 
@@ -127,12 +127,12 @@ Update the **Progress log** at the bottom on every meaningful step.
 
 | ID | Task | Status | Notes |
 |----|------|--------|-------|
-| P3.1 | `/wt run ship <id>` — confirm → subagent/ship in card cwd | [ ] | Skill ship + workspace already confirmed |
-| P3.2 | `/wt run review <id>` — fleet_dispatch review on that tree’s diff | [ ] | Record runId on card |
-| P3.3 | Busy/idle from pi-subagents async / ledger | [ ] | Reuse run-ledger patterns |
-| P3.4 | Steer/stop hooks (minimal) | [ ] | |
-| P3.5 | Enforce maxBusyWriters at spawn | [ ] | |
-| P3.6 | Card links: `synthesisPath`, session id | [ ] | |
+| P3.1 | `/wt run ship <id>` — confirm → subagent/ship in card cwd | [x] | Skill ship + workspace already confirmed |
+| P3.2 | `/wt run review <id>` — fleet_dispatch review on that tree’s diff | [x] | Record runId on card |
+| P3.3 | Busy/idle from pi-subagents async / ledger | [~] | Reuse run-ledger patterns |
+| P3.4 | Steer/stop hooks (minimal) | [-] | |
+| P3.5 | Enforce maxBusyWriters at spawn | [x] | |
+| P3.6 | Card links: `synthesisPath`, session id | [~] | |
 
 **Exit:** Can run review or ship against a non-focused tree without manually cd’ing.
 
@@ -142,8 +142,8 @@ Update the **Progress log** at the bottom on every meaningful step.
 
 | ID | Task | Status | Notes |
 |----|------|--------|-------|
-| P4.1 | `/wt open <id>` — tmux new-window `pi` in cwd | [ ] | Only if D1 allows |
-| P4.2 | Detect existing tmux session / reuse | [ ] | |
+| P4.1 | `/wt open <id>` — tmux new-window `pi` in cwd | [x] | Only if D1 allows |
+| P4.2 | Detect existing tmux session / reuse | [-] | |
 | P4.3 | Document keybinding coexistence | [ ] | |
 
 **Exit:** One key from board → full Pi in that worktree.
@@ -158,7 +158,7 @@ Update the **Progress log** at the bottom on every meaningful step.
 | P5.2 | BDD: read phase from card cwd `.pi` state if present | [ ] | |
 | P5.3 | ops-hud: `trees×N` chip | [ ] | |
 | P5.4 | `/agentic doctor` check: git worktree available | [ ] | |
-| P5.5 | Cheatsheet + roadmap link | [ ] | |
+| P5.5 | Cheatsheet + roadmap link | [x] | |
 | P5.6 | Hardening: path allowlist, no escape outside repo | [ ] | |
 
 ---
@@ -258,7 +258,8 @@ Project optional:
 | Date | What | Result |
 |------|------|--------|
 | 2026-07-24 | Brainstorm in chat; plan file created | Plan v0 |
-| | | |
+| 2026-07-24 | BDD red→green; lib/worktree + /wt extension | tests green; overlay Ctrl+Alt+W |
+
 
 ---
 

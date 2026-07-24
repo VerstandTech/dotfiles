@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "projectLabel": "leo-pi-personal",
+  "strictGreenCoversRed": true,
+  "commands": {
+    "unitTest": "bun test"
+  },
+  "featurePathPatterns": ["**/tests/features/**", "**/*.feature"],
+  "testPathPatterns": ["**/*.test.ts", "**/lib/**/*.test.ts"],
+  "implementationPathPatterns": ["**/lib/**/*.ts", "**/extensions/**/*.ts"],
+  "docsPathPatterns": ["**/docs/**", "**/*.md"],
+  "configPathPatterns": ["**/package.json", "**/.pi/**", "**/bdd.json"]
+}
