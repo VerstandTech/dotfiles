@@ -261,4 +261,10 @@ User fleet models/caps: `~/.pi/agent/fleet.json`
 
 ---
 
-*Last updated: P0.4–P0.6 + P1 (doctor, mutation, ship skill, default N=3, PR handoff, project fleet overlay).*
+## Worktree board (planned)
+
+Mission-control left rail / `/wt` — plan & progress: [`worktree-board-plan.md`](./worktree-board-plan.md) (also `/tmp/pi-worktree-board-plan.md`).
+
+---
+
+*Last updated: P0.4–P0.6 + P1; worktree-board plan drafted.*
