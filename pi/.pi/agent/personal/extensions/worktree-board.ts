@@ -20,6 +20,7 @@ import { addWorktree } from "../lib/worktree/new-worktree.ts";
 import {
 	acquireWriter,
 	boardToRegistry,
+	formatBoardLines,
 	formatBoardList,
 	mergeBoard,
 	pruneRegistry,
@@ -32,6 +33,7 @@ import { enrichCard } from "../lib/worktree/status.ts";
 import type { WorktreeBoardState } from "../lib/worktree/types.ts";
 
 const STATUS_KEY = "wt";
+const WIDGET_KEY = "wt-board";
 
 function repoRootOf(ctx: ExtensionContext): string {
 	try {
@@ -79,6 +81,30 @@ function setFooter(ctx: ExtensionContext, board: WorktreeBoardState): void {
 	ctx.ui.setStatus(STATUS_KEY, theme.fg("accent", "●") + theme.fg("dim", ` ${parts.join(" ")}`));
 }
 
+/** Persistent board above the editor — does NOT append to chat transcript. */
+function showBoardWidget(ctx: ExtensionContext, board: WorktreeBoardState): void {
+	if (!ctx.hasUI) return;
+	const theme = ctx.ui.theme;
+	const lines = formatBoardLines(board, { includePaths: true, footer: true });
+	ctx.ui.setWidget(
+		WIDGET_KEY,
+		lines.map((line, i) =>
+			i === 0 || line.startsWith("Ctrl+")
+				? theme.fg(i === 0 ? "accent" : "dim", line)
+				: line.startsWith("  ")
+					? theme.fg("dim", line)
+					: theme.fg("muted", line),
+		),
+		{ placement: "aboveEditor" },
+	);
+	setFooter(ctx, board);
+}
+
+function clearBoardWidget(ctx: ExtensionContext): void {
+	if (!ctx.hasUI) return;
+	ctx.ui.setWidget(WIDGET_KEY, undefined);
+}
+
 function notify(
 	ctx: ExtensionContext,
 	text: string,
@@ -99,11 +125,11 @@ async function openBoardOverlay(pi: ExtensionAPI, ctx: ExtensionContext): Promis
 		return;
 	}
 
+	// Keep a non-modal summary above the editor while the overlay is usable
+	showBoardWidget(ctx, board);
+
 	if (!ctx.hasUI) {
-		pi.sendMessage(
-			{ customType: "wt-list", content: formatBoardList(board), display: true },
-			{ triggerTurn: false },
-		);
+		// headless: never spam; caller can /wt list chat
 		return;
 	}
 
@@ -144,12 +170,14 @@ async function openBoardOverlay(pi: ExtensionAPI, ctx: ExtensionContext): Promis
 		{
 			overlay: true,
 			overlayOptions: {
+				// Dock left; avoid covering the whole chat column on wide terms
 				anchor: "left-center",
-				width: 44,
-				minWidth: 30,
-				maxHeight: "90%",
-				margin: { left: 0, top: 1, right: 1, bottom: 1 },
-				visible: (w: number) => w >= 60,
+				width: 40,
+				minWidth: 28,
+				maxWidth: 48,
+				maxHeight: "70%",
+				margin: { left: 0, top: 2, right: 2, bottom: 2 },
+				visible: (w: number) => w >= 72,
 			},
 		},
 	);
@@ -158,12 +186,11 @@ async function openBoardOverlay(pi: ExtensionAPI, ctx: ExtensionContext): Promis
 	const reg = setFocused(boardToRegistry(board), selected);
 	saveRegistry(board.repoRoot, reg);
 	const next = { ...board, focusedId: selected };
-	setFooter(ctx, next);
+	showBoardWidget(ctx, next);
 	const card = next.cards.find((c) => c.id === selected);
 	notify(
 		ctx,
-		`Focused ${selected}` +
-			(card ? `\n${card.path}\n(branch ${card.branch ?? "?"}) — session cwd unchanged` : ""),
+		`Focused ${selected}${card?.branch ? ` (${card.branch})` : ""} · cwd unchanged`,
 		"info",
 	);
 }
@@ -192,46 +219,56 @@ export default function (pi: ExtensionAPI) {
 				.map((value) => ({ value, label: value })),
 		handler: async (args, ctx) => {
 			const parts = args.trim().split(/\s+/).filter(Boolean);
-			const cmd = (parts[0] || "list").toLowerCase();
+			const cmd = (parts[0] || "").toLowerCase();
 			const rest = parts.slice(1);
 
-			if (cmd === "board" || cmd === "ui") {
+			// Bare /wt or board/ui → left overlay picker (not chat)
+			if (!cmd || cmd === "board" || cmd === "ui") {
 				await openBoardOverlay(pi, ctx);
 				return;
 			}
 
-			if (cmd === "list" || cmd === "") {
+			if (cmd === "list") {
+				const dumpChat = rest.some((a) => a === "chat" || a === "--chat" || a === "dump");
+				const hide = rest.some((a) => a === "hide" || a === "off" || a === "clear");
 				const board = loadBoard(ctx);
-				pi.sendMessage(
-					{ customType: "wt-list", content: formatBoardList(board), display: true },
-					{ triggerTurn: false },
+				if (hide) {
+					clearBoardWidget(ctx);
+					notify(ctx, "Worktree board widget cleared", "info");
+					return;
+				}
+				if (dumpChat) {
+					// Explicit escape hatch only — avoids default chat pollution
+					pi.sendMessage(
+						{ customType: "wt-list", content: formatBoardList(board), display: true },
+						{ triggerTurn: false },
+					);
+					notify(ctx, "Dumped board to chat (/wt list = widget only)", "info");
+					return;
+				}
+				// Widget above editor — does not append to transcript
+				showBoardWidget(ctx, board);
+				notify(
+					ctx,
+					`Board above editor (${board.cards.length} trees). Ctrl+Alt+W to pick.`,
+					"info",
 				);
-				setFooter(ctx, board);
 				return;
 			}
 
 			if (cmd === "status") {
 				const board = loadBoard(ctx);
 				const focused = board.cards.find((c) => c.id === board.focusedId);
-				const lines = [
-					`repo: ${board.repoRoot}`,
-					`focused: ${board.focusedId ?? "(none)"}`,
-					`cwd (session): ${ctx.cwd}`,
-					`maxBusyWriters: ${board.maxBusyWriters}`,
-					`busy: ${board.cards.filter((c) => c.busy === "busy").map((c) => c.id).join(", ") || "(none)"}`,
+				showBoardWidget(ctx, board);
+				const summary = [
 					focused
-						? `focus path: ${focused.path}\nbranch: ${focused.branch ?? "?"}\ndirty: ${focused.dirty ? "yes" : "no"}`
-						: "",
-					"",
-					"Note: focus does not change session cwd (orchestrator stays put).",
-				]
-					.filter(Boolean)
-					.join("\n");
-				pi.sendMessage(
-					{ customType: "wt-status", content: lines, display: true },
-					{ triggerTurn: false },
-				);
-				setFooter(ctx, board);
+						? `focus ${focused.id} · ${focused.branch ?? "?"}${focused.dirty ? " dirty" : ""}`
+						: "focus (none)",
+					`session cwd ${ctx.cwd}`,
+					`busy ${board.cards.filter((c) => c.busy === "busy").map((c) => c.id).join(",") || "—"}`,
+					"(cwd unchanged on focus)",
+				].join(" · ");
+				notify(ctx, summary, "info");
 				return;
 			}
 
@@ -250,11 +287,11 @@ export default function (pi: ExtensionAPI) {
 				const reg = setFocused(boardToRegistry(board), id);
 				saveRegistry(board.repoRoot, reg);
 				const next = { ...board, focusedId: id };
-				setFooter(ctx, next);
+				showBoardWidget(ctx, next);
 				const card = board.cards.find((c) => c.id === id);
 				notify(
 					ctx,
-					`Focused ${id}\n${card?.path ?? ""}\nSession cwd unchanged: ${ctx.cwd}`,
+					`Focused ${id}${card?.branch ? ` (${card.branch})` : ""} · cwd unchanged`,
 					"info",
 				);
 				return;
@@ -288,16 +325,8 @@ export default function (pi: ExtensionAPI) {
 					reg = setFocused(reg, idGuess);
 					saveRegistry(repoRoot, reg);
 					const board = mergeBoard({ repoRoot, discovery, registry: reg });
-					setFooter(ctx, board);
-					notify(ctx, `Created worktree ${created.path}\nbranch ${branch}`, "info");
-					pi.sendMessage(
-						{
-							customType: "wt-new",
-							content: formatBoardList(board),
-							display: true,
-						},
-						{ triggerTurn: false },
-					);
+					showBoardWidget(ctx, board);
+					notify(ctx, `Created ${created.path} · ${branch}`, "info");
 				} catch (err) {
 					notify(ctx, err instanceof Error ? err.message : String(err), "error");
 				}
@@ -310,12 +339,8 @@ export default function (pi: ExtensionAPI) {
 				const reg = pruneRegistry(loadRegistry(repoRoot), discovery);
 				saveRegistry(repoRoot, reg);
 				const board = mergeBoard({ repoRoot, discovery, registry: reg });
+				showBoardWidget(ctx, board);
 				notify(ctx, `Pruned registry → ${reg.entries?.length ?? 0} entries`, "info");
-				pi.sendMessage(
-					{ customType: "wt-list", content: formatBoardList(board), display: true },
-					{ triggerTurn: false },
-				);
-				setFooter(ctx, board);
 				return;
 			}
 
@@ -340,12 +365,12 @@ export default function (pi: ExtensionAPI) {
 						),
 					};
 					saveRegistry(board.repoRoot, boardToRegistry(next));
-					setFooter(ctx, next);
+					showBoardWidget(ctx, next);
 					notify(ctx, `Acquired writer on ${id}`, "info");
 				} else {
 					const next = releaseWriter(board, id);
 					saveRegistry(board.repoRoot, boardToRegistry(next));
-					setFooter(ctx, next);
+					showBoardWidget(ctx, next);
 					notify(ctx, `Released writer on ${id}`, "info");
 				}
 				return;
@@ -378,7 +403,7 @@ export default function (pi: ExtensionAPI) {
 					focusedId: card.id,
 				};
 				saveRegistry(board.repoRoot, boardToRegistry(next));
-				setFooter(ctx, next);
+				showBoardWidget(ctx, next);
 				const prompt =
 					sub === "ship"
 						? `Run skill **ship** targeting worktree **${card.path}** (branch ${card.branch ?? "?"}). ` +

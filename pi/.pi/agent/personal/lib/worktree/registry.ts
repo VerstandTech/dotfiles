@@ -150,15 +150,34 @@ export function setFocused(
 }
 
 export function formatBoardList(board: WorktreeBoardState): string {
-	const lines = board.cards.map((c) => {
-		const focus = board.focusedId === c.id ? "●" : "○";
+	return formatBoardLines(board, { includePaths: true, footer: false }).join("\n");
+}
+
+/** Compact lines for TUI widget / overlay — prefer this over chat dump. */
+export function formatBoardLines(
+	board: WorktreeBoardState,
+	opts?: { maxPath?: number; includePaths?: boolean; footer?: boolean },
+): string[] {
+	const maxPath = opts?.maxPath ?? 56;
+	const includePaths = opts?.includePaths !== false;
+	const footer = opts?.footer !== false;
+	const out: string[] = [
+		`Worktrees · cap ${board.maxBusyWriters} · focus ${board.focusedId ?? "—"}`,
+	];
+	for (const c of board.cards) {
+		const mark = board.focusedId === c.id ? "●" : "○";
 		const busy = c.busy === "busy" ? " busy" : "";
+		const dirty = c.dirty ? "*" : "";
 		const br = c.branch ?? (c.detached ? "(detached)" : "?");
-		const label = c.label ? ` — ${c.label}` : "";
-		return `${focus} ${c.id}  ${br}${busy}${label}\n    ${c.path}`;
-	});
-	const header = `Worktrees @ ${board.repoRoot} (busy cap ${board.maxBusyWriters})`;
-	return [header, ...lines].join("\n");
+		const label = c.label ? ` · ${c.label}` : "";
+		out.push(`${mark} ${c.id}  ${br}${dirty}${busy}${label}`);
+		if (includePaths) {
+			const path = c.path.length > maxPath ? `…${c.path.slice(-(maxPath - 1))}` : c.path;
+			out.push(`  ${path}`);
+		}
+	}
+	if (footer) out.push("Ctrl+Alt+W · /wt list chat = dump to transcript");
+	return out;
 }
 
 export function boardToRegistry(board: WorktreeBoardState): BoardRegistryFile {

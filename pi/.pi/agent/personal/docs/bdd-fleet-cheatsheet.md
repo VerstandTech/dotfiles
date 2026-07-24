@@ -267,7 +267,10 @@ Mission-control for git worktrees (no silent `cd` of the root session).
 
 | Command | Effect |
 |---------|--------|
-| `/wt` · `/wt list` | List cards |
+| `/wt` · `/wt-board` · **Ctrl+Alt+W** | Left overlay picker (not chat) |
+| `/wt list` | Board **widget above editor** (no transcript) |
+| `/wt list chat` | Dump board into chat (escape hatch) |
+| `/wt list hide` | Clear board widget |
 | `/wt status` | Focus + busy + session cwd |
 | `/wt new <branch> [path]` | `git worktree add` under `.worktrees/` + registry |
 | `/wt focus <id\|branch\|path>` | Focus card (footer chip); **cwd unchanged** |

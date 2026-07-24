@@ -8,6 +8,7 @@ import {
 	resolveFocus,
 	registerCard,
 	formatBoardList,
+	formatBoardLines,
 	boardToRegistry,
 	setFocused,
 } from "./registry.ts";
@@ -113,7 +114,7 @@ describe("registerCard", () => {
 	});
 });
 
-describe("formatBoardList", () => {
+describe("formatBoardList / formatBoardLines", () => {
 	test("renders lines with focus marker", () => {
 		const board = mergeBoard({
 			repoRoot: "/repo",
@@ -127,9 +128,21 @@ describe("formatBoardList", () => {
 			},
 		});
 		const text = formatBoardList(board);
-		expect(text).toContain("busy cap 2");
+		expect(text).toContain("cap 2");
 		expect(text).toMatch(/● feat-a/);
 		expect(text).toMatch(/busy/);
+	});
+
+	test("widget lines stay compact and include footer hint", () => {
+		const board = mergeBoard({
+			repoRoot: "/repo",
+			discovery,
+			registry: { version: 1, focusedId: "main", entries: [] },
+		});
+		const lines = formatBoardLines(board, { footer: true });
+		expect(lines[0]).toMatch(/^Worktrees/);
+		expect(lines.some((l) => l.includes("Ctrl+Alt+W"))).toBe(true);
+		expect(lines.join("\n")).not.toMatch(/\[wt-list\]/);
 	});
 });
 
