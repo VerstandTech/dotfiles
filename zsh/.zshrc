@@ -291,3 +291,4 @@ export PATH
 
 alias cx="claude --dangerously-skip-permissions"
 # Secrets (JIRA_API_TOKEN, etc.) belong in ~/.zshrc.local — never commit tokens here.
+
