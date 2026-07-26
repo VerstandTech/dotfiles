@@ -14,8 +14,20 @@ description: >
 ## Preconditions
 
 1. `/reload` if package just updated  
-2. Optional: `agentic_doctor` or `/bdd doctor` — fix fails first  
-3. Focus: issue number or short title  
+2. For high-assurance work, read `docs/high-assurance-playbook.md` and `docs/high-assurance-pi-implementation.md`; use `/bdd playbook` to locate/version them
+3. Run `/bdd profile` and `/bdd gates`; correct ambiguous detection before coding
+4. Optional: `agentic_doctor` or `/bdd doctor` — fix fails first
+5. Focus: issue number or short title
+
+## Risk-based human approval seams
+
+Classify the change before modifying files. Authentication, payments, public APIs, migrations/data models, security boundaries, destructive operations, and large architectural changes are high-risk and must stop at each seam:
+
+1. **Plan approval** — human approves the structured plan, exact workspace, constraints, quality bars, and configured hard gates before production edits.
+2. **Findings approval** — after discovery/exploration, human disposition is required for unexpected complexity, migrations, security implications, and unresolved questions before implementation.
+3. **Diff approval** — human reviews the final diff, independent findings, assurance evidence, and residual risks before commit, merge, or ship.
+
+Low-risk work may use an explicitly approved abbreviated path, but the parent must record that decision. Approval arguments should be structured and specific; agents escalate rather than guess. Human merge authority remains final.
 
 ## 0. Workspace confirmation — **STOP and wait**
 
@@ -66,7 +78,10 @@ Reply A, B, or C (and edit names if you want).
 ### 1. Discovery
 ```text
 /bdd discovery
-# Write Example Map (Rules / Examples / Questions) on the issue or docs/
+bdd_assurance_plan                    # compiled local gate + role blueprint
+# Optional isolated specifier (one bounded role):
+bdd_delegate_role role=specifier workspaceConfirmed=true task="..."
+# Parent/human writes and approves Example Map (Rules / Examples / Questions)
 bdd_record_evidence exampleMapRef=... exampleMapRules=N exampleMapExamples=N
 ```
 Optional: `/fleet research 3 <open questions>` if unknowns remain.
@@ -74,6 +89,8 @@ Optional: `/fleet research 3 <open questions>` if unknowns remain.
 ### 2. Formulation
 ```text
 /bdd formulation
+# Optional isolated test designer; never show it implementation internals unnecessarily:
+bdd_delegate_role role=test-designer workspaceConfirmed=true task="locked specs + expected red"
 # Gherkin and/or unit test skeletons only — no production impl
 ```
 
@@ -86,18 +103,23 @@ bdd_assert_red   # must FAIL (not timeout/127)
 ### 4. Green
 ```text
 /bdd green
+# Parent or one isolated implementer; tests remain locked:
+bdd_delegate_role role=implementer workspaceConfirmed=true task="locked red command + contracts"
 # minimum implementation
-bdd_assert_green   # must PASS and cover red
+bdd_assert_green   # must PASS and cover red; invalidates prior assurance evidence
 ```
 
-### 5. Verify + small review fleet
+### 5. Verify + deterministic gates + independent review
 ```text
 /bdd verify
+bdd_run_quality_gates workspaceConfirmed=true       # required gates fail closed
+# Optional bounded read-only roles: breaker, fitness-guardian, qa
 fleet_dispatch kind=review topic="<focus / diff>"   # default count=3
 # wait for fleet
 fleet_collect runId=...
 # write .pi/fleet-runs/<runId>/synthesis.md
-bdd_record_evidence fleetRunId=... fleetSynthesisPath=...
+bdd_record_evidence fleetRunId=... fleetSynthesisPath=... fleetNoBlockers=true
+# OR record fleetBlockersAccepted / fleetDeferred with reasons
 ```
 
 ### 6. Optional mutation
@@ -120,7 +142,9 @@ bdd_handoff asPr=true title="<PR title>"
 - Red assert fails validation → fix tests, do not green  
 - Green fails cover check → same command as red  
 - Fleet blocked in green → you skipped verify  
-- Handoff missing synthesis → finish collect + synthesis.md  
+- Required gate failed/unavailable → configure/fix it; never soften the threshold in green
+- Gate evidence predates green or plan fingerprint changed → rerun gates
+- Handoff missing synthesis/disposition → finish collect + synthesis.md and record no-blocker/accepted/deferred disposition
 
 ## Defaults
 

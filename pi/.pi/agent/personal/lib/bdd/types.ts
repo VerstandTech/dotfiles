@@ -16,6 +16,23 @@ export type BddPhase = (typeof BDD_PHASES)[number];
 
 export type PathClass = "feature" | "test" | "docs" | "impl" | "other" | "config";
 
+export const QUALITY_GATE_KINDS = [
+	"format",
+	"static",
+	"types",
+	"unit",
+	"acceptance",
+	"property",
+	"coverage",
+	"mutation",
+	"architecture",
+	"doctor",
+	"security",
+	"performance",
+] as const;
+
+export type QualityGateKind = (typeof QUALITY_GATE_KINDS)[number];
+
 export interface BddCommands {
 	/** Focused/unit test runner, e.g. `bun test` or `npm test --` */
 	unitTest: string;
@@ -23,8 +40,52 @@ export interface BddCommands {
 	acceptanceTest?: string;
 	/** Regenerate acceptance artifacts if the project has a compiler */
 	acceptanceGenerate?: string;
-	/** Optional typecheck command */
+	/** Optional deterministic quality commands. Project scripts/config always win. */
+	format?: string;
+	staticAnalysis?: string;
 	typecheck?: string;
+	propertyTest?: string;
+	coverage?: string;
+	mutation?: string;
+	architecture?: string;
+	doctor?: string;
+	security?: string;
+	performance?: string;
+}
+
+export interface AssuranceConfig {
+	/** Require a current passing assurance run before BDD handoff. */
+	enabled?: boolean;
+	requiredGateKinds?: QualityGateKind[];
+	advisoryGateKinds?: QualityGateKind[];
+	/** Exact command overrides keyed by gate kind. */
+	commands?: Partial<Record<QualityGateKind, string>>;
+	coverageThreshold?: number;
+	mutationThreshold?: number;
+	doctorThreshold?: number;
+	defaultTimeoutMs?: number;
+	gateTimeoutMs?: Partial<Record<QualityGateKind, number>>;
+}
+
+export interface AssuranceGateResult {
+	id: string;
+	kind: QualityGateKind;
+	required: boolean;
+	status: "passed" | "failed" | "unavailable" | "skipped";
+	command?: string;
+	exitCode?: number;
+	summary: string;
+	startedAt?: string;
+	completedAt?: string;
+}
+
+export interface AssuranceEvidence {
+	profileFingerprint: string;
+	planFingerprint: string;
+	startedAt: string;
+	completedAt: string;
+	ok: boolean;
+	results: AssuranceGateResult[];
 }
 
 export interface BddConfig {
@@ -50,6 +111,8 @@ export interface BddConfig {
 	/** Project config the agent may edit in any phase (bdd.json, package.json scripts, etc.) */
 	configPathPatterns: string[];
 	commands: BddCommands;
+	/** Stack-aware deterministic hard-gate policy. */
+	assurance?: AssuranceConfig;
 	/**
 	 * Paths that are always writable even in gated phases (escape for lockfiles etc.).
 	 * Matched with the same glob-ish rules.
@@ -108,6 +171,8 @@ export interface BddEvidence {
 	};
 	/** Review/research fleets auto-recorded at dispatch (P0.2+) */
 	fleetRuns?: FleetRunRecord[];
+	/** Latest deterministic stack-aware quality-gate run. */
+	assurance?: AssuranceEvidence;
 }
 
 export interface FleetRunRecord {
@@ -117,6 +182,8 @@ export interface FleetRunRecord {
 	expectedCount: number;
 	at: string;
 	synthesisPath?: string;
+	/** Explicit attestation that the independent review found no blockers. */
+	noBlockers?: boolean;
 	blockersAccepted?: string[];
 	deferred?: Array<{ id: string; reason: string }>;
 }

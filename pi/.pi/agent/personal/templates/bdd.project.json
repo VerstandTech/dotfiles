@@ -46,7 +46,22 @@
     "unitTest": "bun test",
     "acceptanceTest": "bun run gherkin:test",
     "acceptanceGenerate": "bun run gherkin:generate",
-    "typecheck": "bun run typecheck"
+    "typecheck": "bun run typecheck",
+    "staticAnalysis": "bun run lint",
+    "coverage": "bun run coverage",
+    "mutation": "bun run mutation",
+    "architecture": "bun run architecture",
+    "doctor": "bun run doctor",
+    "security": "bun run security"
   },
-  "_comment": "Copy to <repo>/.pi/bdd.json (gitignored). Or run /bdd init. package.json scripts are the fallback."
+  "assurance": {
+    "enabled": true,
+    "requiredGateKinds": ["unit", "types", "coverage"],
+    "advisoryGateKinds": ["static", "mutation", "architecture", "doctor", "security", "performance"],
+    "coverageThreshold": 95,
+    "mutationThreshold": 80,
+    "doctorThreshold": 90,
+    "defaultTimeoutMs": 120000
+  },
+  "_comment": "Prefer /bdd init so local stack detection fills real commands. Remove unavailable placeholder commands rather than installing tools implicitly."
 }

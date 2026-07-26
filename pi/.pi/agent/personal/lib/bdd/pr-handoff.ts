@@ -3,15 +3,21 @@
  */
 
 import type { BddEvidence, BddPhase } from "./types.ts";
-import { formatHandoff, handoffComplete, phaseLabel } from "./phases.ts";
+import {
+	formatHandoff,
+	handoffComplete,
+	phaseLabel,
+	type HandoffPolicy,
+} from "./phases.ts";
 
 export function formatPrBody(input: {
 	title?: string;
 	phase: BddPhase;
 	evidence: BddEvidence;
 	extraNotes?: string;
+	handoffPolicy?: HandoffPolicy;
 }): string {
-	const { ok, missing } = handoffComplete(input.evidence);
+	const { ok, missing } = handoffComplete(input.evidence, input.handoffPolicy);
 	const title = input.title?.trim() || "BDD/TDD change";
 	const lines = [
 		`## Summary`,
@@ -28,6 +34,7 @@ export function formatPrBody(input: {
 		`- [${input.evidence.acceptance ? "x" : " "}] Acceptance path or N/A`,
 		`- [${input.evidence.mutation?.proven ? "x" : " "}] Mutation check`,
 		`- [${(input.evidence.fleetRuns ?? []).every((r) => r.kind === "research" || r.synthesisPath) ? "x" : " "}] Fleet synthesis (if review fleet ran)`,
+		`- [${input.evidence.assurance?.ok ? "x" : " "}] Deterministic assurance gates (when enabled)`,
 		``,
 		ok
 			? `**Handoff status:** complete`

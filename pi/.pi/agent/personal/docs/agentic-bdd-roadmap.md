@@ -1,6 +1,6 @@
 # Agentic BDD + Fleet integration roadmap
 
-Status: **P0.0–P0.6 + P1 shipped** (2026-07-22). Operator guide: [`bdd-fleet-cheatsheet.md`](./bdd-fleet-cheatsheet.md). P2 (worktrees/cost UI/recipes) still deferred.  
+Status: **P0.0–P0.6 + P1 + P1.5 shipped** (P1.5: 2026-07-26). Operator guide: [`bdd-fleet-cheatsheet.md`](./bdd-fleet-cheatsheet.md). Canonical policy: [`high-assurance-playbook.md`](./high-assurance-playbook.md). Honest Pi mapping: [`high-assurance-pi-implementation.md`](./high-assurance-pi-implementation.md). P2 (worktrees/cost UI/recipes) still deferred.
 Scope: `~/dotfiles/pi/.pi/agent/personal`  
 Principle: **BDD defines done and blocks lies; fleets multiply perspective at discovery/verify; one parent writer owns the tree and the handoff ledger.**
 
@@ -135,8 +135,23 @@ Critique fleet (2026-07-22): architecture, BDD purity, fleet ops, safety, oracle
 - Default verify N=3 + doc alignment
 - Ledger → PR markdown polish
 
+### P1.5 — high-assurance deterministic layer (shipped 2026-07-26)
+- Offline deterministic project profile for JS/TS, Rust, Go, Python, and Swift
+- Stable project + quality-plan fingerprints
+- Ordered required/advisory gate compiler and fail-closed sequential runner
+- Current-after-green assurance evidence required by opt-in handoff policy
+- Seven bounded fresh-context role agents + phase-checked single-role RPC delegation
+- Existing synthesis path must resolve under the matching run directory; blocker disposition required in assurance mode
+- Note-only mutation claims cannot satisfy command-backed assurance
+- `/bdd playbook`, `/bdd profile`, `/bdd gates`, and five model tools
+- Canonical v1.0 policy + separate enforced/configurable/roadmap implementation profile
+- Example Map: [`high-assurance-example-map.md`](./high-assurance-example-map.md)
+
 ### P2 later
+- Read-only command sandbox/container enforcement for verification agents
+- Semantic-stability/variance dashboard and cross-session cassette replay
 - Worktree writers, cost estimator UI, named recipes
+- Close non-tool `/parallel` enforcement gap
 
 ---
 

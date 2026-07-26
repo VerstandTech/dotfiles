@@ -25,6 +25,10 @@ export function buildPhaseMessage(state: BddState, config: BddConfig): string {
 		config.commands.acceptanceGenerate
 			? `- generate: \`${config.commands.acceptanceGenerate}\``
 			: undefined,
+		config.commands.typecheck ? `- types: \`${config.commands.typecheck}\`` : undefined,
+		config.commands.coverage ? `- coverage: \`${config.commands.coverage}\`` : undefined,
+		config.commands.mutation ? `- mutation: \`${config.commands.mutation}\`` : undefined,
+		config.commands.doctor ? `- doctor: \`${config.commands.doctor}\`` : undefined,
 	]
 		.filter(Boolean)
 		.join("\n");
@@ -41,8 +45,8 @@ ${phaseHelp}
 Project commands:
 ${cmds}
 
-Tools: bdd_status, bdd_set_phase, bdd_assert_red, bdd_assert_green, bdd_record_evidence, bdd_handoff.
-Commands: /bdd status|on|off|discovery|formulation|red|green|refactor|verify|handoff|init|bypass.
+Tools: bdd_status, bdd_project_profile, bdd_assurance_plan, bdd_set_phase, bdd_assert_red, bdd_assert_green, bdd_run_quality_gates, bdd_delegate_role, bdd_record_evidence, bdd_handoff.
+Commands: /bdd status|profile|gates|on|off|discovery|formulation|red|green|refactor|verify|handoff|init|bypass.
 
 Evidence so far:
 ${evidence}
@@ -52,6 +56,8 @@ Hard rules:
 2. edit/write to disallowed path classes for this phase are blocked.
 3. Record acceptance coverage (feature path or N/A + reason) before claiming done.
 4. Prefer mutation/sensitivity check on new acceptance scenarios.
+5. In verify, run bdd_run_quality_gates when assurance is enabled; required gates fail closed.
+6. Use bdd_delegate_role only for the role allowed by the current phase and keep one writer.
 `;
 }
 
@@ -113,6 +119,7 @@ function summarizeEvidence(evidence: BddEvidence): string {
 			? `mutation=${evidence.mutation.proven ? "ok" : "no"}`
 			: "mutation=∅",
 	);
+	bits.push(evidence.assurance ? `assurance=${evidence.assurance.ok ? "ok" : "fail"}` : "assurance=∅");
 	return bits.join(" | ");
 }
 
@@ -150,5 +157,9 @@ export function statusText(state: BddState, config: BddConfig): string {
 		config.commands.acceptanceTest
 			? `acceptanceTest: ${config.commands.acceptanceTest}`
 			: "acceptanceTest: (none)",
+		`assurance: ${config.assurance?.enabled ? "enabled" : "optional"}`,
+		state.evidence.assurance
+			? `assuranceRun: ${state.evidence.assurance.ok ? "PASS" : "FAIL"} plan=${state.evidence.assurance.planFingerprint}`
+			: "assuranceRun: (none)",
 	].join("\n");
 }

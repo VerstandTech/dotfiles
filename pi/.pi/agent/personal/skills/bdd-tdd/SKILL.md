@@ -18,6 +18,15 @@ gates and discovers each repo’s runners via `.pi/bdd.json` or `package.json` s
 
 Roadmap / design locks: `docs/agentic-bdd-roadmap.md`.
 
+## Canonical high-assurance policy
+
+For high-assurance, multi-agent, or production-critical work, read both package documents before planning:
+
+- `docs/high-assurance-playbook.md` — canonical July 2026 v1.0 normative playbook
+- `docs/high-assurance-pi-implementation.md` — honest enforced/configurable/roadmap mapping for this Pi package
+
+Operationalize the playbook through deterministic phase control, independent test design, one writer, fresh role contexts, least-privilege tools, schema-constrained handoffs, current hard-gate evidence, and explicit human approvals. **Human merge authority** is final. Do not claim a roadmap control is enforced, and do not auto-install or synthesize an unpinned command for a named tool.
+
 ## When to load
 
 - User asks for BDD, TDD, Example Map, Gherkin, red-green-refactor, or acceptance tests
@@ -37,6 +46,11 @@ Roadmap / design locks: `docs/agentic-bdd-roadmap.md`.
 | Tool / command | Purpose |
 |---|---|
 | `/bdd status` / `bdd_status` | Phase, config, evidence |
+| `/bdd playbook` / `bdd_playbook` | Canonical playbook version/path plus honest Pi implementation profile |
+| `/bdd profile` / `bdd_project_profile` | Deterministically detect local stacks, frameworks, package managers, and commands |
+| `/bdd gates` / `bdd_assurance_plan` | Compile the ordered hard/advisory gate plan and bounded role blueprint |
+| `bdd_run_quality_gates` | Execute the local gate plan sequentially in verify; required gates fail closed |
+| `bdd_delegate_role` | Launch exactly one phase-appropriate isolated role through pi-subagents RPC |
 | `/bdd init` | Write `.pi/bdd.json` template for this repo |
 | `/bdd discovery\|formulation\|red\|green\|refactor\|verify` | Set phase |
 | `/bdd bypass <reason>` | Emergency path-gate skip (logged) |
@@ -56,10 +70,15 @@ Path gates block `edit`/`write` by phase (e.g. no `src/**` in red).
 ### 0. Project bootstrap (once per repo)
 
 ```text
-/bdd init          # creates .pi/bdd.json from inferred package scripts
-# edit patterns/commands if the defaults are wrong
+/bdd playbook      # canonical policy + honest implementation status
+/bdd profile       # inspect deterministic local stack/command detection
+/bdd gates         # inspect required/advisory gate plan; no execution
+/bdd init          # creates .pi/bdd.json from detected local stacks/scripts
+# edit patterns, commands, assurance.requiredGateKinds, and thresholds if needed
 /bdd on            # or /bdd discovery
 ```
+
+Detection is offline and read-only. It never installs packages or uses unpinned `@latest` tools. Explicit `.pi/bdd.json` commands win; project scripts are next; conservative local ecosystem defaults are last.
 
 Config search order: `.pi/bdd.json` → `bdd.json` → `.bdd-tdd.json` → infer from `package.json`.
 
@@ -102,7 +121,10 @@ Skip a formal map only for tiny pure-tech fixes; still record acceptance N/A rea
 ### 6. Verify + handoff
 
 - `/bdd verify`
-- Mutation/sensitivity: briefly break the new behavior or remove the assertion, show fail, restore; `bdd_record_evidence` mutationProven=true.
+- Run `bdd_run_quality_gates` with `workspaceConfirmed=true`; required unavailable/failing gates block handoff when assurance is enabled.
+- Use isolated read-only `bdd-breaker`, `bdd-fitness-guardian`, and `bdd-qa` roles when independent verification is warranted. The parent remains the orchestrator and sole decision-maker.
+- Mutation/sensitivity: deliberately break the behavior, run the fail command, restore, then use `bdd_assert_mutation` so proven mutation evidence is command-backed.
+- Review fleet synthesis must live under `.pi/fleet-runs/<runId>/` and record `fleetNoBlockers=true` or accepted/deferred blocker dispositions.
 - `bdd_handoff` — fix any missing fields before claiming done.
 
 ## Handoff template (must fill)
@@ -116,6 +138,7 @@ Skip a formal map only for tiny pure-tech fixes; still record acceptance N/A rea
 - Acceptance: path | N/A — reason
 - Mutation: proven | n/a — note
 - CRAP: branches/errors/permissions covered or simplified
+- Assurance: profile fingerprint + gate-plan fingerprint + required gate results
 ```
 
 ## Project adapters (learn once per repo)
@@ -127,6 +150,10 @@ At session start, quickly detect:
 | `gherkin:test` / `tests/features/**/*.feature` | Gherkin acceptance; run generate/check if scripts exist |
 | `playwright` / `e2e/` | Map scenarios to e2e specs; name specs after examples |
 | `bun:test` / `vitest` / `jest` | Unit runner from package.json |
+| `Cargo.toml` | Cargo test/check/fmt/Clippy; configured cargo-llvm-cov/audit gates when present |
+| `go.mod` | `go test ./...`, vet, formatting, optional race gate |
+| `pyproject.toml` / `pytest.ini` | pytest via uv/Poetry/Python; Ruff/mypy/coverage only when locally declared |
+| `Package.swift` / `.xcodeproj` | SwiftPM test detection; Xcode commands require explicit project config |
 | `docs/bdd/example-mapping.md` | Prefer that Example Map format |
 | Issue tracker + “Example Map” section | Keep map on the issue |
 

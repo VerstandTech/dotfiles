@@ -83,15 +83,19 @@ Live inspector: `/subagents-fleet` or **Ctrl+Alt+F**.
 |-----|--------|
 | [`../docs/bdd-fleet-cheatsheet.md`](../docs/bdd-fleet-cheatsheet.md) | **Operator guide** — phases, red→green→verify, fleet gates, troubleshooting |
 | [`../docs/agentic-bdd-roadmap.md`](../docs/agentic-bdd-roadmap.md) | Design locks + P0/P1 implementation roadmap |
+| [`../docs/high-assurance-playbook.md`](../docs/high-assurance-playbook.md) | Canonical High-Assurance Multi-Agent Software Development Playbook v1.0 |
+| [`../docs/high-assurance-pi-implementation.md`](../docs/high-assurance-pi-implementation.md) | Enforced vs configurable vs roadmap mapping for this Pi package |
 
 ## Bundled: `bdd-mode.ts` (cross-project BDD → TDD)
 
-Enforces **Example Map → formulation → red → green → refactor → verify** with path gates and recorded evidence. Works in **any** repo; configure per project with `.pi/bdd.json`.
+Enforces **Example Map → formulation → red → green → refactor → verify** with path gates and recorded evidence. Works in **any** repo; configure per project with `.pi/bdd.json`. Use `/bdd playbook` or tool `bdd_playbook` to locate the canonical policy and the honest Pi implementation profile.
 
 | Surface | Name |
 |---------|------|
-| Command | `/bdd status\|on\|off\|discovery\|formulation\|red\|green\|refactor\|verify\|handoff\|init\|bypass\|doctor` |
-| Tools | `bdd_status`, `bdd_set_phase`, `bdd_assert_red`, `bdd_assert_green`, `bdd_assert_mutation`, `bdd_record_evidence`, `bdd_handoff`, `agentic_doctor` |
+| Command | `/bdd status\|playbook\|profile\|gates\|on\|off\|discovery\|formulation\|red\|green\|refactor\|verify\|handoff\|init\|bypass\|doctor` |
+| Core tools | `bdd_status`, `bdd_playbook`, `bdd_set_phase`, `bdd_assert_red`, `bdd_assert_green`, `bdd_assert_mutation`, `bdd_record_evidence`, `bdd_handoff`, `agentic_doctor` |
+| Assurance tools | `bdd_project_profile`, `bdd_assurance_plan`, `bdd_run_quality_gates`, `bdd_delegate_role` |
+| Bounded agents | `bdd-specifier`, `bdd-test-designer`, `bdd-implementer`, `bdd-refactorer`, `bdd-breaker`, `bdd-fitness-guardian`, `bdd-qa` |
 | Skill | `bdd-tdd`, `ship` |
 | Prompts | `/example-map`, `/formulate`, `/tdd`, `/green`, `/handoff`, `/ship` |
 | Auto | Phrases like “TDD”, “Example Map”, “Gherkin”, “red-green-refactor” append a workflow reminder |
@@ -106,6 +110,7 @@ Handoff: `/bdd handoff` or `/bdd handoff pr` (PR body). Mutation: `bdd_assert_mu
 4. Infer `commands` from `package.json` scripts (`test`, `gherkin:test`, `test:e2e`, …)
 
 ```text
+/bdd playbook # canonical v1.0 policy + honest Pi implementation status
 /bdd init     # write .pi/bdd.json template in the current project
 /bdd on       # start discovery
 /tdd …        # prompt → red phase
@@ -113,6 +118,9 @@ Handoff: `/bdd handoff` or `/bdd handoff pr` (PR body). Mutation: `bdd_assert_mu
 
 **Hard gates:**
 - Cannot `/bdd green` or `/bdd verify` without recorded **red** (failing test via `bdd_assert_red`).
+- `/bdd profile` detects JavaScript/TypeScript, Rust, Go, Python, and Swift signals without installing tools or calling the network.
+- `bdd_run_quality_gates` executes the ordered local plan only in verify; missing/failing required gates fail closed.
+- Assurance handoff rejects stale plan fingerprints/evidence, note-only mutation claims, missing fleet synthesis files, and missing blocker dispositions.
 - `edit`/`write` to implementation paths blocked until red evidence; mutating `bash` blocked in discovery/formulation/red.
 - Fleets / multi-agent `subagent` blocked in red/green/refactor (use verify).
 - Green must **cover** red (`strictGreenCoversRed` default on).
@@ -124,7 +132,12 @@ Handoff: `/bdd handoff` or `/bdd handoff pr` (PR body). Mutation: `bdd_assert_mu
 cd ~/dotfiles/pi/.pi/agent/personal && bun test lib/bdd
 ```
 
-See skill: `../skills/bdd-tdd/SKILL.md` and `../skills/bdd-tdd/references/bdd-json-schema.md`.
+See:
+- [`../docs/high-assurance-playbook.md`](../docs/high-assurance-playbook.md)
+- [`../docs/high-assurance-pi-implementation.md`](../docs/high-assurance-pi-implementation.md)
+- [`../docs/high-assurance-example-map.md`](../docs/high-assurance-example-map.md)
+- skill `../skills/bdd-tdd/SKILL.md`
+- config reference `../skills/bdd-tdd/references/bdd-json-schema.md`.
 
 ## Bundled: `xai-web-search.ts`
 
@@ -160,7 +173,7 @@ cd ~/dotfiles/pi/.pi/agent/personal && bun test lib/xai-web-search
 personal/
   extensions/          # agentic-fleet, bdd-mode, ops-hud, xai-web-search
   agents/              # fleet-researcher, fleet-reviewer, fleet-ux
-  lib/bdd/             # pure phase/path/config logic + tests
+  lib/bdd/             # phase/path/config + stack profile + quality gates + role blueprint + tests
   lib/fleet/           # personas, plan, caps, rpc + tests
   lib/ops-hud/
   lib/xai-web-search/

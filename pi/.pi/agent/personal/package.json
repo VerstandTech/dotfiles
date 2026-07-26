@@ -1,7 +1,7 @@
 {
   "name": "leo-pi-personal",
   "private": true,
-  "version": "0.4.0",
+  "version": "0.6.0",
   "type": "module",
   "description": "Personal Pi extensions, skills, prompts, and fleet agents synced via ~/dotfiles",
   "keywords": ["pi-package"],

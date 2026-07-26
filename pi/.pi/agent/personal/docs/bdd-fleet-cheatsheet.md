@@ -114,7 +114,17 @@ Must **fail** with a real test failure:
 ### Verify
 
 Needs **red** (failing) **and** **green** (passing).  
-Then you may run review fleets.
+Then run stack-aware gates and independent review:
+
+```text
+/bdd playbook
+/bdd profile
+/bdd gates
+/bdd verify
+bdd_run_quality_gates workspaceConfirmed=true
+```
+
+When `assurance.enabled=true`, required unavailable/failing gates, stale plan fingerprints, note-only mutation claims, missing synthesis files, or missing blocker dispositions block handoff. Detection is local/offline and never installs tools.
 
 ---
 
@@ -176,6 +186,9 @@ Copies `status.json` + `output-*.log` / artifact markdown into
 | Command | Effect |
 |---------|--------|
 | `/bdd status` | Phase + evidence |
+| `/bdd playbook` | Canonical v1.0 policy + honest Pi implementation profile |
+| `/bdd profile` | Detected stack/frameworks/package managers/commands + fingerprint |
+| `/bdd gates` | Deterministic required/advisory gate plan |
 | `/bdd on` / `/bdd off` | Enable (discovery) / disable |
 | `/bdd discovery\|formulation\|red\|green\|refactor\|verify` | Set phase (gates apply) |
 | `/bdd next` | Advance one step (off → discovery first) |
@@ -196,6 +209,10 @@ Copies `status.json` + `output-*.log` / artifact markdown into
 | Tool | Effect |
 |------|--------|
 | `bdd_status` | Same as status |
+| `bdd_playbook` | Canonical playbook version, paths, and no-auto-install policy |
+| `bdd_project_profile` / `bdd_assurance_plan` | Local stack profile + compiled gate/role blueprint |
+| `bdd_run_quality_gates` | Sequential verify gates; required gates fail closed |
+| `bdd_delegate_role` | One phase-appropriate isolated role via pi-subagents RPC |
 | `bdd_set_phase` | Phase + optional focus |
 | `bdd_assert_red` | Run must fail → record |
 | `bdd_assert_green` | Run must pass + cover red → record |
@@ -221,7 +238,8 @@ Copies `status.json` + `output-*.log` / artifact markdown into
 7. implement minimum
 8. bdd_assert_green        → PASS (same/broader command)
 9. /bdd verify
-10. /fleet review 3 <diff> → optional multi-lens review
+10. bdd_run_quality_gates workspaceConfirmed=true
+11. /fleet review 3 <diff> → optional multi-lens review
 11. /bdd handoff           → paste into PR
 ```
 

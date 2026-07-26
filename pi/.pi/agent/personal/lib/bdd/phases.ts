@@ -2,7 +2,13 @@
  * Phase machine + transition gates for BDD/TDD workflow.
  */
 
-import type { BddEvidence, BddPhase, PhaseTransitionResult } from "./types.ts";
+import { assuranceHandoffGaps } from "./quality-gates.ts";
+import type {
+	BddEvidence,
+	BddPhase,
+	PhaseTransitionResult,
+	QualityGateKind,
+} from "./types.ts";
 import { BDD_PHASES } from "./types.ts";
 
 export function isBddPhase(value: string): value is BddPhase {
@@ -172,18 +178,43 @@ export function formatHandoff(evidence: BddEvidence, phase: BddPhase): string {
 	}
 	if (evidence.fleetRuns?.length) {
 		for (const r of evidence.fleetRuns) {
+			const disposition = r.noBlockers
+				? "no blockers"
+				: `${r.blockersAccepted?.length ?? 0} accepted / ${r.deferred?.length ?? 0} deferred`;
 			lines.push(
-				`- **Fleet ${r.kind}:** \`${r.runId}\` synthesis=${r.synthesisPath ?? "_(missing)_"}`,
+				`- **Fleet ${r.kind}:** \`${r.runId}\` synthesis=${r.synthesisPath ?? "_(missing)_"} · ${disposition}`,
 			);
 		}
 	} else {
 		lines.push("- **Fleet runs:** _(none)_");
 	}
+	if (evidence.assurance) {
+		const passed = evidence.assurance.results.filter((result) => result.status === "passed").length;
+		const failed = evidence.assurance.results.filter((result) => result.status === "failed").length;
+		const unavailable = evidence.assurance.results.filter((result) => result.status === "unavailable").length;
+		lines.push(
+			`- **Assurance:** ${evidence.assurance.ok ? "PASS" : "FAIL"} · plan \`${evidence.assurance.planFingerprint}\` · ${passed} passed / ${failed} failed / ${unavailable} unavailable`,
+		);
+	} else {
+		lines.push("- **Assurance:** _(not run)_");
+	}
 	lines.push("");
 	return lines.join("\n");
 }
 
-export function handoffComplete(evidence: BddEvidence): { ok: boolean; missing: string[] } {
+export interface HandoffPolicy {
+	assuranceEnabled?: boolean;
+	expectedPlanFingerprint?: string;
+	expectedRequiredGateKinds?: readonly QualityGateKind[];
+	requireCommandBackedMutation?: boolean;
+	requireFleetDisposition?: boolean;
+	synthesisExists?: (path: string, runId: string) => boolean;
+}
+
+export function handoffComplete(
+	evidence: BddEvidence,
+	policy: HandoffPolicy = {},
+): { ok: boolean; missing: string[] } {
 	const missing: string[] = [];
 	if (!evidence.red || evidence.red.exitCode === 0) missing.push("red (failing run)");
 	if (!evidence.green || evidence.green.exitCode !== 0) missing.push("green (passing run)");
@@ -195,14 +226,38 @@ export function handoffComplete(evidence: BddEvidence): { ok: boolean; missing: 
 	) {
 		missing.push("acceptance N/A reason");
 	}
-	// R3: review/ux/custom fleets require synthesis bound to runId
+	if (
+		policy.requireCommandBackedMutation &&
+		evidence.mutation?.proven &&
+		(!evidence.mutation.failCommand || !evidence.mutation.passCommand)
+	) {
+		missing.push("command-backed mutation evidence");
+	}
+	// R3: review/ux/custom fleets require synthesis bound to runId.
 	for (const run of evidence.fleetRuns ?? []) {
 		const needs =
 			run.kind === "review" || run.kind === "ux" || run.kind === "custom";
-		if (needs && !run.synthesisPath?.trim()) {
+		if (!needs) continue;
+		if (!run.synthesisPath?.trim()) {
 			missing.push(`fleet synthesis for run ${run.runId} (kind=${run.kind})`);
+		} else if (policy.synthesisExists && !policy.synthesisExists(run.synthesisPath, run.runId)) {
+			missing.push(`existing fleet synthesis for run ${run.runId}`);
+		}
+		if (policy.requireFleetDisposition) {
+			const accepted = run.blockersAccepted?.some((item) => item.trim()) ?? false;
+			const deferred = run.deferred?.some((item) => item.id.trim() && item.reason.trim()) ?? false;
+			if (!run.noBlockers && !accepted && !deferred) {
+				missing.push(`fleet blocker disposition for run ${run.runId}`);
+			}
 		}
 	}
+	missing.push(
+		...assuranceHandoffGaps(evidence, {
+			enabled: policy.assuranceEnabled,
+			expectedPlanFingerprint: policy.expectedPlanFingerprint,
+			expectedRequiredGateKinds: policy.expectedRequiredGateKinds,
+		}),
+	);
 	// Soft requirements — listed but do not fail ok for tiny tech fixes
 	const soft: string[] = [];
 	if (!evidence.mutation) soft.push("mutation (recommended)");

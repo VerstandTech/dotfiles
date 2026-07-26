@@ -8,15 +8,44 @@
  * When missing, commands are inferred from package.json scripts.
  *
  * Commands: /bdd …
- * Tools: bdd_status, bdd_set_phase, bdd_assert_red, bdd_assert_green,
- *        bdd_record_evidence, bdd_handoff
+ * Tools: bdd_status, bdd_playbook, bdd_project_profile, bdd_assurance_plan,
+ *        bdd_set_phase, bdd_assert_red, bdd_assert_green,
+ *        bdd_run_quality_gates, bdd_delegate_role, bdd_record_evidence,
+ *        bdd_handoff
  */
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { Type } from "@earendil-works/pi-ai";
+import { StringEnum, Type } from "@earendil-works/pi-ai";
 import { defineTool, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { configTemplate, loadConfigFromCwd } from "../lib/bdd/config.ts";
+import {
+	HIGH_ASSURANCE_PLAYBOOK,
+	formatHighAssurancePlaybookReference,
+} from "../lib/bdd/playbook.ts";
+import {
+	isValidFleetRunId,
+	validateFleetSynthesisEvidence,
+} from "../lib/bdd/synthesis.ts";
+import {
+	ASSURANCE_ROLES,
+	assertAssuranceAction,
+	buildAssuranceBlueprint,
+	roleContract,
+	type AssuranceRole,
+} from "../lib/bdd/assurance-cycle.ts";
+import {
+	detectProjectProfile,
+	formatProjectProfile,
+	type ProjectProfile,
+} from "../lib/bdd/project-profile.ts";
+import {
+	buildQualityGatePlan,
+	formatQualityGatePlan,
+	formatQualityGateRun,
+	runQualityGatePlan,
+	type QualityGatePlan,
+} from "../lib/bdd/quality-gates.ts";
 import {
 	BDD_PROMPT_SNIPPET,
 	buildGuidelines,
@@ -96,6 +125,78 @@ export default function bddModeExtension(pi: ExtensionAPI): void {
 			// keep previous config; surface later via status
 			state.configPath = `error: ${err instanceof Error ? err.message : String(err)}`;
 		}
+	}
+
+	function currentAssurance(cwd: string): {
+		profile: ProjectProfile;
+		plan: QualityGatePlan;
+	} {
+		const detected = detectProjectProfile(cwd);
+		const profile: ProjectProfile = {
+			...detected,
+			commands: {
+				...detected.commands,
+				format: config.commands.format ?? detected.commands.format,
+				staticAnalysis: config.commands.staticAnalysis ?? detected.commands.staticAnalysis,
+				typecheck: config.commands.typecheck ?? detected.commands.typecheck,
+				unitTest: config.commands.unitTest ?? detected.commands.unitTest,
+				acceptanceTest: config.commands.acceptanceTest ?? detected.commands.acceptanceTest,
+				propertyTest: config.commands.propertyTest ?? detected.commands.propertyTest,
+				coverage: config.commands.coverage ?? detected.commands.coverage,
+				mutation: config.commands.mutation ?? detected.commands.mutation,
+				architecture: config.commands.architecture ?? detected.commands.architecture,
+				doctor: config.commands.doctor ?? detected.commands.doctor,
+				security: config.commands.security ?? detected.commands.security,
+				performance: config.commands.performance ?? detected.commands.performance,
+			},
+		};
+		const configuredGateCommands = state.source === "file"
+			? {
+				format: config.commands.format,
+				static: config.commands.staticAnalysis,
+				types: config.commands.typecheck,
+				unit: config.commands.unitTest,
+				acceptance: config.commands.acceptanceTest,
+				property: config.commands.propertyTest,
+				coverage: config.commands.coverage,
+				mutation: config.commands.mutation,
+				architecture: config.commands.architecture,
+				doctor: config.commands.doctor,
+				security: config.commands.security,
+				performance: config.commands.performance,
+			}
+			: {};
+		return {
+			profile,
+			plan: buildQualityGatePlan({
+				profile,
+				assurance: {
+					...config.assurance,
+					commands: { ...configuredGateCommands, ...config.assurance?.commands },
+				},
+			}),
+		};
+	}
+
+	function synthesisExists(cwd: string, path: string, runId: string): boolean {
+		return validateFleetSynthesisEvidence({ cwd, synthesisPath: path, runId }).ok;
+	}
+
+	function handoffPolicy(cwd: string) {
+		const { plan } = currentAssurance(cwd);
+		const highAssurance = config.assurance?.enabled === true;
+		return {
+			assuranceEnabled: highAssurance,
+			expectedPlanFingerprint: highAssurance ? plan.fingerprint : undefined,
+			expectedRequiredGateKinds: highAssurance
+				? plan.gates.filter((gate) => gate.required).map((gate) => gate.kind)
+				: undefined,
+			requireCommandBackedMutation: highAssurance,
+			requireFleetDisposition: highAssurance,
+			synthesisExists: highAssurance
+				? (path: string, runId: string) => synthesisExists(cwd, path, runId)
+				: undefined,
+		};
 	}
 
 	function persist(): void {
@@ -427,6 +528,8 @@ export default function bddModeExtension(pi: ExtensionAPI): void {
 				summary: result.summary,
 				at: nowIso(),
 			};
+			// Any implementation change makes prior structural/quality evidence stale.
+			delete state.evidence.assurance;
 			state.phase = "green";
 			state.enabled = true;
 			persist();
@@ -474,6 +577,18 @@ export default function bddModeExtension(pi: ExtensionAPI): void {
 						"Path to synthesis.md for that run (required before handoff after review/ux fleets)",
 				}),
 			),
+			fleetNoBlockers: Type.Optional(
+				Type.Boolean({ description: "Explicit attestation that the independent review found no blockers" }),
+			),
+			fleetBlockersAccepted: Type.Optional(
+				Type.Array(Type.String(), { description: "Blocker ids/titles accepted for immediate fixing" }),
+			),
+			fleetDeferred: Type.Optional(
+				Type.Array(
+					Type.Object({ id: Type.String(), reason: Type.String() }),
+					{ description: "Deferred findings with mandatory reasons" },
+				),
+			),
 		}),
 		async execute(_id, params, _signal, _onUpdate, ctx) {
 			const extCtx = ctx as ExtensionContext;
@@ -518,9 +633,14 @@ export default function bddModeExtension(pi: ExtensionAPI): void {
 				};
 			}
 			if (params.crap) state.evidence.crap = String(params.crap);
-			if (params.fleetRunId && params.fleetSynthesisPath) {
+			if (params.fleetRunId) {
 				const runId = String(params.fleetRunId);
-				const synthesisPath = String(params.fleetSynthesisPath);
+				if (!isValidFleetRunId(runId)) {
+					return {
+						content: [{ type: "text", text: "fleetRunId must be a safe single path segment." }],
+						details: { ok: false },
+					};
+				}
 				const base = (state.evidence.fleetRuns ?? []).find((r) => r.runId === runId) ?? {
 					runId,
 					kind: "review",
@@ -529,7 +649,17 @@ export default function bddModeExtension(pi: ExtensionAPI): void {
 				};
 				state.evidence.fleetRuns = mergeFleetRuns(state.evidence.fleetRuns, {
 					...base,
-					synthesisPath,
+					synthesisPath: params.fleetSynthesisPath
+						? String(params.fleetSynthesisPath)
+						: base.synthesisPath,
+					noBlockers:
+						params.fleetNoBlockers != null ? Boolean(params.fleetNoBlockers) : base.noBlockers,
+					blockersAccepted: Array.isArray(params.fleetBlockersAccepted)
+						? params.fleetBlockersAccepted.map(String)
+						: base.blockersAccepted,
+					deferred: Array.isArray(params.fleetDeferred)
+						? params.fleetDeferred.map((item) => ({ id: String(item.id), reason: String(item.reason) }))
+						: base.deferred,
 				});
 			}
 			persist();
@@ -554,8 +684,10 @@ export default function bddModeExtension(pi: ExtensionAPI): void {
 			title: Type.Optional(Type.String({ description: "PR title/summary line" })),
 		}),
 		async execute(_id, params, _signal, _onUpdate, ctx) {
-			syncFleetRunsFromBranch(ctx as ExtensionContext);
-			const { ok, missing } = handoffComplete(state.evidence);
+			const extCtx = ctx as ExtensionContext;
+			reloadConfig(cwdOf(extCtx));
+			syncFleetRunsFromBranch(extCtx);
+			const { ok, missing } = handoffComplete(state.evidence, handoffPolicy(cwdOf(extCtx)));
 			const body = formatHandoff(state.evidence, state.phase);
 			const fleetLines =
 				(state.evidence.fleetRuns ?? [])
@@ -574,6 +706,7 @@ export default function bddModeExtension(pi: ExtensionAPI): void {
 						phase: state.phase,
 						evidence: state.evidence,
 						title: params.title ? String(params.title) : state.evidence.focus,
+						handoffPolicy: handoffPolicy(cwdOf(extCtx)),
 					});
 			}
 			return {
@@ -682,6 +815,183 @@ export default function bddModeExtension(pi: ExtensionAPI): void {
 		},
 	});
 
+	const playbookTool = defineTool({
+		name: "bdd_playbook",
+		label: "BDD High-Assurance Playbook",
+		description:
+			"Return the canonical high-assurance multi-agent playbook version, package-relative paths, implementation profile, and deterministic no-auto-install policy.",
+		parameters: Type.Object({}),
+		async execute() {
+			return {
+				content: [{ type: "text", text: formatHighAssurancePlaybookReference() }],
+				details: { ok: true, playbook: HIGH_ASSURANCE_PLAYBOOK },
+			};
+		},
+	});
+
+	const projectProfileTool = defineTool({
+		name: "bdd_project_profile",
+		label: "BDD Project Profile",
+		description:
+			"Deterministically detect the current project's local tech stack, package managers, frameworks, commands, and fingerprint. Never installs tools or calls the network.",
+		parameters: Type.Object({}),
+		async execute(_id, _params, _signal, _onUpdate, ctx) {
+			const extCtx = ctx as ExtensionContext;
+			const cwd = cwdOf(extCtx);
+			reloadConfig(cwd);
+			const { profile, plan } = currentAssurance(cwd);
+			return {
+				content: [{ type: "text", text: `${formatProjectProfile(profile)}\n\n${formatQualityGatePlan(plan)}` }],
+				details: { ok: profile.confidence !== "low", profile, plan },
+			};
+		},
+	});
+
+	const assurancePlanTool = defineTool({
+		name: "bdd_assurance_plan",
+		label: "BDD Assurance Plan",
+		description:
+			"Compile a deterministic, stack-aware quality-gate plan and bounded multi-agent blueprint. Read-only; does not launch agents or execute gates.",
+		parameters: Type.Object({}),
+		async execute(_id, _params, _signal, _onUpdate, ctx) {
+			const extCtx = ctx as ExtensionContext;
+			const cwd = cwdOf(extCtx);
+			reloadConfig(cwd);
+			const { profile, plan } = currentAssurance(cwd);
+			const blueprint = buildAssuranceBlueprint(profile, plan);
+			return {
+				content: [
+					{
+						type: "text",
+						text: `${formatQualityGatePlan(plan)}\n\n## Bounded role stages\n${blueprint.stages
+							.map((stage) => `- **${stage.id}**${stage.parallel ? " (parallel read-only)" : ""}: ${stage.roles.join(", ") || "human gate"} — ${stage.gate}`)
+							.join("\n")}`,
+					},
+				],
+				details: { ok: true, profile, plan, blueprint },
+			};
+		},
+	});
+
+	const runGatesTool = defineTool({
+		name: "bdd_run_quality_gates",
+		label: "BDD Run Quality Gates",
+		description:
+			"Run the deterministic stack-aware gate plan sequentially. Required gates fail closed and stop later execution. Real execution is allowed only in verify and requires explicit workspace confirmation; dryRun only prints the plan.",
+		parameters: Type.Object({
+			dryRun: Type.Optional(Type.Boolean({ description: "Print the gate plan without executing commands" })),
+			workspaceConfirmed: Type.Optional(
+				Type.Boolean({ description: "Human explicitly confirmed branch/worktree and one-writer ownership" }),
+			),
+		}),
+		async execute(_id, params, _signal, _onUpdate, ctx) {
+			const extCtx = ctx as ExtensionContext;
+			const cwd = cwdOf(extCtx);
+			reloadConfig(cwd);
+			const { profile, plan } = currentAssurance(cwd);
+			if (params.dryRun) {
+				return {
+					content: [{ type: "text", text: formatQualityGatePlan(plan) }],
+					details: { ok: true, dryRun: true, profile, plan },
+				};
+			}
+			const gate = assertAssuranceAction(
+				{
+					workspaceConfirmed: params.workspaceConfirmed === true,
+					phase: state.phase,
+					evidence: state.evidence,
+					plan,
+				},
+				{ type: "run-gates" },
+			);
+			if (!gate.ok) {
+				return {
+					content: [{ type: "text", text: gate.reason ?? "Quality-gate execution blocked" }],
+					details: { ok: false, blocked: true, profile, plan },
+				};
+			}
+			const run = await runQualityGatePlan({ cwd, plan });
+			state.evidence.assurance = run;
+			persist();
+			updateStatus(extCtx);
+			pi.appendEntry("bdd-assurance-event", {
+				type: "quality-gates",
+				at: nowIso(),
+				profileFingerprint: profile.fingerprint,
+				planFingerprint: plan.fingerprint,
+				ok: run.ok,
+			});
+			return {
+				content: [{ type: "text", text: formatQualityGateRun(run) }],
+				details: { ok: run.ok, profile, plan, run },
+			};
+		},
+	});
+
+	const delegateRoleTool = defineTool({
+		name: "bdd_delegate_role",
+		label: "BDD Delegate Bounded Role",
+		description:
+			"Validate a high-assurance role against the deterministic BDD phase contract, then launch exactly one isolated pi-subagent asynchronously. Never launches parallel writers.",
+		parameters: Type.Object({
+			role: StringEnum(ASSURANCE_ROLES, { description: "Bounded specialist role" }),
+			task: Type.String({ description: "Narrow task with locked inputs, success criteria, and expected handoff" }),
+			workspaceConfirmed: Type.Boolean({ description: "Human explicitly confirmed branch/worktree and one-writer ownership" }),
+		}),
+		async execute(_id, params, _signal, _onUpdate, ctx) {
+			const extCtx = ctx as ExtensionContext;
+			const cwd = cwdOf(extCtx);
+			reloadConfig(cwd);
+			const { plan } = currentAssurance(cwd);
+			const role = String(params.role) as AssuranceRole;
+			const contract = roleContract(role);
+			const gate = assertAssuranceAction(
+				{
+					workspaceConfirmed: params.workspaceConfirmed === true,
+					phase: state.phase,
+					evidence: state.evidence,
+					plan,
+				},
+				{ type: "delegate", role },
+			);
+			if (!gate.ok) {
+				return {
+					content: [{ type: "text", text: gate.reason ?? `Role ${role} blocked` }],
+					details: { ok: false, blocked: true, role, contract },
+				};
+			}
+			const reply = await callSubagentRpc(
+				pi.events,
+				"spawn",
+				{
+					agent: `bdd-${role}`,
+					task: String(params.task),
+					cwd,
+					async: true,
+					context: "fresh",
+					acceptance: contract.writeScope === "none" ? "attested" : "checked",
+				},
+				{ timeoutMs: 60_000, source: "bdd-assurance" },
+			);
+			pi.appendEntry("bdd-assurance-event", {
+				type: "delegate",
+				at: nowIso(),
+				role,
+				phase: state.phase,
+				success: reply.success,
+				data: reply.data,
+				error: reply.error,
+			});
+			const text = reply.success
+				? `Launched isolated role \`bdd-${role}\` asynchronously.\n\n${JSON.stringify(reply.data, null, 2)}`
+				: `Role launch failed: ${reply.error?.message ?? "pi-subagents RPC unavailable"}`;
+			return {
+				content: [{ type: "text", text }],
+				details: { ok: reply.success, role, contract, rpc: reply },
+			};
+		},
+	});
+
 	pi.registerTool(statusTool);
 	pi.registerTool(setPhaseTool);
 	pi.registerTool(assertRedTool);
@@ -690,6 +1000,11 @@ export default function bddModeExtension(pi: ExtensionAPI): void {
 	pi.registerTool(recordEvidenceTool);
 	pi.registerTool(handoffTool);
 	pi.registerTool(doctorTool);
+	pi.registerTool(playbookTool);
+	pi.registerTool(projectProfileTool);
+	pi.registerTool(assurancePlanTool);
+	pi.registerTool(runGatesTool);
+	pi.registerTool(delegateRoleTool);
 
 	// Keep tools active
 	pi.on("session_start", async (_e, ctx) => {
@@ -704,6 +1019,11 @@ export default function bddModeExtension(pi: ExtensionAPI): void {
 			"bdd_record_evidence",
 			"bdd_handoff",
 			"agentic_doctor",
+			"bdd_playbook",
+			"bdd_project_profile",
+			"bdd_assurance_plan",
+			"bdd_run_quality_gates",
+			"bdd_delegate_role",
 		]) {
 			active.add(name);
 		}
@@ -881,10 +1201,13 @@ export default function bddModeExtension(pi: ExtensionAPI): void {
 	// /bdd command
 	pi.registerCommand("bdd", {
 		description:
-			"BDD/TDD mode: status|on|off|discovery|formulation|red|green|refactor|verify|handoff|init|bypass|doctor",
+			"BDD/TDD mode: status|playbook|profile|gates|on|off|discovery|formulation|red|green|refactor|verify|handoff|init|bypass|doctor",
 		getArgumentCompletions: (prefix) => {
 			const opts = [
 				"status",
+				"playbook",
+				"profile",
+				"gates",
 				"on",
 				"off",
 				"discovery",
@@ -948,14 +1271,41 @@ export default function bddModeExtension(pi: ExtensionAPI): void {
 				return;
 			}
 
+			if (cmd === "playbook") {
+				pi.sendMessage(
+					{
+						customType: "bdd-playbook",
+						content: formatHighAssurancePlaybookReference(),
+						display: true,
+					},
+					{ triggerTurn: false },
+				);
+				return;
+			}
+
+			if (cmd === "profile" || cmd === "gates") {
+				const cwd = cwdOf(ctx);
+				reloadConfig(cwd);
+				const { profile, plan } = currentAssurance(cwd);
+				const text = cmd === "profile"
+					? `${formatProjectProfile(profile)}\n\n${formatQualityGatePlan(plan)}`
+					: formatQualityGatePlan(plan);
+				pi.sendMessage(
+					{ customType: `bdd-${cmd}`, content: text, display: true },
+					{ triggerTurn: false },
+				);
+				return;
+			}
+
 			if (cmd === "doctor") {
 				await runDoctorCommand(ctx);
 				return;
 			}
 
 			if (cmd === "handoff") {
+				reloadConfig(cwdOf(ctx));
 				syncFleetRunsFromBranch(ctx);
-				const { ok, missing } = handoffComplete(state.evidence);
+				const { ok, missing } = handoffComplete(state.evidence, handoffPolicy(cwdOf(ctx)));
 				const body = formatHandoff(state.evidence, state.phase);
 				const asPr = /\bpr\b/i.test(tail);
 				let text = ok ? body : `${body}\nMissing: ${missing.join(", ")}`;
@@ -966,6 +1316,7 @@ export default function bddModeExtension(pi: ExtensionAPI): void {
 							phase: state.phase,
 							evidence: state.evidence,
 							title: state.evidence.focus,
+							handoffPolicy: handoffPolicy(cwdOf(ctx)),
 						});
 				}
 				pi.sendMessage(
@@ -986,7 +1337,16 @@ export default function bddModeExtension(pi: ExtensionAPI): void {
 						unitTest: config.commands.unitTest,
 						acceptanceTest: config.commands.acceptanceTest,
 						acceptanceGenerate: config.commands.acceptanceGenerate,
+						format: config.commands.format,
+						staticAnalysis: config.commands.staticAnalysis,
 						typecheck: config.commands.typecheck,
+						propertyTest: config.commands.propertyTest,
+						coverage: config.commands.coverage,
+						mutation: config.commands.mutation,
+						architecture: config.commands.architecture,
+						doctor: config.commands.doctor,
+						security: config.commands.security,
+						performance: config.commands.performance,
 					}),
 					"utf8",
 				);
@@ -1047,7 +1407,7 @@ export default function bddModeExtension(pi: ExtensionAPI): void {
 			}
 
 			ctx.ui.notify(
-				`Unknown /bdd args. Try: status|on|off|discovery|formulation|red|green|refactor|verify|handoff|init|bypass`,
+				`Unknown /bdd args. Try: status|playbook|profile|gates|on|off|discovery|formulation|red|green|refactor|verify|handoff|init|bypass`,
 				"warning",
 			);
 		},

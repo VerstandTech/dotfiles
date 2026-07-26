@@ -134,6 +134,83 @@ describe("handoff", () => {
 		};
 		expect(handoffComplete(e).ok).toBe(true);
 	});
+
+	test("high-assurance handoff requires a current matching gate run", () => {
+		const e: BddEvidence = {
+			...redGreen,
+			assurance: {
+				profileFingerprint: "profile-1",
+				planFingerprint: "plan-1",
+				startedAt: "2099-01-01T00:00:01.000Z",
+				completedAt: "2099-01-01T00:00:02.000Z",
+				ok: true,
+				results: [
+					{
+						id: "quality:unit",
+						kind: "unit",
+						required: true,
+						status: "passed",
+						summary: "PASS",
+					},
+				],
+			},
+		};
+		const policy = {
+			assuranceEnabled: true,
+			expectedPlanFingerprint: "plan-1",
+			expectedRequiredGateKinds: ["unit" as const],
+		};
+		expect(handoffComplete(e, policy).ok).toBe(true);
+		expect(handoffComplete(redGreen, policy).ok).toBe(false);
+	});
+
+	test("high-assurance mutation cannot be proven by note alone", () => {
+		const e: BddEvidence = {
+			...redGreen,
+			mutation: { proven: true, note: "trust me", at: "t" },
+		};
+		const result = handoffComplete(e, { requireCommandBackedMutation: true });
+		expect(result.ok).toBe(false);
+		expect(result.missing.join(" ")).toMatch(/command-backed mutation/i);
+	});
+
+	test("high-assurance fleet synthesis requires an existing file and dispositions", () => {
+		const base: BddEvidence = {
+			...redGreen,
+			fleetRuns: [
+				{
+					runId: "run-1",
+					kind: "review",
+					expectedCount: 3,
+					at: "t",
+					synthesisPath: ".pi/fleet-runs/run-1/synthesis.md",
+				},
+			],
+		};
+		const missingDisposition = handoffComplete(base, {
+			requireFleetDisposition: true,
+			synthesisExists: () => true,
+		});
+		expect(missingDisposition.ok).toBe(false);
+		expect(missingDisposition.missing.join(" ")).toMatch(/disposition/i);
+
+		const complete: BddEvidence = {
+			...base,
+			fleetRuns: base.fleetRuns?.map((run) => ({ ...run, noBlockers: true })),
+		};
+		expect(
+			handoffComplete(complete, {
+				requireFleetDisposition: true,
+				synthesisExists: () => true,
+			}).ok,
+		).toBe(true);
+		expect(
+			handoffComplete(complete, {
+				requireFleetDisposition: true,
+				synthesisExists: () => false,
+			}).ok,
+		).toBe(false);
+	});
 });
 
 describe("evidence lifecycle helpers", () => {

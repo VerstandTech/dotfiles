@@ -5,6 +5,15 @@
   "commands": {
     "unitTest": "bun test"
   },
+  "assurance": {
+    "enabled": true,
+    "requiredGateKinds": ["unit"],
+    "advisoryGateKinds": ["format", "static", "types", "coverage", "mutation", "architecture", "doctor", "security", "performance"],
+    "coverageThreshold": 95,
+    "mutationThreshold": 80,
+    "doctorThreshold": 90,
+    "defaultTimeoutMs": 120000
+  },
   "featurePathPatterns": ["**/tests/features/**", "**/*.feature"],
   "testPathPatterns": ["**/*.test.ts", "**/lib/**/*.test.ts"],
   "implementationPathPatterns": ["**/lib/**/*.ts", "**/extensions/**/*.ts"],

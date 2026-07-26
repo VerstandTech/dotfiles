@@ -7,6 +7,8 @@ import { createRequire } from "node:module";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { loadConfigFromCwd } from "./config.ts";
+import { detectProjectProfile } from "./project-profile.ts";
+import { buildQualityGatePlan } from "./quality-gates.ts";
 import { loadFleetUserConfigDetailed, resolveCaps, subagentConfigPath } from "../fleet/config.ts";
 import { loadModelResolveContext } from "../fleet/model-resolve.ts";
 
@@ -57,6 +59,50 @@ export async function runAgenticDoctor(input: {
 					` strictGreen=${bdd.config.strictGreenCoversRed !== false}`,
 			),
 		);
+		const detected = detectProjectProfile(input.cwd);
+		const profile = {
+			...detected,
+			commands: {
+				...detected.commands,
+				unitTest: bdd.config.commands.unitTest,
+				typecheck: bdd.config.commands.typecheck ?? detected.commands.typecheck,
+				staticAnalysis: bdd.config.commands.staticAnalysis ?? detected.commands.staticAnalysis,
+				coverage: bdd.config.commands.coverage ?? detected.commands.coverage,
+				mutation: bdd.config.commands.mutation ?? detected.commands.mutation,
+				doctor: bdd.config.commands.doctor ?? detected.commands.doctor,
+			},
+		};
+		const plan = buildQualityGatePlan({ profile, assurance: bdd.config.assurance });
+		checks.push(
+			check(
+				"project-profile",
+				detected.confidence === "low" ? "warn" : "pass",
+				"Deterministic project profile",
+				`confidence=${detected.confidence} stacks=${detected.stacks.join(",") || "none"} fingerprint=${detected.fingerprint.slice(0, 12)}`,
+			),
+		);
+		const missingRequired = plan.gates.filter((gate) => gate.required && gate.availability === "unavailable");
+		checks.push(
+			check(
+				"assurance-plan",
+				bdd.config.assurance?.enabled && missingRequired.length ? "fail" : "pass",
+				"Assurance gate plan",
+				`enabled=${bdd.config.assurance?.enabled === true} gates=${plan.gates.length} requiredUnavailable=${missingRequired.map((gate) => gate.kind).join(",") || "none"} plan=${plan.fingerprint.slice(0, 12)}`,
+			),
+		);
+		const unenforcedTargets = plan.gates.filter(
+			(gate) => gate.threshold != null && gate.availability === "unavailable",
+		);
+		if (unenforcedTargets.length) {
+			checks.push(
+				check(
+					"assurance-thresholds",
+					"warn",
+					"Assurance threshold targets",
+					`No command enforces configured targets for: ${unenforcedTargets.map((gate) => `${gate.kind}=${gate.threshold}`).join(", ")}`,
+				),
+			);
+		}
 	} catch (err) {
 		checks.push(
 			check(
