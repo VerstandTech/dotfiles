@@ -1,5 +1,6 @@
 // Dependency-injected data source for the herd widget (DESIGN.md §7.7).
-// Q3 decision: CLI-per-tick (`herdr agent list --json`) + TTL cache — the simple start.
+// Q3 decision: CLI-per-tick (`herdr agent list` — JSON envelope is the default
+// output on herdr 0.7.5; there is no --json flag) + TTL cache — the simple start.
 // Traces: docs/pi-herdr-example-map.md R2, R5 · docs/pi-herdr-acceptance.md Slice 4
 
 import { formatHerdRows, type HerdView } from "./herd-status.ts";
@@ -39,7 +40,7 @@ export function createHerdSource(deps: HerdSourceDeps): HerdSource {
 
       let view: HerdView | null = null;
       try {
-        const { stdout } = await deps.exec(["herdr", "agent", "list", "--json"]);
+        const { stdout } = await deps.exec(["herdr", "agent", "list"]);
         view = formatHerdRows(JSON.parse(stdout));
       } catch {
         view = null; // graceful absence: socket missing, garbage output, etc.

@@ -3,11 +3,16 @@
 import { describe, expect, test } from "bun:test";
 import { createHerdSource, type ExecFn } from "../.pi/agent/personal/extensions/herd/herd-source";
 
+// Real herdr 0.7.5 envelope: `herdr agent list` emits this JSON by default.
 const GOOD = JSON.stringify({
-  agents: [
-    { name: "api", state: "blocked", meta: "story-123" },
-    { name: "web", state: "working" },
-  ],
+  id: "cli:agent:list",
+  result: {
+    type: "agent_list",
+    agents: [
+      { name: "api", agent: "pi", agent_status: "blocked", pane_id: "w1:p3" },
+      { name: "web", agent: "pi", agent_status: "working", pane_id: "w1:p2" },
+    ],
+  },
 });
 
 function execReturning(stdout: string): { exec: ExecFn; calls: string[][] } {
@@ -27,11 +32,11 @@ describe("createHerdSource", () => {
     expect(calls).toHaveLength(0);
   });
 
-  test("R2-E3: inside herdr, execs `herdr agent list --json` and parses via formatHerdRows", async () => {
+  test("R2-E3: inside herdr, execs `herdr agent list` (JSON is the default output) and parses via formatHerdRows", async () => {
     const { exec, calls } = execReturning(GOOD);
     const source = createHerdSource({ exec, env: { HERDR_ENV: "1" } });
     const view = await source.getView();
-    expect(calls).toEqual([["herdr", "agent", "list", "--json"]]);
+    expect(calls).toEqual([["herdr", "agent", "list"]]);
     expect(view).not.toBeNull();
     expect(view!.summary).toContain("⚠ 1 blocked (api)");
   });

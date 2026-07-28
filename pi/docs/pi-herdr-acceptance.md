@@ -13,7 +13,7 @@
 Module: `.pi/agent/personal/extensions/herd/herd-status.ts` (pure, no I/O — testable without a live herdr server).
 
 ### Scenario R5-E1 — blocked sorts first, rows are icon + text
-**Given** a `herdr agent list` JSON payload with agents in states working (2), blocked (1, named `api`), done (1)
+**Given** a `herdr agent list` JSON envelope (`{ id, result: { type: "agent_list", agents: [...] } }` — herdr 0.7.5 emits JSON by default; `AgentInfo` fields: `agent_status`, `name`/`display_agent`/`agent`, `pane_id`) with agents in states working (2), blocked (1, named `api`), done (1)
 **When** `formatHerdRows(payload)` runs
 **Then** the blocked row is first, each row is `<icon> <name> <dim metadata>`, icons are `⚠` blocked, `●` working, `○` idle, `✓` done
 **And** the summary line reads `● 2 working  ⚠ 1 blocked (api)`.
@@ -39,7 +39,7 @@ Module: `.pi/agent/personal/extensions/herd/herd-task.ts` (pure builder → CLI 
 ### Scenario R3-E1 — task launch wraps native worktree create
 **Given** task `story-123` on repo cwd `/x/repo`
 **When** `buildTaskLaunch({ name: "story-123", cwd: "/x/repo", base: "develop" })` runs
-**Then** argv = `herdr worktree create --cwd /x/repo --branch story-123 --base develop --label story-123 --no-focus --json`
+**Then** argv = `herdr worktree create --cwd /x/repo --branch story-123 --base develop --label story-123` (herdr 0.7.5 surface: `--workspace/--cwd/--branch/--base/--path/--label/--focus`)
 **And** when `base` is omitted, **no `--base` flag is emitted** — herdr/git resolve the repo's own default branch (generic for any project; no hardcoded `develop`)
 **And** a follow-up step starts `pi` in the new pane via `herdr agent start story-123 --kind pi --pane <id from JSON>`.
 
@@ -48,9 +48,9 @@ Module: `.pi/agent/personal/extensions/herd/herd-task.ts` (pure builder → CLI 
 **When** validated
 **Then** only `ok_name-1` passes (`[a-z][a-z0-9_-]{0,31}`, herdr's own rule).
 
-### Scenario R7-E1 — detach-safe flags
+### Scenario R7-E1 — detach-safe by default
 **When** any launcher argv is built
-**Then** it always includes `--no-focus` (never steals the user's pane) and `--json` (IDs parsed from output, never derived).
+**Then** it never includes `--focus` (herdr 0.7.5 `worktree create` does not steal the user's pane unless `--focus` is passed; there is no `--no-focus` flag) and never includes `--json` (the JSON envelope is the default CLI output; IDs are parsed from it, never derived).
 
 ## Slice 4 — wiring: herd widget source + `/herd-task` handler
 
@@ -73,7 +73,7 @@ Modules: `.pi/agent/personal/extensions/herd/herd-source.ts` (polling/cache/env 
 
 ### Scenario R2-E3 — correct CLI invocation and parsing
 **When** the source executes
-**Then** argv is `herdr agent list --json` and stdout is parsed through `formatHerdRows`.
+**Then** argv is `herdr agent list` (0.7.5: no flags; JSON envelope is the default output) and stdout is parsed through `formatHerdRows`, which unwraps the `{ id, result }` envelope.
 
 ### Scenario R3-E3 — `/herd-task` validates before touching the environment
 **Given** an invalid task name
@@ -83,7 +83,7 @@ Modules: `.pi/agent/personal/extensions/herd/herd-source.ts` (polling/cache/env 
 ### Scenario R3-E4 — `/herd-task` orchestrates worktree → agent start
 **Given** `runHerdTask("story-123", { cwd })` and a successful create
 **When** exec is called
-**Then** first argv equals `buildTaskLaunch(...)`; the pane id is extracted from the create JSON (tolerant envelope: `result.pane.pane_id` → `result.root_pane.pane_id` → `result.worktree.pane_id`); second argv is `herdr agent start story-123 --kind pi --pane <id>`; result reports the pane id.
+**Then** first argv equals `buildTaskLaunch(...)`; the pane id is extracted from the create envelope (schema type `worktree_created`; tolerant precedence: `result.root_pane.pane_id` — the schema-blessed field — → `result.pane.pane_id` → `result.worktree.pane_id`); second argv is `herdr agent start story-123 --kind pi --pane <id>`; result reports the pane id.
 
 ### Scenario R3-E5 — create failure stops the chain
 **Given** the worktree-create exec fails or returns an envelope with no pane id
@@ -103,8 +103,11 @@ Modules: `.pi/agent/personal/extensions/herd/herd-source.ts` (polling/cache/env 
 
 ```ts
 // extensions/herd/herd-status.ts
-type HerdState = "idle" | "working" | "blocked" | "done" | "unknown";
+type HerdState = "idle" | "working" | "blocked" | "done" | "unknown";  // = herdr AgentStatus enum
 interface HerdAgent { name: string; state: HerdState; meta?: string }
+// input: herdr 0.7.5 CLI envelope { id, result: { agents: AgentInfo[] } } (bare {agents} accepted).
+// AgentInfo → HerdAgent: state ← agent_status (unrecognized → "unknown", never fatal);
+// name ← name ?? display_agent ?? agent ?? pane_id; meta ← pane_id.
 formatHerdRows(payload: unknown): { summary: string; rows: string[] } | null
 
 // extensions/herd/herd-task.ts
@@ -154,6 +157,7 @@ Module: `.pi/agent/personal/extensions/herd/herd-footer.ts` (pure renderer). Ent
 
 - ✅ Slice 1: sort flip → R5-E1 failed; name-cap removal → R3-E2 failed; base drop → 2 failed. All restored.
 - ✅ Slice 4: cache bypass → R5-E4 failed; env gate removed → R5-E3 failed; precedence flip → R3-E4 failed. All restored.
+- ✅ 0.7.5-contract alignment: envelope unwrap removed from `formatHerdRows` → 10 failed / 22 pass across status+source+footer suites. Restored → 32/32 green.
 - Slice 5 candidates: 2-line contract broken (return 1 line) → F-1 must fail; truncation removed → F-3 must fail.
 - Record via `bdd_assert_mutation` or attested evidence with captured output.
 

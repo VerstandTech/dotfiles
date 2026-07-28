@@ -4,7 +4,17 @@ import { describe, expect, test } from "bun:test";
 import { extractPaneId, runHerdTask } from "../.pi/agent/personal/extensions/herd/herd-task-handler";
 import type { ExecFn } from "../.pi/agent/personal/extensions/herd/herd-source";
 
-const CREATE_OK = JSON.stringify({ result: { pane: { pane_id: "w1:p2" } } });
+// Real herdr 0.7.5 `herdr worktree create` envelope (schema: worktree_created).
+const CREATE_OK = JSON.stringify({
+  id: "cli:worktree:create",
+  result: {
+    type: "worktree_created",
+    workspace: { id: "w2" },
+    tab: { id: "w2:t1" },
+    root_pane: { pane_id: "w1:p2" },
+    worktree: { path: "/x/repo-story-123", label: "story-123" },
+  },
+});
 
 function scriptedExec(responses: Array<{ stdout: string } | Error>): { exec: ExecFn; calls: string[][] } {
   const calls: string[][] = [];
@@ -18,13 +28,15 @@ function scriptedExec(responses: Array<{ stdout: string } | Error>): { exec: Exe
 }
 
 describe("extractPaneId (tolerant envelope)", () => {
-  test("R3-E4: precedence pane → root_pane → worktree.pane", () => {
+  test("R3-E4: precedence root_pane (schema field) → pane → worktree.pane", () => {
+    expect(
+      extractPaneId({ result: { type: "worktree_created", root_pane: { pane_id: "w1:p9" } } }),
+    ).toBe("w1:p9");
     expect(extractPaneId({ result: { pane: { pane_id: "w1:p2" } } })).toBe("w1:p2");
-    expect(extractPaneId({ result: { root_pane: { pane_id: "w1:p9" } } })).toBe("w1:p9");
     expect(extractPaneId({ result: { worktree: { pane_id: "w2:p1" } } })).toBe("w2:p1");
     expect(
       extractPaneId({ result: { pane: { pane_id: "a" }, root_pane: { pane_id: "b" } } }),
-    ).toBe("a");
+    ).toBe("b");
   });
 
   test("R3-E5: no pane id anywhere → null", () => {
@@ -57,8 +69,6 @@ describe("runHerdTask", () => {
       "--cwd", "/x/repo",
       "--branch", "story-123",
       "--label", "story-123",
-      "--no-focus",
-      "--json",
     ]);
     expect(calls[1]).toEqual([
       "herdr", "agent", "start", "story-123", "--kind", "pi", "--pane", "w1:p2",

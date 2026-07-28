@@ -4,11 +4,16 @@ import { describe, expect, test } from "bun:test";
 import { renderHerdFooter } from "../.pi/agent/personal/extensions/herd/herd-footer";
 import { formatHerdRows } from "../.pi/agent/personal/extensions/herd/herd-status";
 
+// Real herdr 0.7.5 envelope shape (see herd-status.test.ts).
 const herd = formatHerdRows({
-  agents: [
-    { name: "api", state: "blocked", meta: "story-123" },
-    { name: "web", state: "working" },
-  ],
+  id: "cli:agent:list",
+  result: {
+    type: "agent_list",
+    agents: [
+      { name: "api", agent: "pi", agent_status: "blocked", pane_id: "w1:p3" },
+      { name: "web", agent: "pi", agent_status: "working", pane_id: "w1:p2" },
+    ],
+  },
 });
 
 const FULL = { model: "kimi-k3", thinking: "high", branch: "main", herd, width: 60 };

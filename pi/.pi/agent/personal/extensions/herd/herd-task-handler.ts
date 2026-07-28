@@ -10,8 +10,10 @@ export type TaskResult =
   | { ok: false; message: string };
 
 /**
- * Extract the pane id from a `herdr worktree create --json` envelope.
- * Tolerant precedence (R3-E4): result.pane → result.root_pane → result.worktree.
+ * Extract the pane id from a `herdr worktree create` envelope (0.7.5 emits the
+ * JSON envelope by default; schema type `worktree_created`).
+ * Tolerant precedence (R3-E4): result.root_pane (the schema-blessed field)
+ * → result.pane → result.worktree.
  * Per herdr's skill guidance: parse IDs from JSON, never predict them.
  */
 export function extractPaneId(createJson: unknown): string | null {
@@ -19,7 +21,7 @@ export function extractPaneId(createJson: unknown): string | null {
   const result = (createJson as { result?: unknown }).result;
   if (typeof result !== "object" || result === null) return null;
   const r = result as Record<string, unknown>;
-  for (const key of ["pane", "root_pane", "worktree"] as const) {
+  for (const key of ["root_pane", "pane", "worktree"] as const) {
     const node = r[key];
     if (typeof node === "object" && node !== null) {
       const id = (node as { pane_id?: unknown }).pane_id;
