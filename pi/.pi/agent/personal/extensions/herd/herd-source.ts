@@ -64,3 +64,46 @@ export function createHerdSource(deps: HerdSourceDeps): HerdSource {
     },
   };
 }
+
+type IntervalHandle = Parameters<typeof clearInterval>[0];
+
+export interface ClaimPollerDeps {
+  /** Registry host; defaults to globalThis, which survives pi /reload module
+   *  replacement — that is what makes the claim reload-safe. */
+  host?: Record<string, unknown>;
+  setIntervalFn?: (fn: () => void, ms: number) => IntervalHandle;
+  clearIntervalFn?: (handle: IntervalHandle) => void;
+}
+
+const POLL_REGISTRY_KEY = "__herdPollers";
+
+/**
+ * Start an interval guarded by a process-wide registry (R7-E3). pi /reload
+ * creates a fresh module instance, but globalThis survives — so if a previous
+ * poller under the same key is still registered (e.g. its session_shutdown
+ * cleanup never ran), it is cleared before the new one starts: pollers can
+ * never stack. Returns a disposer that clears ONLY its own registration.
+ */
+export function claimPoller(
+  key: string,
+  tick: () => void,
+  intervalMs: number,
+  deps: ClaimPollerDeps = {},
+): () => void {
+  const host = deps.host ?? (globalThis as unknown as Record<string, unknown>);
+  const setIv = deps.setIntervalFn ?? ((fn, ms) => setInterval(fn, ms));
+  const clearIv = deps.clearIntervalFn ?? ((h) => clearInterval(h));
+  const registry = (host[POLL_REGISTRY_KEY] ??= {}) as Record<
+    string,
+    IntervalHandle | undefined
+  >;
+  if (registry[key] !== undefined) clearIv(registry[key]);
+  const timer = setIv(tick, intervalMs);
+  registry[key] = timer;
+  return () => {
+    if (registry[key] === timer) {
+      clearIv(timer);
+      registry[key] = undefined;
+    }
+  };
+}

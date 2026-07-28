@@ -5,7 +5,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { execFile } from "node:child_process";
 import { renderHerdFooter } from "./herd-footer.ts";
-import { createHerdSource, type ExecFn } from "./herd-source.ts";
+import { claimPoller, createHerdSource, type ExecFn } from "./herd-source.ts";
 
 const exec: ExecFn = (argv) =>
   new Promise((resolve, reject) => {
@@ -65,7 +65,7 @@ export default function (pi: ExtensionAPI) {
 
       lastView = await source.getView();
       let inFlight = false;
-      const timer = setInterval(async () => {
+      const poll = async () => {
         if (!enabled || inFlight) return; // serialized polls (R7-E2)
         inFlight = true;
         try {
@@ -73,8 +73,10 @@ export default function (pi: ExtensionAPI) {
         } finally {
           inFlight = false;
         }
-      }, 2500);
-      pi.on("session_end", () => clearInterval(timer));
+      };
+      // R7-E3: session_shutdown (never session_end) + reload-safe claim.
+      const dispose = claimPoller("herd:footer", () => void poll(), 2500);
+      pi.on("session_shutdown", () => dispose());
 
       ctx.ui.notify("Herd footer enabled", "info");
     },

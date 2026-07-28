@@ -83,6 +83,13 @@ Modules: `.pi/agent/personal/extensions/herd/herd-source.ts` (polling/cache/env 
 **Then** `setWidget` is called only when the rendered lines actually change (`sameLines(herdLines(view))` gate in the adapter) — an unchanged poll causes no TUI re-layout
 **And** polls are serialized: a tick arriving while the previous refresh is in flight is dropped, and the exec timeout (1500ms) is shorter than the poll interval (2500ms), so slow CLI calls (measured 157–362ms, 2026-07-28) can never pile up.
 
+### Scenario R7-E3 — poll lifecycle: real shutdown event + reload-safe claim
+**Given** pi emits `session_shutdown` (reason `quit|reload|new|resume|fork`) before tearing down an extension runtime — and NEVER emits `session_end` (docs/extensions.md §509; binding cleanup to `session_end` means clearInterval never runs, so every /reload orphans a poller)
+**When** the widget/footer adapter registers its poll
+**Then** cleanup is bound to `session_shutdown`, so no poller survives a reload or session switch
+**And** `claimPoller(key, tick, ms)` additionally records its timer in a globalThis registry that survives module reloads: a new claim under the same key clears the previous timer even when the old instance's cleanup never ran — pollers can never stack (each stacked poller = one extra `herdr agent list` spawn + a `setWidget` fight every 2.5s. Live evidence 2026-07-28: flicker = orphaned pre-self-filter poller painting `○ 1 idle / pi w1:p1` while the fixed poller hid the widget; herdr server log shows `timed out reading api request` bursts from stacked/slow pollers)
+**And** disposing clears only its own registration — a stale dispose must not kill a newer claim; distinct keys (herd:widget / herd:footer) coexist.
+
 ### Scenario R2-E3 — correct CLI invocation and parsing
 **When** the source executes
 **Then** argv is `herdr agent list` (0.7.5: no flags; JSON envelope is the default output) and stdout is parsed through `formatHerdRows`, which unwraps the `{ id, result }` envelope.
@@ -180,6 +187,7 @@ Module: `.pi/agent/personal/extensions/herd/herd-footer.ts` (pure renderer). Ent
 - ✅ 0.7.5-contract alignment: envelope unwrap removed from `formatHerdRows` → 10 failed / 22 pass across status+source+footer suites. Restored → 32/32 green.
 - Slice 5 candidates: 2-line contract broken (return 1 line) → F-1 must fail; truncation removed → F-3 must fail.
 - Flicker/perf slice: self-filter bypass (`withoutSelf` call removed from herd-source) → R5-E6 must fail.
+- Poller-lifecycle slice: prior-claim clear removed from `claimPoller` → R7-E3 stack test must fail.
 - Record via `bdd_assert_mutation` or attested evidence with captured output.
 
 ## CRAP-risk notes
@@ -187,4 +195,5 @@ Module: `.pi/agent/personal/extensions/herd/herd-footer.ts` (pure renderer). Ent
 - Slices 1–2: pure functions, cyclomatic complexity ≤ 4 each; every branch has a direct test.
 - Slice 4: injected-dependency modules; branches = env gate, TTL hit/miss, exec failure, 3-envelope pane-id extraction, invalid name, create failure — each with a direct test. Complexity ≤ 5 per function.
 - Flicker/perf slice: new branches = stale-hit (lastGood set/unset), empty-outcome cache, self-filter envelope/bare/passthrough, sameLines null/length/element paths — each with a direct test. `withoutSelf` keeps the container-vs-envelope branch count at 2; `sameLines` ≤ 4.
+- Poller-lifecycle slice: `claimPoller` branches = prior-registered? + dispose-owns-registration? — each with a direct test (injected fake timers, no real clock).
 - The pi-facing entry files (`herd-widget.ts`, `herd-task.ts` extension entries) stay thin untested adapters — verified manually in a live herdr session (acceptance N/A for automation: requires interactive TUI + running herdr server).

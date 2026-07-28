@@ -1,7 +1,11 @@
 // Acceptance: docs/pi-herdr-acceptance.md — Slice 4 (widget source)
 // Traces: R5-E3, R5-E4, R5-E5, R2-E3 (docs/pi-herdr-example-map.md)
 import { describe, expect, test } from "bun:test";
-import { createHerdSource, type ExecFn } from "../.pi/agent/personal/extensions/herd/herd-source";
+import {
+  claimPoller,
+  createHerdSource,
+  type ExecFn,
+} from "../.pi/agent/personal/extensions/herd/herd-source";
 
 // Real herdr 0.7.5 envelope: `herdr agent list` emits this JSON by default.
 const GOOD = JSON.stringify({
@@ -154,5 +158,50 @@ describe("createHerdSource", () => {
     t += 1000; // within TTL
     expect(await source.getView()).toBeNull();
     expect(calls).toHaveLength(1); // empty outcome cached — no per-tick respawn
+  });
+});
+
+describe("claimPoller (R7-E3)", () => {
+  function fakeTimers() {
+    const cleared: unknown[] = [];
+    const created: object[] = [];
+    const setIntervalFn = ((_fn: () => void, _ms: number) => {
+      const handle = {};
+      created.push(handle);
+      return handle;
+    }) as never;
+    const clearIntervalFn = ((h: unknown) => {
+      cleared.push(h);
+    }) as never;
+    return { cleared, created, setIntervalFn, clearIntervalFn };
+  }
+
+  test("a new claim under the same key clears the previous timer — pollers never stack across module instances", () => {
+    const host: Record<string, unknown> = {}; // stands in for globalThis, shared across "reloads"
+    const t = fakeTimers();
+    claimPoller("herd:widget", () => {}, 2500, { host, ...t });
+    claimPoller("herd:widget", () => {}, 2500, { host, ...t });
+    expect(t.created).toHaveLength(2);
+    expect(t.cleared).toEqual([t.created[0]]);
+  });
+
+  test("distinct keys coexist — widget and footer pollers run side by side", () => {
+    const host: Record<string, unknown> = {};
+    const t = fakeTimers();
+    claimPoller("herd:widget", () => {}, 2500, { host, ...t });
+    claimPoller("herd:footer", () => {}, 2500, { host, ...t });
+    expect(t.cleared).toHaveLength(0);
+  });
+
+  test("dispose clears only its own registration — a stale dispose must not kill a newer claim", () => {
+    const host: Record<string, unknown> = {};
+    const t = fakeTimers();
+    const disposeA = claimPoller("herd:widget", () => {}, 2500, { host, ...t });
+    const disposeB = claimPoller("herd:widget", () => {}, 2500, { host, ...t });
+    expect(t.cleared).toEqual([t.created[0]]); // B's claim already cleared A
+    disposeA(); // stale — A was cleared by B's claim; must not touch B
+    expect(t.cleared).toEqual([t.created[0]]);
+    disposeB();
+    expect(t.cleared).toEqual([t.created[0], t.created[1]]);
   });
 });
