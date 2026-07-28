@@ -1,0 +1,164 @@
+# Acceptance Scenarios — pi × herdr Orchestration TUI
+
+**Phase:** formulation · **Focus:** `pi-herdr-orchestration-tui`
+**Traces to:** `docs/pi-herdr-example-map.md` (R1–R7, E-ids below)
+**Harness:** no Gherkin in `~/dotfiles/pi` → scenarios are expressed as tagged `bun test` specs (`tests/*.test.ts`, comments reference E-ids). Recorded as acceptance coverage per bdd-tdd skill fallback rule.
+
+**Test command (red & green):** `cd ~/dotfiles/pi && bun test`
+
+---
+
+## Slice 1 — `herd-status` (pure parsing/formatting core of the herd widget)
+
+Module: `.pi/agent/personal/extensions/herd/herd-status.ts` (pure, no I/O — testable without a live herdr server).
+
+### Scenario R5-E1 — blocked sorts first, rows are icon + text
+**Given** a `herdr agent list` JSON payload with agents in states working (2), blocked (1, named `api`), done (1)
+**When** `formatHerdRows(payload)` runs
+**Then** the blocked row is first, each row is `<icon> <name> <dim metadata>`, icons are `⚠` blocked, `●` working, `○` idle, `✓` done
+**And** the summary line reads `● 2 working  ⚠ 1 blocked (api)`.
+
+### Scenario R5-E2 — graceful absence
+**Given** no herdr session (CLI unavailable / empty payload / non-JSON output)
+**When** `formatHerdRows` runs
+**Then** it returns `null` (widget hides itself; never an error row).
+
+### Scenario R1-E1 — state vocabulary honored
+**Given** payloads containing each of `idle | working | blocked | done | unknown`
+**When** rows are formatted
+**Then** each maps to its DESIGN.md §5.7 token (`working→accent`, `blocked→warning`, `idle→dim`, `done→success`) and `unknown` renders dim with `?` icon — never asserted as done.
+
+### Scenario R6-E1 — never color-only
+**When** any row is rendered
+**Then** state is recoverable from text alone (icon glyph + name present without ANSI codes).
+
+## Slice 2 — `herd-task` launcher argument builder (worktree-first)
+
+Module: `.pi/agent/personal/extensions/herd/herd-task.ts` (pure builder → CLI argv; executor is a thin shell-out).
+
+### Scenario R3-E1 — task launch wraps native worktree create
+**Given** task `story-123` on repo cwd `/x/repo`
+**When** `buildTaskLaunch({ name: "story-123", cwd: "/x/repo", base: "develop" })` runs
+**Then** argv = `herdr worktree create --cwd /x/repo --branch story-123 --base develop --label story-123 --no-focus --json`
+**And** when `base` is omitted, **no `--base` flag is emitted** — herdr/git resolve the repo's own default branch (generic for any project; no hardcoded `develop`)
+**And** a follow-up step starts `pi` in the new pane via `herdr agent start story-123 --kind pi --pane <id from JSON>`.
+
+### Scenario R3-E2 — name validation
+**Given** names `Story X`, `-bad`, `x`.repeat(33), `ok_name-1`
+**When** validated
+**Then** only `ok_name-1` passes (`[a-z][a-z0-9_-]{0,31}`, herdr's own rule).
+
+### Scenario R7-E1 — detach-safe flags
+**When** any launcher argv is built
+**Then** it always includes `--no-focus` (never steals the user's pane) and `--json` (IDs parsed from output, never derived).
+
+## Slice 4 — wiring: herd widget source + `/herd-task` handler
+
+Modules: `.pi/agent/personal/extensions/herd/herd-source.ts` (polling/cache/env gating) and `.pi/agent/personal/extensions/herd/herd-task-handler.ts` (command orchestration). Both dependency-injected (`exec`, `now`, `env`) so they unit-test without a live herdr server. The pi-facing entry files stay thin untested adapters (manual verification in a live session).
+
+### Scenario R5-E3 — source is inert outside herdr
+**Given** `env.HERDR_ENV` is not `"1"`
+**When** `source.getView()` is called
+**Then** it returns `null` and `exec` is never invoked (R2-E2: no herdr commands outside herdr).
+
+### Scenario R5-E4 — TTL cache (Q3 decision: CLI-per-tick + cache)
+**Given** a source with `ttlMs = 2000` inside herdr
+**When** `getView()` is called twice within the window, then once after it
+**Then** `exec` runs exactly twice (first + after expiry), and the cached view is returned between.
+
+### Scenario R5-E5 — graceful absence on failure
+**Given** `exec` rejects, times out, or returns garbage
+**When** `getView()` is called
+**Then** it returns `null` (widget hides; never throws, never an error row) and the failure does **not** poison the cache (next call retries).
+
+### Scenario R2-E3 — correct CLI invocation and parsing
+**When** the source executes
+**Then** argv is `herdr agent list --json` and stdout is parsed through `formatHerdRows`.
+
+### Scenario R3-E3 — `/herd-task` validates before touching the environment
+**Given** an invalid task name
+**When** `runHerdTask("Bad Name", ...)` is called
+**Then** it returns a failure result and `exec` is never invoked.
+
+### Scenario R3-E4 — `/herd-task` orchestrates worktree → agent start
+**Given** `runHerdTask("story-123", { cwd })` and a successful create
+**When** exec is called
+**Then** first argv equals `buildTaskLaunch(...)`; the pane id is extracted from the create JSON (tolerant envelope: `result.pane.pane_id` → `result.root_pane.pane_id` → `result.worktree.pane_id`); second argv is `herdr agent start story-123 --kind pi --pane <id>`; result reports the pane id.
+
+### Scenario R3-E5 — create failure stops the chain
+**Given** the worktree-create exec fails or returns an envelope with no pane id
+**Then** no `agent start` is attempted; result is a failure with the create stderr/parse note.
+
+### Scenario R6-E2 — handler results are plain text
+**Then** success/failure messages are icon + text (e.g. `✓ story-123 → w1:p2`, `⚠ invalid name …`), no ANSI.
+
+- `herdr integration install pi` — official lifecycle hooks ✅ (installed `~/.pi/agent/extensions/herdr-agent-state.ts`, herdr-managed)
+- Vendored skill at `.pi/agent/personal/skills/herdr/SKILL.md` ✅ (Q7, 2026-07-28)
+- `package.json` with `bun test` ✅ (Q4)
+- `.pi/bdd.json` — generic project adapter ✅ (any repo opts in by adding its own; absence → inference/defaults)
+
+---
+
+## API contract (frozen by the red tests)
+
+```ts
+// extensions/herd/herd-status.ts
+type HerdState = "idle" | "working" | "blocked" | "done" | "unknown";
+interface HerdAgent { name: string; state: HerdState; meta?: string }
+formatHerdRows(payload: unknown): { summary: string; rows: string[] } | null
+
+// extensions/herd/herd-task.ts
+isValidAgentName(name: string): boolean
+buildTaskLaunch(opts: { name: string; cwd: string; base?: string }): string[] // argv
+
+// extensions/herd/herd-source.ts (Slice 4)
+type ExecFn = (argv: string[]) => Promise<{ stdout: string; stderr: string }>;
+createHerdSource(deps: { exec: ExecFn; env: Record<string, string|undefined>;
+  now?: () => number; ttlMs?: number }): { getView(): Promise<HerdView|null> }
+
+// extensions/herd/herd-task-handler.ts (Slice 4)
+type TaskResult = { ok: true; paneId: string; message: string }
+                | { ok: false; message: string };
+extractPaneId(createJson: unknown): string | null
+runHerdTask(name: string, deps: { cwd: string; exec: ExecFn; base?: string })
+  : Promise<TaskResult>
+
+// extensions/herd/herd-footer.ts (Slice 5)
+interface FooterInput { model?: string; thinking?: string; branch?: string | null;
+  herd?: HerdView | null; width: number }
+renderHerdFooter(input: FooterInput): string[]   // always exactly 2 lines
+```
+
+## Slice 5 — herd footer (DESIGN.md §7.1)
+
+Module: `.pi/agent/personal/extensions/herd/herd-footer.ts` (pure renderer). Entry: `.pi/agent/personal/extensions/herd/herd-footer-command.ts` (`/footer` toggle adapter, mirrors pi's custom-footer example).
+
+### Scenario F-1 — two-line contract, model right-aligned
+**Given** model `kimi-k3`, thinking level `high`, branch `main`, herd view with 1 blocked agent
+**When** `renderHerdFooter(input, width)` runs
+**Then** it returns exactly 2 lines: line 1 = dim keybinding hints; line 2 = herd summary left, `kimi-k3 · thinking high (main)` right, separated by padding (ample width)
+**And** at tight widths the model/thinking/branch segment survives intact while the herd summary truncates first (P4: state is persistent; the herd widget shows the same summary, so truncation is redundancy-safe).
+
+### Scenario F-2 — graceful degradation
+**Given** herd view `null` and/or branch `null`
+**Then** missing parts are simply omitted (no placeholder text, no error glyphs).
+
+### Scenario F-3 — narrow-terminal truncation
+**Given** width smaller than the combined content
+**Then** each line is ≤ width visible columns, truncated middle-first via `truncateToWidth`; never throws, never overflows.
+
+### Scenario R6-E3 — thinking level carries meaning in text
+**Then** the thinking segment includes the level word (e.g. `high`), not only a ramp color (color applied by the entry adapter via `theme.fg("thinkingHigh", …)`).
+
+## Mutation/sensitivity plan (verify phase)
+
+- ✅ Slice 1: sort flip → R5-E1 failed; name-cap removal → R3-E2 failed; base drop → 2 failed. All restored.
+- ✅ Slice 4: cache bypass → R5-E4 failed; env gate removed → R5-E3 failed; precedence flip → R3-E4 failed. All restored.
+- Slice 5 candidates: 2-line contract broken (return 1 line) → F-1 must fail; truncation removed → F-3 must fail.
+- Record via `bdd_assert_mutation` or attested evidence with captured output.
+
+## CRAP-risk notes
+
+- Slices 1–2: pure functions, cyclomatic complexity ≤ 4 each; every branch has a direct test.
+- Slice 4: injected-dependency modules; branches = env gate, TTL hit/miss, exec failure, 3-envelope pane-id extraction, invalid name, create failure — each with a direct test. Complexity ≤ 5 per function.
+- The pi-facing entry files (`herd-widget.ts`, `herd-task.ts` extension entries) stay thin untested adapters — verified manually in a live herdr session (acceptance N/A for automation: requires interactive TUI + running herdr server).

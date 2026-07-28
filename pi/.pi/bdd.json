@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "projectLabel": "dotfiles-pi",
+  "commands": {
+    "unitTest": "bun test"
+  },
+  "implementationPathPatterns": [
+    "extensions/**",
+    "skills/**",
+    "themes/**",
+    "lib/**",
+    ".pi/agent/**/extensions/**",
+    ".pi/agent/**/skills/**",
+    ".pi/agent/**/lib/**",
+    ".pi/agent/**/themes/**"
+  ],
+  "testPathPatterns": [
+    "tests/**",
+    "**/*.test.ts",
+    "**/*.test.js"
+  ],
+  "docsPathPatterns": [
+    "docs/**",
+    "*.md",
+    "**/*.md"
+  ],
+  "configPathPatterns": [
+    "package.json",
+    "bun.lock*",
+    ".pi/**",
+    "**/*.json",
+    "**/*.toml"
+  ],
+  "comment": "Generic + optional: any repo opts into BDD gates by adding its own .pi/bdd.json; without one, bdd-mode falls back to package.json script inference or safe defaults (see lib/bdd/config.ts). This file only governs sessions whose cwd is the dotfiles pi package. Path classes are tool-layout patterns (extensions/skills/themes/lib/tests/docs), not project-name-coupled."
+}

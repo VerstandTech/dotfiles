@@ -1,0 +1,10 @@
+{
+  "name": "dotfiles-pi",
+  "private": true,
+  "description": "Personal pi agent configuration: themes, extensions, skills. Unit tests via bun:test.",
+  "scripts": {
+    "test": "bun test",
+    "test:watch": "bun test --watch"
+  },
+  "devDependencies": {}
+}

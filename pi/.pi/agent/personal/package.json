@@ -6,7 +6,7 @@
   "description": "Personal Pi extensions, skills, prompts, and fleet agents synced via ~/dotfiles",
   "keywords": ["pi-package"],
   "pi": {
-    "extensions": ["./extensions/*.ts"],
+    "extensions": ["./extensions/*.ts", "./extensions/*/index.ts"],
     "skills": ["./skills"],
     "prompts": ["./prompts"],
     "subagents": {

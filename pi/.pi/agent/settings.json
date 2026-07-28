@@ -1,7 +1,7 @@
 {
-  "lastChangelogVersion": "0.80.10",
-  "defaultProvider": "xai",
-  "defaultModel": "grok-4.5",
+  "lastChangelogVersion": "0.82.1",
+  "defaultProvider": "fireworks",
+  "defaultModel": "accounts/fireworks/routers/kimi-k3-fast",
   "defaultThinkingLevel": "high",
   "packages": [
     "npm:pi-subagents",
@@ -13,7 +13,7 @@
   "terminal": {
     "showTerminalProgress": true
   },
-  "theme": "dark",
+  "theme": "herd-dark",
   "subagents": {
     "defaultModel": "xai/grok-4.5"
   }

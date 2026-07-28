@@ -1,0 +1,11 @@
+# Only the .pi tree maps into ~/. Repo files (docs, tests, extensions source,
+# package.json, DESIGN.md) stay in ~/dotfiles and must NOT be linked into ~.
+^/\.git.*$
+^/DESIGN\.md$
+^/docs$
+^/extensions$
+^/tests$
+^/package\.json$
+^/bun\.lock.*$
+^/node_modules$
+^/\.stow-local-ignore$
