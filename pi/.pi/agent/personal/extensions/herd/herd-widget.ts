@@ -6,10 +6,13 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { execFile } from "node:child_process";
 import { createHerdSource, type ExecFn } from "./herd-source.ts";
+import { herdLines, sameLines } from "./herd-status.ts";
 
+// Timeout < poll interval (R7-E2): a slow CLI call (measured 157–362ms) must
+// never overlap the next tick.
 const exec: ExecFn = (argv) =>
   new Promise((resolve, reject) => {
-    execFile(argv[0]!, argv.slice(1), { timeout: 5000 }, (err, stdout, stderr) =>
+    execFile(argv[0]!, argv.slice(1), { timeout: 1500 }, (err, stdout, stderr) =>
       err ? reject(err) : resolve({ stdout, stderr }),
     );
   });
@@ -21,11 +24,23 @@ export default function (pi: ExtensionAPI) {
     if (!ctx.hasUI) return;
 
     const source = createHerdSource({ exec, env: process.env });
+    let lastLines: string[] | null | undefined; // undefined = never published
+    let inFlight = false;
 
     const refresh = async () => {
-      const view = await source.getView();
-      // setWidget takes string[] synchronously; undefined clears (hides) it.
-      ctx.ui.setWidget("herd", view ? [view.summary, ...view.rows] : undefined);
+      if (inFlight) return; // serialized polls (R7-E2): never pile up
+      inFlight = true;
+      try {
+        const lines = herdLines(await source.getView());
+        // Publish only on change (R7-E2): setWidget triggers a TUI re-layout,
+        // so an unchanged poll must cost nothing. undefined clears (hides).
+        if (lastLines === undefined || !sameLines(lastLines, lines)) {
+          ctx.ui.setWidget("herd", lines ?? undefined);
+          lastLines = lines;
+        }
+      } finally {
+        inFlight = false;
+      }
     };
 
     await refresh();

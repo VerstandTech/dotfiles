@@ -85,4 +85,74 @@ describe("createHerdSource", () => {
     const source = createHerdSource({ exec, env: { HERDR_ENV: "1" } });
     expect(await source.getView()).toBeNull();
   });
+
+  test("R5-E5: after a success, transient failure returns the last good view (stale-while-revalidate)", async () => {
+    let t = 0;
+    let fail = false;
+    const calls: string[][] = [];
+    const exec: ExecFn = async (argv) => {
+      calls.push(argv);
+      if (fail) throw new Error("socket hiccup");
+      return { stdout: GOOD, stderr: "" };
+    };
+    const source = createHerdSource({
+      exec,
+      env: { HERDR_ENV: "1" },
+      now: () => t,
+      ttlMs: 1000,
+    });
+    const good = await source.getView(); // success
+    expect(good).not.toBeNull();
+    t += 2000; // past TTL → re-exec
+    fail = true;
+    expect(await source.getView()).toEqual(good); // stale view, NOT null — no hide/show flicker
+    expect(await source.getView()).toEqual(good); // failure not cached → retried again
+    expect(calls).toHaveLength(3);
+  });
+
+  const SELF_AND_SIBLING = JSON.stringify({
+    id: "cli:agent:list",
+    result: {
+      type: "agent_list",
+      agents: [
+        { agent: "pi", agent_status: "idle", pane_id: "w1:p1" }, // self — status flaps
+        { name: "api", agent: "pi", agent_status: "blocked", pane_id: "w1:p2" },
+      ],
+    },
+  });
+
+  test("R5-E6: self-filter — the caller's own pane (HERDR_PANE_ID) never renders; siblings do", async () => {
+    const { exec } = execReturning(SELF_AND_SIBLING);
+    const source = createHerdSource({
+      exec,
+      env: { HERDR_ENV: "1", HERDR_PANE_ID: "w1:p1" },
+    });
+    const view = await source.getView();
+    expect(view).not.toBeNull();
+    expect(view!.rows.join("\n")).not.toContain("w1:p1");
+    expect(view!.rows.join("\n")).toContain("api");
+    expect(view!.summary).toBe("⚠ 1 blocked (api)");
+  });
+
+  test("R5-E6: alone (only self) → null, and the empty outcome IS cached at TTL rate", async () => {
+    const SELF_ONLY = JSON.stringify({
+      id: "cli:agent:list",
+      result: {
+        type: "agent_list",
+        agents: [{ agent: "pi", agent_status: "working", pane_id: "w1:p1" }],
+      },
+    });
+    let t = 0;
+    const { exec, calls } = execReturning(SELF_ONLY);
+    const source = createHerdSource({
+      exec,
+      env: { HERDR_ENV: "1", HERDR_PANE_ID: "w1:p1" },
+      now: () => t,
+      ttlMs: 2000,
+    });
+    expect(await source.getView()).toBeNull();
+    t += 1000; // within TTL
+    expect(await source.getView()).toBeNull();
+    expect(calls).toHaveLength(1); // empty outcome cached — no per-tick respawn
+  });
 });

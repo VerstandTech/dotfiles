@@ -66,10 +66,22 @@ Modules: `.pi/agent/personal/extensions/herd/herd-source.ts` (polling/cache/env 
 **When** `getView()` is called twice within the window, then once after it
 **Then** `exec` runs exactly twice (first + after expiry), and the cached view is returned between.
 
-### Scenario R5-E5 — graceful absence on failure
+### Scenario R5-E5 — graceful absence on failure + stale-while-revalidate
 **Given** `exec` rejects, times out, or returns garbage
 **When** `getView()` is called
-**Then** it returns `null` (widget hides; never throws, never an error row) and the failure does **not** poison the cache (next call retries).
+**Then** before any success it returns `null` (widget hides; never throws, never an error row) and the failure does **not** poison the cache (next call retries)
+**And** after at least one success, a transient failure returns the last good view (stale-while-revalidate) — the widget never hide/show flickers on a hiccup — and the next tick still retries (failure is never cached).
+
+### Scenario R5-E6 — sibling agents only (self-filter)
+**Given** `env.HERDR_PANE_ID = w1:p1` and a payload listing `w1:p1` (self — its `agent_status` flaps working↔idle as the user reads and the agent works) plus sibling `w1:p2`
+**When** `getView()` runs
+**Then** the view contains only the sibling — the caller's own pane never renders (the widget's purpose is sibling agents; a flapping self row is flicker, not signal. Live evidence 2026-07-28: `state_change_seq` advanced 2→6 within one session)
+**And** when only self is present the outcome is `null` (widget hides) — and that empty outcome IS cached for the TTL: alone is a stable success state, not a failure, so polling stays at TTL rate instead of respawning the CLI every tick.
+
+### Scenario R7-E2 — publish-on-change + serialized polls (TUI perf)
+**Given** a widget adapter driven by the polling source
+**Then** `setWidget` is called only when the rendered lines actually change (`sameLines(herdLines(view))` gate in the adapter) — an unchanged poll causes no TUI re-layout
+**And** polls are serialized: a tick arriving while the previous refresh is in flight is dropped, and the exec timeout (1500ms) is shorter than the poll interval (2500ms), so slow CLI calls (measured 157–362ms, 2026-07-28) can never pile up.
 
 ### Scenario R2-E3 — correct CLI invocation and parsing
 **When** the source executes
@@ -114,10 +126,18 @@ formatHerdRows(payload: unknown): { summary: string; rows: string[] } | null
 isValidAgentName(name: string): boolean
 buildTaskLaunch(opts: { name: string; cwd: string; base?: string }): string[] // argv
 
-// extensions/herd/herd-source.ts (Slice 4)
+// extensions/herd/herd-source.ts (Slice 4 + flicker/perf slice)
 type ExecFn = (argv: string[]) => Promise<{ stdout: string; stderr: string }>;
+// DEFAULT_TTL_MS = 5000 (Q3 amended: publish-on-change makes staleness invisible;
+// halves CLI-spawn rate). Caches successful OUTCOMES including empty (R5-E6);
+// failures are never cached and return the last good view (R5-E5).
 createHerdSource(deps: { exec: ExecFn; env: Record<string, string|undefined>;
   now?: () => number; ttlMs?: number }): { getView(): Promise<HerdView|null> }
+
+// extensions/herd/herd-status.ts (flicker/perf slice helpers)
+withoutSelf(payload: unknown, selfPaneId: string | undefined): unknown // R5-E6
+herdLines(view: HerdView | null): string[] | null                      // R7-E2
+sameLines(a: string[] | null, b: string[] | null): boolean             // R7-E2
 
 // extensions/herd/herd-task-handler.ts (Slice 4)
 type TaskResult = { ok: true; paneId: string; message: string }
@@ -159,10 +179,12 @@ Module: `.pi/agent/personal/extensions/herd/herd-footer.ts` (pure renderer). Ent
 - ✅ Slice 4: cache bypass → R5-E4 failed; env gate removed → R5-E3 failed; precedence flip → R3-E4 failed. All restored.
 - ✅ 0.7.5-contract alignment: envelope unwrap removed from `formatHerdRows` → 10 failed / 22 pass across status+source+footer suites. Restored → 32/32 green.
 - Slice 5 candidates: 2-line contract broken (return 1 line) → F-1 must fail; truncation removed → F-3 must fail.
+- Flicker/perf slice: self-filter bypass (`withoutSelf` call removed from herd-source) → R5-E6 must fail.
 - Record via `bdd_assert_mutation` or attested evidence with captured output.
 
 ## CRAP-risk notes
 
 - Slices 1–2: pure functions, cyclomatic complexity ≤ 4 each; every branch has a direct test.
 - Slice 4: injected-dependency modules; branches = env gate, TTL hit/miss, exec failure, 3-envelope pane-id extraction, invalid name, create failure — each with a direct test. Complexity ≤ 5 per function.
+- Flicker/perf slice: new branches = stale-hit (lastGood set/unset), empty-outcome cache, self-filter envelope/bare/passthrough, sameLines null/length/element paths — each with a direct test. `withoutSelf` keeps the container-vs-envelope branch count at 2; `sameLines` ≤ 4.
 - The pi-facing entry files (`herd-widget.ts`, `herd-task.ts` extension entries) stay thin untested adapters — verified manually in a live herdr session (acceptance N/A for automation: requires interactive TUI + running herdr server).

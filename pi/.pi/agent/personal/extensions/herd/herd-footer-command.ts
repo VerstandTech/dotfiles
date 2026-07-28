@@ -9,7 +9,7 @@ import { createHerdSource, type ExecFn } from "./herd-source.ts";
 
 const exec: ExecFn = (argv) =>
   new Promise((resolve, reject) => {
-    execFile(argv[0]!, argv.slice(1), { timeout: 5000 }, (err, stdout, stderr) =>
+    execFile(argv[0]!, argv.slice(1), { timeout: 1500 }, (err, stdout, stderr) =>
       err ? reject(err) : resolve({ stdout, stderr }),
     );
   });
@@ -34,6 +34,9 @@ export default function (pi: ExtensionAPI) {
       }
 
       const source = createHerdSource({ exec, env: process.env });
+      // Declared before setFooter: render() closes over this binding and the
+      // TUI may render synchronously during registration (TDZ guard).
+      let lastView: Awaited<ReturnType<typeof source.getView>> = null;
 
       ctx.ui.setFooter((tui, theme, footerData) => {
         const unsub = footerData.onBranchChange(() => tui.requestRender());
@@ -60,10 +63,16 @@ export default function (pi: ExtensionAPI) {
         };
       });
 
-      let lastView = await source.getView();
+      lastView = await source.getView();
+      let inFlight = false;
       const timer = setInterval(async () => {
-        if (!enabled) return;
-        lastView = await source.getView();
+        if (!enabled || inFlight) return; // serialized polls (R7-E2)
+        inFlight = true;
+        try {
+          lastView = await source.getView();
+        } finally {
+          inFlight = false;
+        }
       }, 2500);
       pi.on("session_end", () => clearInterval(timer));
 
@@ -71,6 +80,3 @@ export default function (pi: ExtensionAPI) {
     },
   });
 }
-
-// Module-level mutable for the adapter's poll cache (kept out of the pure core).
-let lastView: Awaited<ReturnType<ReturnType<typeof createHerdSource>["getView"]>> = null;

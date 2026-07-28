@@ -103,3 +103,43 @@ export function formatHerdRows(payload: unknown): HerdView | null {
 
   return { summary: parts.join("  "), rows };
 }
+
+/**
+ * Remove the caller's own pane from a `herdr agent list` payload (R5-E6):
+ * the widget shows SIBLING agents — the user's own pane flaps working↔idle
+ * as they read and the agent works, which is flicker, not signal.
+ * Handles the CLI envelope ({ result: { agents } }) and a bare { agents }
+ * object; anything unrecognized (or no pane id given) passes through.
+ */
+export function withoutSelf(payload: unknown, selfPaneId: string | undefined): unknown {
+  if (selfPaneId === undefined || typeof payload !== "object" || payload === null) {
+    return payload;
+  }
+  const top = payload as Record<string, unknown>;
+  const container = (
+    typeof top.result === "object" && top.result !== null ? top.result : top
+  ) as Record<string, unknown>;
+  if (!Array.isArray(container.agents)) return payload;
+  const agents = container.agents.filter(
+    (a) =>
+      !(typeof a === "object" && a !== null && (a as { pane_id?: unknown }).pane_id === selfPaneId),
+  );
+  if (container === top) return { ...top, agents };
+  return { ...top, result: { ...container, agents } };
+}
+
+/** Widget line array for a view: [summary, ...rows]; null view → null (R7-E2). */
+export function herdLines(view: HerdView | null): string[] | null {
+  return view === null ? null : [view.summary, ...view.rows];
+}
+
+/**
+ * Structural equality for widget lines (R7-E2 publish-on-change): the adapter
+ * calls setWidget only when this returns false — unchanged polls cause no
+ * TUI re-layout.
+ */
+export function sameLines(a: string[] | null, b: string[] | null): boolean {
+  if (a === b) return true;
+  if (a === null || b === null || a.length !== b.length) return false;
+  return a.every((line, i) => line === b[i]);
+}

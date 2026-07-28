@@ -3,7 +3,7 @@
 // output on herdr 0.7.5; there is no --json flag) + TTL cache — the simple start.
 // Traces: docs/pi-herdr-example-map.md R2, R5 · docs/pi-herdr-acceptance.md Slice 4
 
-import { formatHerdRows, type HerdView } from "./herd-status.ts";
+import { formatHerdRows, withoutSelf, type HerdView } from "./herd-status.ts";
 
 export type ExecFn = (argv: string[]) => Promise<{ stdout: string; stderr: string }>;
 
@@ -18,7 +18,9 @@ export interface HerdSource {
   getView(): Promise<HerdView | null>;
 }
 
-const DEFAULT_TTL_MS = 2000;
+// Q3 amended (2026-07-28, flicker/perf slice): 5s TTL halves CLI-spawn rate;
+// publish-on-change in the adapter (R7-E2) makes the extra staleness invisible.
+const DEFAULT_TTL_MS = 5000;
 
 /**
  * Create a polling herd source. Inert outside herdr (R5-E3/R2-E2: never execs
@@ -29,28 +31,36 @@ export function createHerdSource(deps: HerdSourceDeps): HerdSource {
   const now = deps.now ?? Date.now;
   const ttlMs = deps.ttlMs ?? DEFAULT_TTL_MS;
   let cachedAt = -Infinity;
+  let hasOutcome = false;
+  // Last SUCCESSFUL outcome — null included: "alone / no siblings" is a stable
+  // state that must be cached (R5-E6), otherwise polling respawns the CLI every tick.
   let cached: HerdView | null = null;
+  // Last non-empty view, for stale-while-revalidate (R5-E5).
+  let lastGood: HerdView | null = null;
 
   return {
     async getView(): Promise<HerdView | null> {
       if (deps.env.HERDR_ENV !== "1") return null;
 
       const t = now();
-      if (t - cachedAt < ttlMs) return cached;
+      if (hasOutcome && t - cachedAt < ttlMs) return cached;
 
-      let view: HerdView | null = null;
       try {
         const { stdout } = await deps.exec(["herdr", "agent", "list"]);
-        view = formatHerdRows(JSON.parse(stdout));
-      } catch {
-        view = null; // graceful absence: socket missing, garbage output, etc.
-      }
-
-      if (view !== null) {
+        const view = formatHerdRows(
+          withoutSelf(JSON.parse(stdout), deps.env.HERDR_PANE_ID),
+        );
         cached = view;
+        hasOutcome = true;
         cachedAt = t;
+        if (view !== null) lastGood = view;
+        return view;
+      } catch {
+        // Graceful absence (R5-E2) + stale-while-revalidate (R5-E5): keep the
+        // last good view on transient failure — the widget never hide/show
+        // flickers on a hiccup. Failures are NOT cached; the next tick retries.
+        return lastGood;
       }
-      return view;
     },
   };
 }

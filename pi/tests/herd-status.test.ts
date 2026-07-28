@@ -1,7 +1,12 @@
 // Acceptance: docs/pi-herdr-acceptance.md — Slice 1
 // Traces: R5-E1, R5-E2, R1-E1, R6-E1 (docs/pi-herdr-example-map.md)
 import { describe, expect, test } from "bun:test";
-import { formatHerdRows } from "../.pi/agent/personal/extensions/herd/herd-status";
+import {
+  formatHerdRows,
+  herdLines,
+  sameLines,
+  withoutSelf,
+} from "../.pi/agent/personal/extensions/herd/herd-status";
 
 // Real herdr 0.7.5 `herdr agent list` output: JSON CLI envelope by default (no
 // --json flag). AgentInfo: agent_status (AgentStatus enum), name (from
@@ -98,5 +103,48 @@ describe("formatHerdRows", () => {
       // eslint-disable-next-line no-control-regex
       expect(row).not.toMatch(/\x1b\[/);
     }
+  });
+});
+
+describe("withoutSelf (R5-E6)", () => {
+  test("removes only the caller's pane from the CLI envelope", () => {
+    const out = withoutSelf(payload, "w1:p3") as {
+      result: { agents: Array<{ pane_id: string }> };
+    };
+    expect(out.result.agents).toHaveLength(3);
+    expect(out.result.agents.map((a) => a.pane_id)).not.toContain("w1:p3");
+  });
+
+  test("undefined pane id or garbage passes through unchanged", () => {
+    expect(withoutSelf(payload, undefined)).toBe(payload);
+    expect(withoutSelf("junk", "w1:p1")).toBe("junk");
+    expect(withoutSelf({ nope: true }, "w1:p1")).toEqual({ nope: true });
+  });
+
+  test("bare {agents} shape is filtered too", () => {
+    const out = withoutSelf(
+      { agents: [{ pane_id: "w1:p1", agent_status: "idle" }] },
+      "w1:p1",
+    ) as { agents: unknown[] };
+    expect(out.agents).toHaveLength(0);
+  });
+});
+
+describe("herdLines + sameLines (R7-E2 publish-on-change)", () => {
+  test("herdLines: [summary, ...rows], or null for a null view", () => {
+    const view = formatHerdRows(payload)!;
+    const lines = herdLines(view)!;
+    expect(lines[0]).toBe(view.summary);
+    expect(lines.slice(1)).toEqual(view.rows);
+    expect(herdLines(null)).toBeNull();
+  });
+
+  test("sameLines: structural equality, null-safe", () => {
+    expect(sameLines(null, null)).toBe(true);
+    expect(sameLines(["a"], ["a"])).toBe(true);
+    expect(sameLines(["a"], ["b"])).toBe(false);
+    expect(sameLines(["a"], ["a", "b"])).toBe(false);
+    expect(sameLines(["a"], null)).toBe(false);
+    expect(sameLines(null, ["a"])).toBe(false);
   });
 });
