@@ -38,11 +38,14 @@ Operationalize the playbook through deterministic phase control, **CAID isolatio
 
 1. **Discovery before formulation** — Example Map (Rules / Examples / Questions) before scenarios or production code when the change is behavior-shaped.
 2. **Formulation before implementation** — acceptance scenarios and/or unit tests exist first.
-3. **Red before green** — prove failure with `bdd_assert_red` before `/bdd green` or any implementation. The machine **blocks** `green` and `verify` until red evidence exists.
-4. **Green minimum** — smallest change that passes; `bdd_assert_green` must **cover** the red command (`strictGreenCoversRed` default on).
-5. **Handoff evidence** — red command/reason, green command/result, acceptance path or N/A + reason, mutation note when acceptance changed, CRAP notes for new branches.
-6. **CAID for multi-role work** — Test Designer and Implementer use separate worktrees (`lib/worktree/caid.ts`); never collude in one writable tree.
-7. **Trajectory + budgets on verify** — evaluate process anti-patterns and cost circuit breakers before claiming done.
+3. **Causal red before green** — prove the focused test fails because the intended behavior is absent, not merely because some command is non-zero. Use `bdd_assert_red` before `/bdd green` or implementation. The extension records/nonzero-gates red, but causality remains an operator verification requirement; do not claim it is machine-inferred.
+4. **Timeout/setup is neither color** — timeout, cancellation, missing dependency, compile/import/harness failure, unavailable service, or unrelated pre-existing failure is neither valid red nor valid green. Repair the harness or report blocked.
+5. **Green minimum** — smallest change that passes; `bdd_assert_green` must **cover** the red command (`strictGreenCoversRed` default on).
+6. **Evidence labels stay honest** — a local command pass is local green. CI may be documented as same-SHA replacement evidence when local execution is genuinely unavailable, but it is never renamed a local pass and does not bypass an extension gate that requires `bdd_assert_green`.
+7. **Clean SHA evidence** — SHA-bound red/green/final evidence requires empty `git status --porcelain`. Otherwise record `dirty@SHA` plus exact paths; it is non-passing for final handoff.
+8. **Handoff evidence** — red command/reason/SHA, green command/result/SHA, acceptance path or N/A + reason, mutation note when acceptance changed, CRAP notes for new branches.
+9. **CAID for multi-role work** — Test Designer and Implementer use separate worktrees (`lib/worktree/caid.ts`); never collude in one writable tree.
+10. **Trajectory + budgets on verify** — evaluate process anti-patterns and cost circuit breakers before claiming done.
 
 ## Extension API (use these tools)
 
@@ -112,14 +115,18 @@ Skip a formal map only for tiny pure-tech fixes; still record acceptance N/A rea
 
 - Finish failing tests in an isolated designer worktree when multi-agent.
 - `bdd_assert_red` with focused command (use `append` for a file path).
-- Confirm the failure message matches the intended missing behavior (not compile noise from unrelated breakage).
-- `/bdd green` only after red evidence is stored.
+- Confirm causality: the new/changed assertion reaches the behavior under test and fails for the expected missing outcome. A passing baseline plus a focused sensitivity/mutation check is stronger evidence than exit code alone.
+- Timeout, cancellation, dependency/setup/import/compile failure, unavailable infrastructure, and unrelated existing failures are **not red**. Fix or isolate them before recording evidence.
+- Record the exact command, exit code, causal assertion/failure, and current commit SHA.
+- `/bdd green` only after causal red evidence is stored.
 
 ### 4. Green (prefer CAID Implementer)
 
 - Implement **minimum** production code on a **separate** worktree from Test Designer.
 - `bdd_assert_green` on the same focus (then broader suite if needed).
+- A timeout, setup/import failure, interrupted run, or unavailable dependency is **not green**, even if no assertion failed.
 - Run acceptance command from config when user-visible (`acceptanceTest` in bdd.json).
+- If local execution is impossible for an environment-specific reason, do not fake `bdd_assert_green`. Record the blocker. A successful required CI check may be cited separately as **replacement CI evidence** only when it tests the same command/behavior on the exact candidate SHA; include workflow/check URL and conclusion. It remains distinct from local green and cannot override a hard local extension gate.
 
 ### 5. Refactor (optional)
 
@@ -133,6 +140,7 @@ Skip a formal map only for tiny pure-tech fixes; still record acceptance N/A rea
 - Use isolated read-only `bdd-breaker`, `bdd-fitness-guardian`, and `bdd-qa` roles when independent verification is warranted. The parent remains the orchestrator and sole decision-maker.
 - Mutation/sensitivity: deliberately break the behavior, run the fail command, restore, then use `bdd_assert_mutation` so proven mutation evidence is command-backed.
 - Review fleet synthesis must live under `.pi/fleet-runs/<runId>/` and record `fleetNoBlockers=true` or accepted/deferred blocker dispositions.
+- Before `bdd_handoff`, require clean git status for every SHA-bound local result. Dirty evidence remains diagnostic only and blocks a passing final handoff.
 - `bdd_handoff` — fix any missing fields before claiming done.
 
 ## Handoff template (must fill)
@@ -141,8 +149,9 @@ Skip a formal map only for tiny pure-tech fixes; still record acceptance N/A rea
 ## BDD/TDD Handoff Evidence
 - Focus: …
 - Example Map: … (R#/E#/Q#)
-- Red: `command` → exit N — reason
-- Green: `command` → exit 0 — result
+- Red: `command` @ `<sha>` → exit N — causal assertion/failure (not timeout/setup)
+- Local green: `command` @ `<sha>` → exit 0 — result | not-run — blocker
+- Replacement CI: `<workflow/check URL>` @ `<same sha>` → conclusion — why local evidence was unavailable | none
 - Acceptance: path | N/A — reason
 - Mutation: proven | n/a — note
 - CRAP: branches/errors/permissions covered or simplified
@@ -173,7 +182,10 @@ Never invent a second test stack. **Wrap what the repo already runs.**
 ## Anti-patterns
 
 - Implementing first, then adding tests (“tests after”)
-- Green assert without a prior failing red assert
+- Treating any non-zero exit, timeout, setup/import error, or unrelated failure as red
+- Treating timeout/interruption or "no assertion failure seen" as green
+- Green assert without a prior causal failing red assert
+- Calling replacement CI evidence a local pass or using it to silently bypass a local hard gate
 - Broadening scope mid-green
 - Acceptance N/A without reason
 - Using `/bdd bypass` to avoid writing tests

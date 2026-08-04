@@ -1,50 +1,124 @@
 # Post-PR merge command cheat sheet
 
-## Resolve main checkout vs worktree
+## Authoritative persistent cleanup driver
+
+Do not copy lock snippets into another shell. Run every Phase 1–6 operation as one child of the bundled driver:
+
+```bash
+COMMON_RAW=$(git rev-parse --git-common-dir)
+case "$COMMON_RAW" in /*) GIT_COMMON="$COMMON_RAW" ;; *) GIT_COMMON="$(pwd)/$COMMON_RAW" ;; esac
+GIT_COMMON=$(cd "$GIT_COMMON" && pwd -P)
+
+# cleanup-plan.sh must perform identity recheck, Phases 1–6, and final verification.
+scripts/cleanup-lock-driver.sh --git-common-dir "$GIT_COMMON" -- \
+  bash /absolute/path/to/cleanup-plan.sh
+```
+
+The driver is the sole lock implementation. An atomic ready-file handshake publishes the dedicated child process-group ID before cancellation can release ownership. Startup `INT`/`TERM` waits for readiness or proven launcher exit, signals the whole known group, and verifies all descendants are gone before release. If readiness or quiescence cannot be proven it retains the lock and exits 75. Never split phases across driver invocations.
+
+## Identity fence before destructive cleanup
+
+```bash
+: "${PR_NUMBER:?}" "${EXPECTED_HEAD_SHA:?}"
+PR_JSON=$(gh pr view "$PR_NUMBER" \
+  --json number,url,state,headRefName,headRefOid,baseRefName,mergedAt,mergeCommit)
+test "$(jq -r .state <<<"$PR_JSON")" = MERGED
+test "$(jq -r .headRefOid <<<"$PR_JSON")" = "$EXPECTED_HEAD_SHA"
+test "$(jq -r '.mergeCommit.oid // empty' <<<"$PR_JSON")" != ""
+```
+
+Repeat this query immediately before worktree/branch deletion. Mismatch is `stale/overtaken`; API failure is `unknown`. Both stop cleanup.
+
+## Resolve main checkout and update base
 
 ```bash
 git worktree list --porcelain
-# Main = first worktree; worktrees usually under .worktrees/ or .claude/worktrees/
-```
-
-## PR meta (optional but preferred)
-
-```bash
-gh pr view --json number,state,headRefName,baseRefName,mergedAt,url
-gh pr view <N> --json number,state,headRefName,baseRefName,mergedAt,url
-```
-
-## Update base
-
-```bash
+# Main = first worktree. Run the cleanup plan from that surviving checkout.
 git fetch origin
-git checkout develop   # or main
-git pull --ff-only origin develop
+git checkout "$BASE"
+git pull --ff-only origin "$BASE"
 ```
 
-## Worktree removal
+## Remove only exact finalized handoffs
+
+For `FEATURE_WORKTREE` and optional neutral `REVIEW_FIX_WORKTREE`, verify each path is registered, non-main, not current cwd, clean, on its handed-off branch, and `HEAD == EXPECTED_HEAD_SHA`.
 
 ```bash
-git worktree remove --force path/to/worktree
-rm -rf path/to/worktree   # only if git worktree remove left a dirty dir
+for path in "$FEATURE_WORKTREE" "${REVIEW_FIX_WORKTREE:-}"; do
+  [[ -n "$path" ]] || continue
+  git worktree list --porcelain | grep -Fqx "worktree $path" || exit 75
+  test "$(pwd -P)" != "$(cd "$path" && pwd -P)" || exit 75
+  test -z "$(git -C "$path" status --porcelain)" || exit 75
+  test "$(git -C "$path" rev-parse HEAD)" = "$EXPECTED_HEAD_SHA" || exit 75
+done
+git worktree remove --force "$FEATURE_WORKTREE"
+[[ -z "${REVIEW_FIX_WORKTREE:-}" ]] || git worktree remove --force "$REVIEW_FIX_WORKTREE"
 git worktree prune
+for branch in "$FEATURE" "${REVIEW_FIX_LOCAL_BRANCH:-}"; do
+  [[ -n "$branch" ]] || continue
+  git show-ref --verify --quiet "refs/heads/$branch" && git branch -D -- "$branch"
+done
 ```
 
-## Branch deletion
+Also compare `git -C "$REVIEW_FIX_WORKTREE" branch --show-current` with `REVIEW_FIX_LOCAL_BRANCH` before removal. Other merged branches require explicit request + preview + confirmation.
+
+## Remote deletion classification
+
+Use the exact Git remote, credentials, and full branch ref for both discovery and verification. `git ls-remote --exit-code` classifies exit 0 as present, exit 2 as absent, and every other exit as unknown.
 
 ```bash
-git branch -D feature/xyz
-git push origin --delete feature/xyz   # ok if already deleted
-git fetch --prune
+REMOTE_REF="refs/heads/$FEATURE"
+LS_REMOTE_OUT=$(mktemp); LS_REMOTE_ERR=$(mktemp)
+classify_remote_feature() {
+  local rc
+  set +e
+  git ls-remote --exit-code --heads origin "$REMOTE_REF" >"$LS_REMOTE_OUT" 2>"$LS_REMOTE_ERR"
+  rc=$?
+  set -e
+  case "$rc" in
+    0) printf '%s\n' exists ;;
+    2) printf '%s\n' absent ;;
+    *) printf '%s\n' unknown ;;
+  esac
+}
+
+REMOTE_BEFORE=$(classify_remote_feature)
+case "$REMOTE_BEFORE" in
+  absent)
+    REMOTE_DELETE=absent
+    ;;
+  unknown)
+    cat "$LS_REMOTE_ERR" >&2
+    REMOTE_DELETE=unknown
+    ;;
+  exists)
+    # Delete only after exact-ref discovery proved that this branch exists.
+    set +e
+    git push origin -- ":$REMOTE_REF"
+    PUSH_RC=$?
+    set -e
+    REMOTE_AFTER=$(classify_remote_feature)
+    case "$REMOTE_AFTER" in
+      absent) REMOTE_DELETE=success ;;
+      exists) REMOTE_DELETE=failure ;;
+      unknown) REMOTE_DELETE=unknown ;;
+    esac
+    (( PUSH_RC == 0 )) || cat "$LS_REMOTE_ERR" >&2
+    ;;
+esac
+rm -f "$LS_REMOTE_OUT" "$LS_REMOTE_ERR"
+case "$REMOTE_DELETE" in
+  absent|success) git fetch --prune ;;
+  failure) exit 1 ;;
+  unknown) exit 75 ;;
+esac
 ```
 
-## Merged-into-base check
+Never infer branch absence from GitHub metadata or an API 404. Do not delete unless the exact `origin` branch lookup returned 0, and do not report success until the same lookup returns 2.
 
-```bash
-git merge-base --is-ancestor feature/xyz origin/develop && echo merged
-# or
-git branch --merged origin/develop
-```
+## Conditional Herdr handoff
+
+When Herdr is active, delegate report schema, writer quiescence, and stale-pane handling to `herdr-delivery-supervisor`. Do not duplicate that schema here.
 
 ---
 

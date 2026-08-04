@@ -31,7 +31,9 @@ Each top-level directory is a stow package mirroring `$HOME`:
 | `grok` | `~/.grok/` | custom skills (symlinks to shared skill sources) |
 | `opencode` | `~/.config/opencode/` | configs + custom skills |
 | `pi` | `~/.pi/agent/` | settings, models, personal extensions package (`personal/`) |
-| `agents-shared` | `~/.agents/` | shared skills pool + lock file |
+| `agents-shared` | `~/.agents/` | canonical shared skills pool + lock file |
+
+Shared cross-harness skills live only under `agents-shared/.agents/skills/`: Codex and Pi discover `~/.agents/skills` directly, while Claude skill entries are symlinks to that canonical tree. Keep Pi/Herdr-specific skills in Pi's personal package.
 
 ## Day to day
 

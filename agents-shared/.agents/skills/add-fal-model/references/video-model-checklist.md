@@ -63,10 +63,13 @@ Note: Video models typically use `BaseFalVideoModel` directly since video metada
   ```typescript
   [VideoGenerationModelEnum.{ENUM_KEY}]: {calculated_credits},
   ```
-- Add to `MODEL_PRICING_FALLBACK`:
+- Add to `MODEL_PRICING_FALLBACK` only from official pricing:
   ```typescript
-  [VideoGenerationModelEnum.{ENUM_KEY}]: { unitPrice: {price_per_second}, unit: 'second' },
+  [VideoGenerationModelEnum.{ENUM_KEY}]: { unitPrice: {documented_price_per_unit}, unit: '{documented_unit}' },
   ```
+- Build the complete pricing shape for every reachable duration, resolution/quality, mode, and sound/audio state. Zero may be an explicit incomplete placeholder only while the model is inactive; every active combination must charge strictly positive credits.
+- Never guess a sound/audio multiplier. If FAL does not document the sound surcharge/price, constrain sound off or keep the model inactive when sound cannot be excluded.
+- Do not let unknown combinations fall through to a cheaper generic model fallback.
 
 ### 5. UI Model Metadata
 **File**: `src/app/_components/ai/floating-prompt-input/model-config.ts`
@@ -103,6 +106,19 @@ So for most video models, setting the metadata correctly is sufficient. Only add
 **File**: `messages/en-us/domains/ai/components.json`
 
 Add model name and description translation keys.
+
+### 8. Positive Pricing Coverage / Constraint Gate
+
+Before adding active UI metadata or DI/service routing, add tests that prove:
+
+1. each selectable duration × resolution/quality × mode × audio state maps to official pricing and `credits > 0`;
+2. undocumented combinations are rejected or impossible to select;
+3. duration/quality boundary values cannot undercharge;
+4. sound on/off uses independently documented pricing—never an inferred multiplier; and
+5. metadata constraints match API schema constraints; and
+6. sensitivity mutations fail when `false`/`0` inputs are dropped, duration/quality changes do not change documented units, a price becomes zero/missing, or unknown sound is allowed.
+
+Restore mutations and rerun green. If any reachable combination is zero, missing, guessed, or falls back, keep the model inactive.
 
 ## Duration Format Reference
 

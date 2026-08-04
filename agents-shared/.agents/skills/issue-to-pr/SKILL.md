@@ -1,18 +1,14 @@
 ---
 name: issue-to-pr
 description: >
-  End-to-end workflow that turns a single GitHub issue into a merged-ready pull request
-  using persona-driven BDD and strict multi-layer TDD. Always creates a git worktree for the
-  issue (skips if already in a worktree) with an issue-linked branch name
-  (`feat|fix|…/<issue-number>-<slug>`). Given an issue number/#/URL (or legacy beads id),
-  it role-plays the app's real target users (creators, solopreneurs, MEIs, local SMBs) to
-  write Gherkin covering jobs-to-be-done, workflows, digital fluency, and confusion/recovery
-  paths—not only happy paths—then validates with parallel expert lenses (persona/UX, BA, QA,
-  architect), writes failing tests at every layer (unit, integration, acceptance, regression,
-  E2E), implements only enough code to go green, visually verifies on megazord, commits,
-  pushes, opens a PR with Closes #N, and hands off. Use when the user says "solve this
-  issue", "issue-to-pr", "/issue-to-pr", "take issue X to a PR", "implement issue #N", or
-  points at an issue and asks for a full TDD implementation-to-PR pass.
+  Turn one GitHub issue into an open PR and route final readiness through pr-finalization,
+  using an isolated issue-linked
+  worktree, persona-driven Gherkin, multi-lens validation, and strict multi-layer red/green
+  TDD. Covers user confusion/recovery paths, unit/integration/acceptance/regression/E2E tests,
+  implementation, project visual verification, named commits, verified push, and SHA-bound
+  delivery through pr-finalization. Use for "solve this issue", "issue-to-pr",
+  "/issue-to-pr", "take issue X to a PR", "implement issue #N", or an issue URL requesting
+  a full implementation-to-PR pass. Never merges automatically.
 ---
 
 # issue-to-pr
@@ -21,7 +17,7 @@ Drive one issue from intake to an open PR without skipping:
 
 1. **Persona-driven Gherkin** (predict simplification / confusion / recovery before code)
 2. **Red → Green → Refactor** at **every** relevant test layer
-3. Visual check + PR handoff
+3. SHA-bound visual/CI/review evidence through `pr-finalization`
 
 You orchestrate; sub-agents validate Gherkin in parallel. Do **not** implement product code until Gherkin is reconciled **and** the red suite is written and proven red for the right reasons.
 
@@ -40,6 +36,8 @@ Read `references/project-conventions.md` **before starting**. Load-bearing rules
 - Runtime is **Bun**: `bun test`, `bun run typecheck`, `bun run gherkin:generate`.
 - Generated Gherkin under `tests/features/_generated/**` **is committed**.
 - **GitHub Issues are the system of record** (`gh issue`). Do not use `bd` / beads / TodoWrite as task tracking for this workflow (session progress checklists are fine).
+- **Every evidence claim is SHA-bound.** Record the commit that produced each red, green, visual, remote, review-thread, and CI result. A push or commit invalidates final evidence for the previous SHA.
+- **Final delivery runs through `pr-finalization`.** Do not call the PR merge-ready or hand it off from this skill alone, and never merge automatically.
 
 ## Workflow order (hard)
 
@@ -48,7 +46,9 @@ Intake + worktree + issue-linked branch
   → Persona walkthrough → Gherkin → Multi-lens validation
   → RED (unit · integration · acceptance · regression · E2E as applicable)
   → GREEN (minimum implementation)
-  → Visual verify → Commit / push / PR → Handoff
+  → Candidate commit / push / PR
+  → pr-finalization (review loop · final visual · CI/thread/SHA gates)
+  → SHA-bound handoff
 ```
 
 Never reorder to “code first, tests later.”
@@ -259,7 +259,14 @@ Reconcile: **blockers + majors must be fixed** in the features. Prefer simplify 
 3. Mutation/sensitivity: temporarily wrong expectation or missing branch still fails; restore.
 4. A red that only errors is **not** a valid red—fix the test harness first.
 
-Record the red commands + failure snippets for the handoff.
+Bind red evidence to an immutable commit:
+
+1. Stage only the new/changed test and acceptance paths by name.
+2. Commit the tests-only red state before production implementation; do not push the red-only commit by itself unless the user asks.
+3. Require `git status --porcelain` to be empty, set `RED_SHA=$(git rev-parse HEAD)`, and rerun the focused red command at that commit.
+4. Record `RED_SHA`, command, exit code, and the causal failure. A dirty run is only `dirty@RED_SHA` plus exact paths and cannot satisfy evidence. A timeout, import/setup error, or unrelated pre-existing failure is not valid red evidence.
+
+If repository policy forbids a red commit, stop and document the policy conflict; do not label mutable working-tree output "SHA-bound."
 
 ---
 
@@ -272,17 +279,22 @@ Only after Step 3 reds are honest:
 3. Loop until reds go green; then full relevant suites + `bun run typecheck` + lint.
 4. Dashboard TSX → also `bun test tests/unit/app/dashboard/_architectural/`.
 5. Refactor while staying green.
+6. Rebase onto the current target branch before creating the green candidate when needed; rerun affected acceptance tests.
+7. Stage named in-scope files, commit the minimum implementation, require `git status --porcelain` to be empty, and set `GREEN_SHA=$(git rev-parse HEAD)`.
+8. Rerun green/local gates on that clean committed SHA. Any dirty output is `dirty@GREEN_SHA` plus exact paths and cannot satisfy finalization.
 
 Marketing/copy claims must stay inside `marketing/reference/product-truth.md` reality.
 
 ---
 
-### Step 5 — Visual verification
+### Step 5 — Green-candidate visual verification
 
-Invoke **`/visual-app-verify`** (or project `visual-app-verify` / `dev-browser-visual-testing`) against **`megazord.olhaminha.bio`**. Walk the **persona happy path + one confusion/recovery path** from the Gherkin.
+Only after Step 4 produced a clean committed `GREEN_SHA`, invoke **`/visual-app-verify`** (or project `visual-app-verify` / `dev-browser-visual-testing`) against **`megazord.olhaminha.bio`**. Walk the **persona happy path + one confusion/recovery path** from the Gherkin.
 
 - Tunnel 530 / Unauthorized → ask user to restore tunnel; localhost only with explicit agreement.
 - Collapsed UI must still **look expandable** (chevron/label/focus)—not pointer-only.
+- Require a clean tree and record `VISUAL_SHA=GREEN_SHA`. This remains preliminary evidence; any later runtime/user-visible commit invalidates it, and `pr-finalization` reruns project visual verification on the stable final PR head.
+- If visual verification reveals a defect, return to Step 4, commit the fix, rerun clean green gates, then repeat Step 5.
 
 ---
 
@@ -292,36 +304,36 @@ On any gate failure, return to the **earliest** broken step (often Gherkin or re
 
 ---
 
-### Step 7 — Commit, push, PR
+### Step 7 — Push, PR, finalization
 
-Run **inside the issue worktree**.
+Run **inside the issue worktree** with clean `HEAD == GREEN_SHA`.
 
-1. If behind `origin/develop`, rebase **before** first push; re-run acceptance (constructor drift).
-2. Stage **named files** only. Logical commits that mention the issue, e.g.:
-   - `test(acceptance): #2444 scroll shell scenarios` — features + `_generated`
-   - `test: #2444 unit reds for scroll ownership`
-   - `feat: #2444 single scrollport layout shell`
-3. Push the **issue-linked branch**: `git push -u origin HEAD`. **Verify** with `git ls-remote origin <branch>` matching local `HEAD`.
-4. **Confirm PR base with the user** (default `develop`) — only required human checkpoint.
-5. `gh pr create --base <confirmed> --head <branch>` with: what/why, **`Closes #<issue-number>`** (required so GitHub links/closes the issue), red/green evidence, acceptance scenarios, persona notes, worktree/branch name, no local paths.
+1. If the target branch changed after Step 4, return to Step 4 for rebase, clean committed green evidence, and Step 5 visual verification. Do not rebase and reuse stale evidence here.
+2. Push the **issue-linked branch**: `git push -u origin HEAD`. Verify `REMOTE_SHA=$(git ls-remote origin <branch> | awk '{print $1}')` equals `GREEN_SHA`.
+3. **Confirm PR base with the user** (default `develop`) — only required human checkpoint.
+4. `gh pr create --base <confirmed> --head <branch>` with: what/why, **`Closes #<issue-number>`**, SHA-tagged red/green evidence, acceptance scenarios, persona notes, worktree/branch name, no local paths.
+5. Invoke **`pr-finalization`**. Pass the PR number, issue worktree, clean `RED_SHA`/`GREEN_SHA` evidence, acceptance paths, persona journeys, and preliminary visual notes. If finalization pushes another commit, update the candidate and rerun every invalidated final gate.
 
 ---
 
-### Step 8 — Handoff summary
+### Step 8 — SHA-bound handoff
 
-Mandatory:
+Use the structured report returned by `pr-finalization`. Mandatory:
 
+- **Final PR head SHA** and verified matching remote SHA.
 - **Personas used** and top confusion risks addressed (or simplified away).
-- **Red**: command + failure reason (per major layer).
-- **Green**: command + pass.
-- **Acceptance coverage**: `.feature` paths/scenarios (or N/A reason).
-- **Test matrix**: unit / integration / acceptance / regression / E2E — what ran, what N/A.
+- **Red**: tests-only `RED_SHA`, command, exit code, and causal failure per major layer.
+- **Green/local**: final candidate SHA, command, and pass; label replacement CI evidence separately from a local pass.
+- **Acceptance coverage**: `.feature` paths/scenarios (or N/A reason) and tested SHA.
+- **Test matrix**: unit / integration / acceptance / regression / E2E — what ran, what N/A, and SHA for each result.
 - **CRAP-risk mitigation**: new branches/error paths with direct tests.
-- **PR link** + issue closed (`Closes #N`).
+- **Final visual**: SHA, URL/journeys, artifact links, or explicit unavailable/N/A reason.
+- **Review/CI**: zero unresolved threads and required-check conclusions queried for the same final SHA.
+- **PR link** + `Closes #N`; do not claim the issue is closed until GitHub confirms the PR merged.
 - **Branch + worktree**: issue-linked branch name; note if worktree was created or reused/skipped.
-- **Browser steps** for the user: URL on megazord, credentials if needed, click-path for happy + one recovery path.
+- **Outcome**: reproduce the `pr-finalization` outcome verbatim; this skill does not issue an independent readiness label. Never merge automatically.
 
-Session close: `git status` → named stage → commit → push → verify push (from the worktree).
+Any evidence whose recorded SHA differs from the final PR head is stale and must be rerun or reported as stale—not carried into the handoff as passing.
 
 ---
 

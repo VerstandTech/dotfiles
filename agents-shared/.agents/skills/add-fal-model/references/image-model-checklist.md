@@ -40,13 +40,13 @@ export class {ModelName}ImageModel extends BaseFalImageModel<I{ModelName}Input, 
     return {
       prompt: rest.prompt,
       // Map each optional field conditionally:
-      // ...(rest.field_name && { field_name: rest.field_name }),
+      // ...(rest.field_name != null && { field_name: rest.field_name }), // preserves false/0
     }
   }
 
-  protected createOutput(requestId: string): I{ModelName}Output {
-    return { images: [], requestId }
-  }
+  // Implement the BaseFalImageModel output hook using the current production
+  // contract. Map every documented response field from real FAL data; do not
+  // fabricate values or return `images: []` merely to satisfy the interface.
 }
 ```
 
@@ -89,15 +89,21 @@ Same pattern extending `BaseFalImageModel`.
 ### 8. Credit Costs — Add pricing entries
 **File**: `src/config/credit-costs.ts`
 
-- Add to `CREDIT_COSTS.image_generation`:
+- Add to `CREDIT_COSTS.image_generation` using the documented default units—not a hardcoded one-image assumption:
   ```typescript
-  [ImageGenerationModelEnum.{ENUM_KEY}]: {calculated_credits},
+  const documentedDefaultUnits = pricingUnit === 'megapixel'
+    ? documentedDefaultCount * documentedDefaultWidth * documentedDefaultHeight / 1_000_000
+    : documentedDefaultCount
+  [ImageGenerationModelEnum.{ENUM_KEY}]: Math.ceil(documentedUnitPrice * documentedDefaultUnits * CREDITS_PER_DOLLAR),
   ```
-- Add to `MODEL_PRICING_FALLBACK`:
+  Adapt to the repository's actual value shape, but preserve documented default count/dimensions/MP units explicitly.
+- Add to `MODEL_PRICING_FALLBACK` only from official documented pricing:
   ```typescript
-  [ImageGenerationModelEnum.{ENUM_KEY}]: { unitPrice: {price_per_unit}, unit: '{unit}' },
+  [ImageGenerationModelEnum.{ENUM_KEY}]: { unitPrice: {documented_price_per_unit}, unit: '{unit}' },
   ```
-- If edit variant, add to both `CREDIT_COSTS.image_edit` and `MODEL_PRICING_FALLBACK` too
+- If edit variant, add to both `CREDIT_COSTS.image_edit` and `MODEL_PRICING_FALLBACK` too.
+- Build the complete shape for every reachable count/size/quality/mode. Zero may mark an incomplete variant only while the model remains inactive; active variants must all calculate strictly positive credits.
+- Unknown price dimensions must be constrained/rejected, never absorbed by a generic fallback.
 
 ### 9. UI Model Metadata
 **File**: `src/app/_components/ai/floating-prompt-input/model-config.ts`
@@ -157,14 +163,27 @@ Add translation keys for any new UI labels under `floatingPromptInput.settings`.
 
 ```
 CREDITS_PER_DOLLAR = 250
-credits = Math.ceil(unitPrice_USD * CREDITS_PER_DOLLAR)
+credits = Math.ceil(unitPrice_USD * documentedUnits * CREDITS_PER_DOLLAR)
 ```
 
-| Unit Type | Calculation |
-|-----------|-------------|
-| `image` | `unitPrice * num_images * 250` |
-| `megapixel` | `unitPrice * (width*height/1_000_000) * 250` |
-| `second` | `unitPrice * duration_seconds * 250` |
-| `video` | `unitPrice * 1 * 250` |
+| Unit Type | `documentedUnits` |
+|-----------|-------------------|
+| `image` | documented image count |
+| `megapixel` | image count × documented width × documented height ÷ 1,000,000 |
+| `second` | documented duration seconds |
+| `video` | documented video count |
 
-The `CREDIT_COSTS` value is the default for a single standard generation (1 image, default size).
+The `CREDIT_COSTS` value must include every documented default pricing unit: default output count and, when applicable, each default width/height or documented megapixel quantity. Never substitute a one-output assumption for documented defaults.
+
+## Activation Gate
+
+Before adding the model to active UI metadata or DI/service routing, add focused tests that prove:
+
+1. every reachable input/pricing combination has official evidence and charges `> 0` credits;
+2. every unknown combination is rejected or impossible to select;
+3. count, dimensions, and quality/mode boundaries cannot undercharge;
+4. sanitization forwards only supported fields; and
+5. output mapping contains the documented response shape without fabricated placeholders; and
+6. focused sensitivity mutations fail when `false`/`0` are dropped, documented units change without a credit change, or pricing becomes zero/missing.
+
+Restore mutations and rerun green. Typecheck without this positive coverage/constraint gate is insufficient.

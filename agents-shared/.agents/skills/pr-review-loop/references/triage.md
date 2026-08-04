@@ -64,7 +64,7 @@ You're allowed to push back. The reply should:
 3. Link to the rule, incident, or constraint that drove the decision.
 4. Resolve the thread (your reply is the resolution; if they disagree, they'll unresolve).
 
-Don't blindly implement a suggestion you disagree with — that's how bad changes ship. The `superpowers:receiving-code-review` skill covers this in depth.
+Don't blindly implement a suggestion you disagree with. Verify the claim against the code, tests, and repository rules before changing behavior.
 
 ## When to ask the user
 

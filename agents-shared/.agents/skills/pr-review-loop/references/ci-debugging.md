@@ -5,10 +5,12 @@ How to inspect, reproduce, and fix CI failures on a PR. Use after `gh pr checks 
 ## Triage flow
 
 ```
-gh pr checks <pr> --json name,state,conclusion,detailsUrl
-  ├─ all success → done, return to caller
+gh pr view <pr> --json headRefOid,statusCheckRollup
++ gh pr checks <pr> --required
+  ├─ all required success for candidate SHA → continue to final rediscovery
   ├─ any pending → wait (see "Waiting strategy" below)
-  └─ any failure → diagnose
+  ├─ any failure → diagnose
+  └─ timeout/transport/rate-limit/partial result → unknown; keep merge frozen
 ```
 
 ## Diagnose a failure
@@ -16,8 +18,9 @@ gh pr checks <pr> --json name,state,conclusion,detailsUrl
 ### 1. Identify the failing run + job
 
 ```bash
-gh pr checks <pr> --json name,conclusion,detailsUrl
-# Note the detailsUrl for the failing check; it contains the run ID and job ID
+gh pr checks <pr> --json name,state,bucket,link,workflow
+# Note the failing check link; Actions URLs contain the run and job IDs.
+# Bind the conclusion to an unchanged headRefOid via statusCheckRollup/check-runs.
 ```
 
 For matrix workflows, the failing check is often one cell — list jobs:
@@ -78,11 +81,11 @@ The fix is usually to harden the code or the test, not to make CI more lenient.
 
 ## Waiting strategy
 
-If a check is `pending`, don't sleep blindly. Pick a delay that matches the typical run length:
+If a check is `pending`, don't sleep blindly. Pick a bounded delay that matches the typical run length:
 
 ```bash
-# Short typecheck/lint runs (≤2 min) — poll quickly
-gh pr checks <pr> --watch
+# Short typecheck/lint runs (≤2 min) — use the bounded SECONDS polling
+# loop in gh-commands.md, then immediately rediscover headRefOid/statusCheckRollup.
 
 # Longer test/build runs (5–15 min) — wait then poll once
 sleep 600 && gh pr checks <pr>
@@ -91,6 +94,8 @@ sleep 600 && gh pr checks <pr>
 ```
 
 Don't burn cache windows on `sleep 300` — it's the worst-of-both default. Either go shorter (in-cache poll) or longer (one cache miss buys a real wait).
+
+After any wait, re-query `headRefOid,statusCheckRollup`. If the watch/tool/operator timeout expires, the result is **unknown**—neither red nor green. If the head SHA changed, discard conclusions for the old SHA and restart discovery.
 
 ## Re-running after a fix
 

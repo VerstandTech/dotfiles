@@ -20,24 +20,35 @@ Run this **only after** a PR is merged (or the user confirms it is), or when the
 |---|---|---|
 | Integration branch | `develop` if it exists, else `main` | User says e.g. "back to main" |
 | Remote | `origin` | Rarely needed |
-| Scope of git cleanup | Worktrees + local branches **tied to the merged PR / current feature branch** | User says "clean all worktrees" |
+| Scope of git cleanup | Only the finalized PR's `FEATURE` worktree/branch | Bulk merged-branch cleanup requires an explicit request, preview, and confirmation |
 | Scope of process cleanup | Task leftovers + servers **bound to removed worktrees / feature paths** | User says "kill all next/dev" or "process audit only" |
 
 ## Phase 0 — Confirm context
 
 1. Identify the **main checkout** (the non-worktree repo root). Prefer the workspace path the user is in; if the shell is inside a worktree, `cd` to the main worktree path from `git worktree list` (first entry without `.worktrees/` / `.claude/worktrees/`).
-2. Resolve PR metadata when available:
+2. Require the finalization handoff values `PR_NUMBER` and `EXPECTED_HEAD_SHA` (the clean finalized candidate). Resolve current GitHub identity:
    ```bash
-   gh pr view --json number,state,headRefName,baseRefName,mergedAt,url
+   gh pr view "$PR_NUMBER" --json number,url,state,headRefName,headRefOid,baseRefName,mergedAt,mergeCommit
    ```
-   - If state is not `MERGED` and the user did not explicitly say it is merged, **stop and confirm** (unless they only asked for process cleanup with no git reset).
-3. Capture for later:
-   - `BASE` = PR `baseRefName` or default integration branch
-   - `FEATURE` = PR `headRefName` or current branch if it is not `BASE`/`main`/`develop`/`staging`
-   - `WORKTREE_PATHS` = paths from `git worktree list` that will be removed this run
-   - `ISSUE_OR_SLUG` = issue number / branch slug if known (e.g. `2450`, `list-mode-filters`) for matching leftover scripts
+   Require `state=MERGED`, non-null `mergedAt`/`mergeCommit.oid`, and `headRefOid == EXPECTED_HEAD_SHA`. The merge commit may differ after squash/rebase merge; record both. If the PR head differs, report **stale/overtaken** and stop destructive cleanup until the user explicitly confirms the newer merged head.
+3. Capture and keep bound through Phase 6:
+   - `PR_NUMBER`, `PR_URL`, `EXPECTED_HEAD_SHA`, observed `PR_HEAD_SHA`, `MERGE_COMMIT_SHA`, `MERGED_AT`
+   - `BASE` = PR `baseRefName`
+   - `FEATURE` = PR `headRefName` (never infer another branch when PR metadata exists)
+   - `FEATURE_WORKTREE` plus exact neutral review handoff `REVIEW_FIX_WORKTREE` / `REVIEW_FIX_LOCAL_BRANCH` from `pr-review-loop` (when present)
+   - `ISSUE_OR_SLUG` = issue number / branch slug for matching task-owned processes
+
+Re-query the same identity immediately before worktree/branch deletion. A changed/missing/unknown response stops cleanup; network/auth errors are not evidence of merge or deletion.
 
 **Process-only mode:** If the user only wants battery/process cleanup (no merge), skip Phases 1–4 and run Phase 5 only, still listing what you kill.
+
+## Phase 0.5 — Serialize shared-checkout cleanup
+
+The main checkout, integration branch, worktree registry, and task-owned ports are shared resources. Exactly one persistent cleanup driver must own them from before Phase 1 until Phase 6 finishes.
+
+Use **only** `scripts/cleanup-lock-driver.sh`, documented in `references/commands.md`, as the lock recipe. It launches the cleanup plan in a dedicated session/process group and holds ownership through Phase 6. Its ready-file handshake proves the process-group identity before cancellation: a startup `INT`/`TERM` waits for helper readiness or proven exit, then signals the entire known group. It releases only after all descendants are proven quiescent; otherwise it retains the lock and exits unknown (75).
+
+If the lock exists, inspect and coordinate with its owner. Never clear it unless the recorded process/session is proven gone. A failed/aborted driver must not be followed by another cleanup until lock release and child termination are verified.
 
 ## Phase 1 — Return to integration branch
 
@@ -63,10 +74,9 @@ For each worktree path that is **not** the main checkout:
 
 | Condition | Action |
 |---|---|
-| Branch name equals `FEATURE` | Remove it |
-| Branch is fully merged into `origin/$BASE` | Remove it |
-| Path under `.worktrees/` or `.claude/worktrees/` and clearly from this PR | Remove it |
-| Unrelated active branch / other WIP | **Leave it** unless user said "clean all worktrees" |
+| Exact `FEATURE_WORKTREE` from the finalization handoff | Remove only after registered, non-main, clean, and `HEAD == EXPECTED_HEAD_SHA` |
+| Exact neutral `REVIEW_FIX_WORKTREE` from `pr-review-loop` | Same checks; branch must equal `REVIEW_FIX_LOCAL_BRANCH` |
+| Any other merged/unrelated branch or worktree | **Leave it** by default |
 
 Remove:
 
@@ -79,28 +89,33 @@ git worktree prune
 
 Also prune empty parents (`.worktrees/`, `.claude/worktrees/`) when empty.
 
-**Before removing a worktree:** note its absolute path — Phase 5 will kill any `next`/`bun`/`node` process whose command line or cwd still points at that path.
+**Before removing either handed-off worktree:** prove its absolute path is registered by `git worktree list --porcelain`, is not the main checkout/current cwd, `git -C <path> status --porcelain` is empty, its checked-out branch matches the handed-off branch, and `git -C <path> rev-parse HEAD == EXPECTED_HEAD_SHA`. Any mismatch/dirty path stops cleanup. Note the path for Phase 5 process cleanup.
+
+**Self-removal guard:** a worker whose own `pwd -P` is the worktree being removed must not delete it. When Herdr supervision is active, conditionally delegate the pre-delete report and pane lifecycle to `herdr-delivery-supervisor`; that Pi-specific skill is the sole authority for its report schema. A supervisor or different cleanup pane performs removal from the main checkout.
 
 ## Phase 3 — Delete local feature branch(es)
 
 From the main checkout (never delete a branch checked out elsewhere):
 
 ```bash
-git branch -D "$FEATURE" 2>/dev/null || true
-# Optional: other local branches already merged into BASE
-git branch --merged "$BASE" | rg -v '^\*|main$|develop$|staging$' | xargs -r git branch -D
+for branch in "$FEATURE" "${REVIEW_FIX_LOCAL_BRANCH:-}"; do
+  [[ -n "$branch" ]] || continue
+  git show-ref --verify --quiet "refs/heads/$branch" && git branch -D -- "$branch"
+done
 ```
 
-Do **not** bulk-delete unmerged branches.
+Delete only the exact `FEATURE` and handed-off neutral review-fix local branch by default. Bulk deletion of any others requires explicit request, preview, and confirmation. Never bulk-delete unmerged/protected branches.
 
 ## Phase 4 — Remote branch
 
-```bash
-git push origin --delete "$FEATURE" 2>/dev/null || true
-git fetch --prune
-```
+Classify remote deletion as one of `absent`, `success`, `failure`, or `unknown` using the authoritative recipe in `references/commands.md`.
 
-Remote already gone after GitHub auto-delete is fine — treat as success.
+- `absent`: exact `git ls-remote --exit-code --heads origin refs/heads/$FEATURE` returned 2 before deletion.
+- `success`: the exact lookup returned 0, deletion was attempted, and the same lookup then returned 2.
+- `failure`: the post-delete exact lookup still returned 0.
+- `unknown`: the exact lookup returned anything other than 0/2, including auth/network/timeout failures.
+
+Never infer absence from metadata/API 404, redirect errors away, or append `|| true`. Delete only after an exact lookup returns 0. On `failure`/`unknown`, stop destructive remote cleanup and report the exact error. Run `git fetch --prune` only after classified `absent`/`success`.
 
 ## Phase 5 — Kill leftover task processes (memory / battery)
 
@@ -181,6 +196,10 @@ lsof -iTCP -sTCP:LISTEN -P -n 2>/dev/null | rg ':(3000|3001|3010|3011)\b' || ech
 
 If anything **Tier B** remains and might still be intentional, report it instead of force-killing.
 
+## Conditional Herdr delegation
+
+When `HERDR_ENV=1` and a supervised worker/pane is involved, invoke `herdr-delivery-supervisor` before deleting any worker worktree and after cleanup for pane lifecycle. Do not duplicate or reinterpret its handoff schema here. Without that skill or a proven idle/exited writer, retain ownership/lock and do not remove the worktree.
+
 ## Phase 6 — Verify git state
 
 Print a short status block:
@@ -198,6 +217,8 @@ Success criteria:
 - Local `$FEATURE` branch is gone
 - Working tree clean (or only pre-existing unrelated dirt the user already knew about)
 - No Tier A leftover processes; no `next-server` still bound to removed worktree paths
+- Persistent cleanup driver held the lock continuously through this verification; its normal exit then released it
+- Under Herdr, no live pane remains rooted in a deleted worktree
 
 ## Safety
 
@@ -213,10 +234,13 @@ Success criteria:
 
 One short summary:
 
+- PR number/URL, `EXPECTED_HEAD_SHA`, observed PR head SHA, merge commit SHA, and merged timestamp; explicitly mark stale/overtaken if they differed
 - Base branch + tip SHA
 - Worktrees removed
-- Branches deleted (local / remote)
+- Branches deleted (local / remote) and remote result classification (`absent|success|failure|unknown`)
 - **Processes killed** (PID + short command) and **ports freed**
+- Shared cleanup lock owner/release result
+- Herdr pane lifecycle: worker report captured; stale pane rehomed/closed/retained by supervisor
 - Anything left intentionally (e.g. unrelated worktree, main `:3010` server, one cloudflared, current MCP set)
 
 ## Triggers (examples)
