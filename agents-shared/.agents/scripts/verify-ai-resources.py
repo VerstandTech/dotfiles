@@ -69,13 +69,34 @@ def is_within(path: Path, parent: Path) -> bool:
         return False
 
 
-def is_generated_claude_skill_link(entry: Path, deployed_skills: Path) -> bool:
+def symlink_points_within(entry: Path, root: Path) -> bool:
     if not entry.is_symlink():
         return False
     lexical_target = Path(
         os.path.abspath(os.path.join(entry.parent, os.readlink(entry)))
     )
-    return is_within(lexical_target, deployed_skills.absolute())
+    return is_within(lexical_target, root.absolute())
+
+
+def is_generated_claude_skill_link(entry: Path, deployed_skills: Path) -> bool:
+    return symlink_points_within(entry, deployed_skills)
+
+
+def is_dotfiles_managed_skill(entry: Path, canonical_skills: Path) -> bool:
+    if entry.is_symlink():
+        return symlink_points_within(entry, canonical_skills)
+    if not entry.is_dir():
+        return False
+
+    found_managed_link = False
+    for child in entry.rglob("*"):
+        if child.is_symlink():
+            if not symlink_points_within(child, canonical_skills):
+                return False
+            found_managed_link = True
+        elif child.is_file():
+            return False
+    return found_managed_link
 
 
 def parse_frontmatter(path: Path) -> tuple[dict[str, str], str]:
@@ -113,6 +134,16 @@ def parse_frontmatter(path: Path) -> tuple[dict[str, str], str]:
                 index += 1
             metadata[key] = " ".join(continuation)
             continue
+
+        if (
+            key == "description"
+            and value
+            and value[0] not in {'"', "'"}
+            and re.search(r":\s", value)
+        ):
+            raise ValueError(
+                "description plain YAML scalar contains ': '; quote or fold it"
+            )
 
         metadata[key] = value.strip("\"'")
         index += 1
@@ -313,6 +344,20 @@ def validate_repo_links(repo: Path, errors: list[str]) -> int:
     return count
 
 
+def unexpected_deployed_skill_names(
+    canonical_skills: Path, deployed_skills: Path
+) -> list[str]:
+    canonical_names = {
+        path.name for path in canonical_skills.iterdir() if path.is_dir()
+    }
+    return sorted(
+        path.name
+        for path in deployed_skills.iterdir()
+        if path.name not in canonical_names
+        and is_dotfiles_managed_skill(path, canonical_skills)
+    )
+
+
 def validate_deployed(repo: Path, home: Path, errors: list[str]) -> None:
     for relative in ABSENT_DEPLOYED_PATHS:
         path = home / relative
@@ -341,6 +386,11 @@ def validate_deployed(repo: Path, home: Path, errors: list[str]) -> None:
     canonical_names = {
         path.name for path in canonical_skills.iterdir() if path.is_dir()
     }
+    for name in unexpected_deployed_skill_names(canonical_skills, deployed_skills):
+        errors.append(
+            f"{deployed_skills / name}: deployed skill is absent from the canonical repository"
+        )
+
     claude_skills = home / ".claude/skills"
     for entry in claude_skills.iterdir() if claude_skills.is_dir() else ():
         if not entry.is_symlink():

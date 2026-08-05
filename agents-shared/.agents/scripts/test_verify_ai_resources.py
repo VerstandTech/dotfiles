@@ -39,8 +39,42 @@ class FrontmatterTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "opening YAML"):
                 VERIFY.parse_frontmatter(path)
 
+    def test_rejects_yaml_plain_scalar_with_colon_space(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "SKILL.md"
+            path.write_text(
+                "---\n"
+                "name: unsafe\n"
+                "description: Trigger for reviews: inspect every prompt.\n"
+                "---\n",
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(ValueError, "plain YAML scalar"):
+                VERIFY.parse_frontmatter(path)
+
 
 class PolicyTests(unittest.TestCase):
+    def test_finds_only_managed_unexpected_deployed_skill_names(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            canonical = root / "canonical"
+            deployed = root / "deployed"
+            (canonical / "kept").mkdir(parents=True)
+            (deployed / "kept").mkdir(parents=True)
+            (deployed / "stale-managed").mkdir()
+            (deployed / "native-extra").mkdir()
+            (deployed / "stale-managed/SKILL.md").symlink_to(
+                canonical / "stale-managed/SKILL.md"
+            )
+            (deployed / "native-extra/SKILL.md").write_text(
+                "native\n", encoding="utf-8"
+            )
+
+            self.assertEqual(
+                VERIFY.unexpected_deployed_skill_names(canonical, deployed),
+                ["stale-managed"],
+            )
+
     def test_generated_claude_link_detects_dangling_canonical_target(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             home = Path(directory)

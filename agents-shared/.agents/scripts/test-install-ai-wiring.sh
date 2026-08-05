@@ -34,14 +34,23 @@ test "$(find "$HOME/.claude/skills" -maxdepth 1 -type l | wc -l | tr -d ' ')" -e
 sync_claude_skills
 test "$(find "$HOME/.claude/skills" -maxdepth 1 -type l | wc -l | tr -d ' ')" -eq 2
 
-# Cleanup works outside a checkout named "dotfiles" and preserves native dirs.
-mkdir -p "$HOME/.grok/skills/help"
+# Cleanup works outside a checkout named "dotfiles", prunes removed canonical
+# skills, and preserves native/foreign entries.
+mkdir -p \
+  "$HOME/.grok/skills/help" \
+  "$HOME/.agents/skills/stale-managed" \
+  "$HOME/.agents/skills/native-extra"
 echo native > "$HOME/.grok/skills/help/SKILL.md"
+echo native > "$HOME/.agents/skills/native-extra/SKILL.md"
+ln -s "$DOTFILES_DIR/agents-shared/.agents/skills/removed/SKILL.md" \
+  "$HOME/.agents/skills/stale-managed/SKILL.md"
 ln -s "$DOTFILES_DIR/agents-shared/.agents/skills/alpha" \
   "$HOME/.grok/skills/managed"
 cleanup_removed_ai_wiring
 test ! -e "$HOME/.grok/skills/managed"
+test ! -e "$HOME/.agents/skills/stale-managed"
 test -f "$HOME/.grok/skills/help/SKILL.md"
+test -f "$HOME/.agents/skills/native-extra/SKILL.md"
 
 # A correct direct Pi adapter is not backed up by the pi stow package pass.
 mkdir -p "$HOME/.pi/agent"

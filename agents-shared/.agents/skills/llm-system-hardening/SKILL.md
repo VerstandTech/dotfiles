@@ -1,6 +1,14 @@
 ---
 name: llm-system-hardening
-description: Apply this skill whenever the user is designing, reviewing, debugging, or hardening a prompt, system prompt, LLM-powered feature, RAG pipeline, or agentic system — especially when reliability, hallucinations, prompt injection, prompt poisoning, determinism, evals, tool use, guardrails, or production LLM deployments come up. Trigger even when the user doesn't explicitly ask for a "reliability review": if they share a prompt template, an agent config, a RAG design, or a snippet of a harness, proactively audit it against these rules. Also trigger for meta-questions like "how do I make this more deterministic" or "why is my agent hallucinating". Do not trigger for generic LLM trivia, pure model comparisons, or casual questions about how transformers work.
+description: >-
+  Apply this skill whenever the user is designing, reviewing, debugging, or
+  hardening a prompt, system prompt, LLM-powered feature, RAG pipeline, or
+  agentic system—especially for reliability, hallucinations, prompt injection,
+  prompt poisoning, determinism, evals, tool use, guardrails, or production LLM
+  deployments. Trigger when users share prompts, agent configs, RAG designs, or
+  harness code, and for questions about deterministic behavior or hallucination.
+  Do not trigger for generic LLM trivia, pure model comparisons, or casual
+  questions about transformer internals.
 ---
 
 # LLM System Hardening

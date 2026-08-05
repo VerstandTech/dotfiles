@@ -183,12 +183,32 @@ remove_dotfiles_owned_entries() {
   rmdir "$dir" 2>/dev/null || true
 }
 
+prune_stale_canonical_skills() {
+  local canonical="$DOTFILES_DIR/agents-shared/.agents/skills"
+  local deployed="$HOME/.agents/skills"
+  local entry name
+
+  if [ ! -d "$canonical" ]; then
+    warn "canonical skills root is missing; skipping stale-skill cleanup: $canonical"
+    return 0
+  fi
+  [ -d "$deployed" ] || return 0
+  while IFS= read -r entry; do
+    name="$(basename "$entry")"
+    if [ ! -d "$canonical/$name" ] && is_dotfiles_owned_entry "$entry"; then
+      rm -rf "$entry"
+      log "removed stale deployed canonical skill $entry"
+    fi
+  done < <(find "$deployed" -mindepth 1 -maxdepth 1)
+}
+
 cleanup_removed_ai_wiring() {
   remove_dotfiles_owned_entries "$HOME/.agents/agents"
   remove_dotfiles_owned_entries "$HOME/.agents/rules"
   remove_dotfiles_owned_entries "$HOME/.codex/skills"
   remove_dotfiles_owned_entries "$HOME/.config/opencode/skills"
   remove_dotfiles_owned_entries "$HOME/.grok/skills"
+  prune_stale_canonical_skills
 }
 
 sync_claude_skills() {

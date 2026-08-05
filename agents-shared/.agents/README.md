@@ -24,6 +24,10 @@ Grok uses its documented `[skills].paths` configuration so native Grok skills
 remain available. The installer generates Claude's documented per-skill links
 while preserving native/local entries under `~/.claude/skills`.
 
+Only cross-project skills belong in this global catalog. Repository-specific
+workflows (for example, a Sentry workflow with a fixed GitHub repository) must
+live in that repository's `.agents/skills` tree under a unique project scope.
+
 ## Validate
 
 ```bash
