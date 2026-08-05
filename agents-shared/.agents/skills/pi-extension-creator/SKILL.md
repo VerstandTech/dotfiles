@@ -22,7 +22,7 @@ Help the user ship **local Pi extensions** that are:
 |---|---|---|
 | Shared skills (this skill) | `~/dotfiles/agents-shared/.agents/skills/` | `~/.agents/skills/` |
 | Pi settings / models | `~/dotfiles/pi/.pi/agent/` | `~/.pi/agent/` |
-| **Personal extensions package** | `~/dotfiles/pi/.pi/agent/personal/` | `~/.pi/agent/personal` → dir symlink; `settings.json` → `packages: ["./personal"]` |
+| **Personal extensions package** | `~/dotfiles/agents-shared/.agents/adapters/pi/personal/` | `~/.pi/agent/personal` → dir symlink; `settings.json` → `packages: ["./personal"]` |
 | Project-local extensions | `<repo>/.pi/extensions/` | auto after project trust |
 | Official docs | Pi install `docs/extensions.md`, `docs/packages.md` | also https://pi.dev |
 | Official examples | Pi install `examples/extensions/` | copy patterns, do not edit in place |
@@ -38,7 +38,7 @@ Runtime-only dirs — **never commit**:
 
 | Goal | Put code here | Load mechanism |
 |---|---|---|
-| Personal, all projects, synced across machines | `~/dotfiles/pi/.pi/agent/personal/extensions/*.ts` | `packages: ["./personal"]` in stowed settings |
+| Personal, all projects, synced across machines | `~/dotfiles/agents-shared/.agents/adapters/pi/personal/extensions/*.ts` | `packages: ["./personal"]` in stowed settings |
 | One repo only | `<repo>/.pi/extensions/*.ts` or `*/index.ts` | auto-discovery after trust |
 | Quick throwaway test | any path | `pi -e ./path.ts` (temp; not synced) |
 | Shareable npm/git package | separate package with `package.json` `pi` manifest | `pi install …` |
@@ -120,7 +120,7 @@ If missing, add it, then restow or rely on the existing settings symlink.
  /reload
 
 # Or start with explicit path while iterating:
-pi -e ~/dotfiles/pi/.pi/agent/personal/extensions/my-thing.ts
+pi -e ~/dotfiles/agents-shared/.agents/adapters/pi/personal/extensions/my-thing.ts
 
 # Confirm package is known
 pi list
@@ -138,7 +138,7 @@ Checks:
 ```bash
 cd ~/dotfiles
 git status
-git add pi/.pi/agent/personal pi/.pi/agent/settings.json \
+git add agents-shared/.agents/adapters/pi/personal pi/.pi/agent/settings.json \
   agents-shared/.agents/skills/pi-extension-creator
 git commit -m "feat(pi): add <extension-name> extension"
 git push
@@ -156,14 +156,16 @@ Details: [references/dotfiles-sync.md](references/dotfiles-sync.md).
 
 ```text
 ~/dotfiles/
-  agents-shared/.agents/skills/pi-extension-creator/   # this skill
-  pi/.pi/agent/
-    settings.json          # packages includes "./personal"
-    models.json
-    personal/              # local pi package (synced)
+  agents-shared/.agents/
+    skills/pi-extension-creator/      # this skill
+    adapters/pi/personal/             # canonical local Pi package
       package.json
       extensions/
         my-thing.ts
+  pi/.pi/agent/
+    settings.json                     # packages includes "./personal"
+    models.json
+    personal -> ../../../agents-shared/.agents/adapters/pi/personal
 ```
 
 Do **not** put long-lived custom entrypoints only in `~/.pi/agent/extensions/` — that tree is shared with third-party package state and is easy to leave untracked. The personal package keeps source in git.

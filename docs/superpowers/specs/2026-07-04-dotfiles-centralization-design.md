@@ -1,5 +1,10 @@
 # Dotfiles Centralization — Design
 
+> **Historical:** The resource layout here is superseded by the canonical
+> `~/.agents` architecture in the repository README and
+> `agents-shared/.agents/README.md`. Vendor packages now contain native config
+> and thin adapters only.
+
 **Date:** 2026-07-04
 **Repo:** github.com/codingleo/dotfiles (public)
 **Machines:** 2 MacBooks (macOS), 1 Ubuntu PC

@@ -38,7 +38,7 @@
 - **Q4 — Test stack for dotfiles.** ✅ **Resolved 2026-07-28.** Adopt `bun:test` + minimal `package.json` in `~/dotfiles/pi`. Red/green commands: `bun test`.
 - **Q5 — Worktree-first scope.** All repos or only olhaminha.bio? Default branch to fork worktrees from (`develop`)?
 - **Q6 — Mapping granularity.** One herdr workspace per repo with tabs per worktree, or one workspace per worktree? (Sidebar readability trade-off.)
-- **Q7 — Skill install.** ✅ **Resolved 2026-07-28.** Vendor herdr's SKILL.md into `~/dotfiles/pi/.pi/agent/personal/skills/herdr/SKILL.md` (versioned). Write blocked by discovery gate → do it first thing in formulation (config/env setup, not production code). Local adaptation: examples use `--kind pi`.
+- **Q7 — Skill install.** ✅ **Resolved 2026-07-28.** Vendor herdr's SKILL.md into `~/dotfiles/agents-shared/.agents/adapters/pi/personal/skills/herdr/SKILL.md` (versioned). Write blocked by discovery gate → do it first thing in formulation (config/env setup, not production code). Local adaptation: examples use `--kind pi`.
 
 ## Fact base (verified this session)
 

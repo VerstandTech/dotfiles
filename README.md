@@ -26,27 +26,30 @@ Each top-level directory is a stow package mirroring `$HOME`:
 | `zsh` | `~/.zshrc`, `~/.zprofile`, `~/.p10k.zsh`, `~/.config/zsh/` | shell config + prompt theme |
 | `wezterm` | `~/.config/wezterm/` | terminal config |
 | `nvim` | `~/.config/nvim/` | editor config + `lazy-lock.json` |
-| `claude` | `~/.claude/` | settings, CLAUDE.md, RTK.md + symlink wiring only |
-| `codex` | `~/.codex/` | config.toml, AGENTS.md, RTK.md + symlink wiring only |
-| `grok` | `~/.grok/` | skill symlinks only (no native config) |
-| `opencode` | `~/.config/opencode/` | configs + symlink wiring only |
-| `pi` | `~/.pi/agent/` | settings, models, personal extensions package (`personal/`) |
-| `agents-shared` | `~/.agents/` | **canonical shared resources**: `skills/`, `agents/`, `rules/` + lock file |
+| `claude` | `~/.claude/` | native settings + symlink entrypoints into `~/.agents` |
+| `codex` | `~/.codex/` | native config + symlink entrypoints into `~/.agents` |
+| `grok` | `~/.grok/` | native config with `~/.agents/skills` as an extra skill path |
+| `opencode` | `~/.config/opencode/` | native configuration only |
+| `pi` | `~/.pi/agent/` | native settings/models + one local-package adapter |
+| `agents-shared` | `~/.agents/` | **canonical AI resource hub**: portable skills, vendor adapters, manifest, validation |
 
-**`~/.agents` is the single source of truth for shared AI resources.** All
-cross-harness content lives only under `agents-shared/.agents/`:
+**`~/.agents` is the single source of truth for AI resources.** All resource
+content lives under `agents-shared/.agents/`:
 
-- `skills/` — every shared skill (one copy, no duplicates)
-- `agents/` — shared sub-agent definitions (e.g. Claude's ops agents)
-- `rules/` — shared rule files (e.g. Codex `default.rules`)
+- `skills/` — portable capabilities following the Agent Skills standard
+- `adapters/claude/` — Claude-specific instructions and custom agents
+- `adapters/codex/` — Codex-specific instructions and command rules
+- `adapters/pi/personal/` — Pi's local package (extensions, skills, prompts,
+  subagents, tests, and support code)
+- `manifest.json`, `.skill-lock.json`, and `scripts/` — ownership, provenance,
+  and deterministic validation
 
-Tool packages contain **only their own configuration** (settings files,
-instruction files like `CLAUDE.md`/`AGENTS.md`, tool-specific wiring). They
-never hold real skill/agent/rule content — access is wired via repo-relative
-symlinks into `agents-shared` (Claude, Grok, OpenCode), while Codex and Pi
-discover `~/.agents/skills` directly. Exception: Pi's `personal/` package is
-Pi's own extension system (package.json, `extensions/`, `lib/`, plus
-skills/agents/prompts bound to Pi-only tools) and stays in the `pi` package.
+Tool packages contain **only native configuration and symlink wiring**. Codex,
+OpenCode, and Pi discover `~/.agents/skills` directly. Grok uses its documented
+`[skills].paths` setting, preserving native Grok skills. The installer generates
+Claude's documented per-skill links while preserving local/native entries in
+`~/.claude/skills`. Vendor-specific formats stay namespaced under `adapters/`;
+they are centrally owned but are not claimed to be cross-harness standards.
 
 ## Day to day
 
@@ -56,7 +59,9 @@ Configs in `$HOME` are symlinks into this repo — edit them in place, then:
 cd ~/dotfiles && git add -p && git commit && git push
 ```
 
-Other machines: `git pull && ./install.sh`.
+Other machines: `git pull && ./install.sh`. The installer re-stows every
+package and fails closed if canonical AI resources or deployed adapter links do
+not validate.
 
 ### Machine-local secrets
 

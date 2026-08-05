@@ -27,7 +27,7 @@ Plus one external surface for orchestration:
 This document captures the design decisions for how *our* TUI should look and behave, so future extension/theme work has a single source of truth.
 
 **Theme locations:** `~/.pi/agent/themes/*.json` — file-symlinked from `~/dotfiles/pi/.pi/agent/themes/` (the themes dir is a real dir; stow folds per-file).
-**Extension locations:** `~/dotfiles/pi/.pi/agent/personal/extensions/herd/` (subdir + `index.ts`, discovered via the `personal` package's `"pi.extensions": ["./extensions/*.ts", "./extensions/*/index.ts"]` glob; `personal` is whole-dir stow-linked and loaded via `settings.json` packages).
+**Extension locations:** `~/dotfiles/agents-shared/.agents/adapters/pi/personal/extensions/herd/` (subdir + `index.ts`, discovered via the `personal` package's `"pi.extensions": ["./extensions/*.ts", "./extensions/*/index.ts"]` glob; `personal` is whole-dir stow-linked and loaded via `settings.json` packages).
 **Stow policy:** only the `.pi` tree maps into `~` — enforced by `~/dotfiles/pi/.stow-local-ignore` (repo files: docs/tests/extensions-source/package.json stay out of home).
 
 ---

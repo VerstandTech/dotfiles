@@ -1,1 +1,1 @@
-@RTK.md
+../../agents-shared/.agents/adapters/claude/CLAUDE.md

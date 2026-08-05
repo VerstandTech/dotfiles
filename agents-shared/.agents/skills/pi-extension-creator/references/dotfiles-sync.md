@@ -9,7 +9,7 @@ This machine manages AI CLI config with **GNU Stow** from `~/dotfiles` (not `~/d
 | `agents-shared` | `agents-shared/.agents/skills/…` | `~/.agents/skills/…` |
 | `pi` | `pi/.pi/agent/settings.json` | `~/.pi/agent/settings.json` |
 | `pi` | `pi/.pi/agent/models.json` | `~/.pi/agent/models.json` |
-| `pi` | `pi/.pi/agent/personal/…` | loaded via relative `./personal` in settings (lives beside real settings file in the repo) |
+| `agents-shared` | `agents-shared/.agents/adapters/pi/personal/…` | `~/.pi/agent/personal` adapter; loaded via relative `./personal` in settings |
 
 `./install.sh` runs `stow --no-folding --restow` for each package in `PACKAGES`.
 
@@ -18,7 +18,7 @@ This machine manages AI CLI config with **GNU Stow** from `~/dotfiles` (not `~/d
 Canonical path (git):
 
 ```text
-~/dotfiles/pi/.pi/agent/personal/
+~/dotfiles/agents-shared/.agents/adapters/pi/personal/
   package.json          # pi.extensions -> ./extensions/*.ts
   extensions/
     <name>.ts
@@ -37,20 +37,20 @@ inside `packages`. Pi resolves that path relative to `~/.pi/agent/settings.json`
 Because `~/.pi/agent` already exists with machine-local state, `stow --no-folding` would tree-fold `personal/` (per-file symlinks). **`install.sh` rewrites it to one directory symlink**:
 
 ```text
-~/.pi/agent/personal -> ../../dotfiles/pi/.pi/agent/personal
+~/.pi/agent/personal -> ../../dotfiles/agents-shared/.agents/adapters/pi/personal
 ```
 
 So new `extensions/*.ts` files are live immediately (no restow). The scaffold script also repairs this link if needed.
 
 ## Day-to-day loop
 
-1. Edit extension under `~/dotfiles/pi/.pi/agent/personal/extensions/`.
+1. Edit extension under `~/dotfiles/agents-shared/.agents/adapters/pi/personal/extensions/`.
 2. In Pi: `/reload` (auto-discovered / package paths support reload; prefer package path over one-off `-e` for kept work).
 3. Commit:
 
 ```bash
 cd ~/dotfiles
-git add pi/.pi/agent/personal pi/.pi/agent/settings.json
+git add agents-shared/.agents/adapters/pi/personal pi/.pi/agent/settings.json
 git status
 git commit -m "feat(pi): <extension change>"
 git push
@@ -102,4 +102,4 @@ pi list   # should show ./personal when configured
 | Works with `pi -e` only | File not inside personal package or project `.pi/extensions/`, or settings package entry missing |
 | Breaks on Linux | Remove absolute `/Users/…` paths; use `./personal` |
 | Stow conflict on `extensions/` | Do not track `~/.pi/agent/extensions` wholesale; keep custom code in `personal/` |
-| npm dep not found | `cd ~/dotfiles/pi/.pi/agent/personal && npm install`; dep in `dependencies` |
+| npm dep not found | `cd ~/dotfiles/agents-shared/.agents/adapters/pi/personal && npm install`; dep in `dependencies` |

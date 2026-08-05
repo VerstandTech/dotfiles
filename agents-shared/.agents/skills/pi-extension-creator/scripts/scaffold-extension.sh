@@ -9,7 +9,7 @@ Usage:
 
 Defaults:
   --kind tool
-  target = ~/dotfiles/pi/.pi/agent/personal/extensions/<name>.ts
+  target = ~/dotfiles/agents-shared/.agents/adapters/pi/personal/extensions/<name>.ts
 
 Examples:
   scaffold-extension.sh --name hello --kind tool
@@ -50,7 +50,9 @@ case "$KIND" in
   *) echo "error: --kind must be tool|command|hook|minimal" >&2; exit 2 ;;
 esac
 
-DOTFILES_PI_PERSONAL="${DOTFILES_PI_PERSONAL:-$HOME/dotfiles/pi/.pi/agent/personal}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+AGENTS_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
+DOTFILES_PI_PERSONAL="${DOTFILES_PI_PERSONAL:-$AGENTS_ROOT/adapters/pi/personal}"
 
 if [[ -n "$PROJECT" ]]; then
   TARGET_DIR="$PROJECT/.pi/extensions"
@@ -171,11 +173,33 @@ esac
 # new files are visible without stow restow (see install.sh ensure_pi_personal_link).
 if [[ -z "$PROJECT" ]]; then
   live="$HOME/.pi/agent/personal"
-  desired_rel="../../dotfiles/pi/.pi/agent/personal"
+  source_abs="$(python3 - "$DOTFILES_PI_PERSONAL" <<'PY'
+import os
+import sys
+print(os.path.realpath(sys.argv[1]))
+PY
+)"
+  desired_rel="$(python3 - "$source_abs" "$HOME/.pi/agent" <<'PY'
+import os
+import sys
+print(os.path.relpath(sys.argv[1], os.path.realpath(sys.argv[2])))
+PY
+)"
   mkdir -p "$HOME/.pi/agent"
-  if [[ ! -L "$live" ]] || [[ "$(readlink "$live" 2>/dev/null)" != *"dotfiles/pi/.pi/agent/personal"* ]]; then
-    rm -rf "$live"
-    ln -sfn "$desired_rel" "$live"
+  if [[ -e "$live" || -L "$live" ]]; then
+    live_abs="$(python3 - "$live" <<'PY'
+import os
+import sys
+print(os.path.realpath(sys.argv[1]))
+PY
+)"
+    if [[ "$live_abs" != "$source_abs" ]]; then
+      echo "ERROR: $live exists and does not resolve to $source_abs" >&2
+      echo "Run the dotfiles install.sh or move the conflicting path before retrying." >&2
+      exit 1
+    fi
+  else
+    ln -s "$desired_rel" "$live"
     echo "Linked $live -> $desired_rel"
   fi
 fi
@@ -187,7 +211,7 @@ if [[ -z "$PROJECT" ]]; then
   echo "  1. Edit the TODO sections in the file"
   echo "  2. Confirm ~/dotfiles/pi/.pi/agent/settings.json packages includes \"./personal\""
   echo "  3. In Pi: /reload   (or: pi -e \"$TARGET\")"
-  echo "  4. cd ~/dotfiles && git add pi/.pi/agent/personal && git commit"
+  echo "  4. cd ~/dotfiles && git add agents-shared/.agents/adapters/pi/personal && git commit"
 else
   echo "Next:"
   echo "  1. Edit the TODO sections"

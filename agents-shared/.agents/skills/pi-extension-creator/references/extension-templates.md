@@ -1,6 +1,6 @@
 # Extension templates
 
-Copy one of these into `~/dotfiles/pi/.pi/agent/personal/extensions/<name>.ts` (or project `.pi/extensions/`). Prefer the scaffold script; these are the canonical bodies.
+Copy one of these into `~/dotfiles/agents-shared/.agents/adapters/pi/personal/extensions/<name>.ts` (or project `.pi/extensions/`). Prefer the scaffold script; these are the canonical bodies.
 
 Official examples live in the Pi install under `examples/extensions/`.
 
@@ -134,10 +134,10 @@ export default function (pi: ExtensionAPI) {
 
 ## With npm dependency
 
-Put deps on the **personal package** root (`~/dotfiles/pi/.pi/agent/personal/package.json`) or beside a standalone package:
+Put deps on the **personal package** root (`~/dotfiles/agents-shared/.agents/adapters/pi/personal/package.json`) or beside a standalone package:
 
 ```bash
-cd ~/dotfiles/pi/.pi/agent/personal
+cd ~/dotfiles/agents-shared/.agents/adapters/pi/personal
 npm install ms
 ```
 

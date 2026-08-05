@@ -1,0 +1,19 @@
+# Read-oriented commands with bounded side effects may run without another prompt.
+prefix_rule(pattern=["git", "fetch"], decision="allow")
+prefix_rule(pattern=["gh", "pr", "view"], decision="allow")
+prefix_rule(pattern=["git", "ls-remote"], decision="allow")
+prefix_rule(pattern=["/usr/bin/awk", "{print $1}"], decision="allow")
+prefix_rule(pattern=["ps"], decision="allow")
+
+# Mutating, code-executing, or broadly parameterized commands require approval.
+prefix_rule(pattern=["gh", "api"], decision="prompt")
+prefix_rule(pattern=["docker", "build"], decision="prompt")
+prefix_rule(pattern=["docker", "run"], decision="prompt")
+prefix_rule(pattern=["git", "switch"], decision="prompt")
+prefix_rule(pattern=["git", "add"], decision="prompt")
+prefix_rule(pattern=["git", "push"], decision="prompt")
+prefix_rule(pattern=["git", "worktree"], decision="prompt")
+prefix_rule(pattern=["bun", "install"], decision="prompt")
+prefix_rule(pattern=["git", "commit"], decision="prompt")
+prefix_rule(pattern=["gh", "pr", "create"], decision="prompt")
+prefix_rule(pattern=["kill"], decision="prompt")

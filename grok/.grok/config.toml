@@ -1,0 +1,33 @@
+[cli]
+installer = "internal"
+
+[models]
+default = "grok-4.5"
+default_reasoning_effort = "xhigh"
+
+[ui]
+max_thoughts_width = 120
+fork_secondary_model = "grok-build"
+yolo = false
+compact_mode = false
+permission_mode = "ask"
+
+[marketplace]
+official_marketplace_auto_installed = false
+default_skills_installs_purged = true
+
+[[marketplace.sources]]
+name = "xAI Official"
+git = "https://github.com/xai-org/plugin-marketplace.git"
+
+[plugins]
+enabled = ["figma"]
+
+[compat.cursor]
+mcps = false
+
+[compat.claude]
+mcps = false
+
+[skills]
+paths = ["~/.agents/skills"]

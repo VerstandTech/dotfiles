@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "canonicalSkills": "skills",
+  "skillStandard": "https://agentskills.io/specification",
+  "resources": {
+    "skills": {
+      "portability": "cross-harness",
+      "consumers": ["claude", "codex", "grok", "opencode", "pi"]
+    },
+    "adapters/claude": {
+      "portability": "claude-specific",
+      "consumers": ["claude"]
+    },
+    "adapters/codex": {
+      "portability": "codex-specific",
+      "consumers": ["codex"]
+    },
+    "adapters/pi/personal": {
+      "portability": "pi-package",
+      "consumers": ["pi"]
+    }
+  },
+  "discovery": {
+    "claude": "generated per-skill links under ~/.claude/skills",
+    "codex": "native ~/.agents/skills",
+    "grok": "~/.grok/config.toml [skills].paths includes ~/.agents/skills",
+    "opencode": "native ~/.agents/skills",
+    "pi": "native ~/.agents/skills"
+  },
+  "policy": {
+    "vendorPackagesContainConfigurationOrSymlinkWiringOnly": true,
+    "vendorSpecificResourcesMustLiveUnderAdapters": true,
+    "thirdPartySkillLock": ".skill-lock.json"
+  }
+}

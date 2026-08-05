@@ -1,5 +1,10 @@
 # Dotfiles Centralization Implementation Plan
 
+> **Historical:** Resource-location steps in this plan are superseded by the
+> canonical `~/.agents` architecture documented in the repository README and
+> `agents-shared/.agents/README.md`. Do not recreate per-tool resource copies or
+> per-skill link farms from this plan.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Migrate codex, claude-code, pi, opencode, neovim, wezterm, and zsh configs into GNU Stow packages in `~/dotfiles` (github.com/codingleo/dotfiles), with an idempotent `install.sh` that bootstraps any of the three machines.
