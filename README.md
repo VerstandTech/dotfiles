@@ -26,14 +26,27 @@ Each top-level directory is a stow package mirroring `$HOME`:
 | `zsh` | `~/.zshrc`, `~/.zprofile`, `~/.p10k.zsh`, `~/.config/zsh/` | shell config + prompt theme |
 | `wezterm` | `~/.config/wezterm/` | terminal config |
 | `nvim` | `~/.config/nvim/` | editor config + `lazy-lock.json` |
-| `claude` | `~/.claude/` | settings, CLAUDE.md, agents, custom skills |
-| `codex` | `~/.codex/` | config.toml, AGENTS.md, rules, custom skills |
-| `grok` | `~/.grok/` | custom skills (symlinks to shared skill sources) |
-| `opencode` | `~/.config/opencode/` | configs + custom skills |
+| `claude` | `~/.claude/` | settings, CLAUDE.md, RTK.md + symlink wiring only |
+| `codex` | `~/.codex/` | config.toml, AGENTS.md, RTK.md + symlink wiring only |
+| `grok` | `~/.grok/` | skill symlinks only (no native config) |
+| `opencode` | `~/.config/opencode/` | configs + symlink wiring only |
 | `pi` | `~/.pi/agent/` | settings, models, personal extensions package (`personal/`) |
-| `agents-shared` | `~/.agents/` | canonical shared skills pool + lock file |
+| `agents-shared` | `~/.agents/` | **canonical shared resources**: `skills/`, `agents/`, `rules/` + lock file |
 
-Shared cross-harness skills live only under `agents-shared/.agents/skills/`: Codex and Pi discover `~/.agents/skills` directly, while Claude skill entries are symlinks to that canonical tree. Keep Pi/Herdr-specific skills in Pi's personal package.
+**`~/.agents` is the single source of truth for shared AI resources.** All
+cross-harness content lives only under `agents-shared/.agents/`:
+
+- `skills/` — every shared skill (one copy, no duplicates)
+- `agents/` — shared sub-agent definitions (e.g. Claude's ops agents)
+- `rules/` — shared rule files (e.g. Codex `default.rules`)
+
+Tool packages contain **only their own configuration** (settings files,
+instruction files like `CLAUDE.md`/`AGENTS.md`, tool-specific wiring). They
+never hold real skill/agent/rule content — access is wired via repo-relative
+symlinks into `agents-shared` (Claude, Grok, OpenCode), while Codex and Pi
+discover `~/.agents/skills` directly. Exception: Pi's `personal/` package is
+Pi's own extension system (package.json, `extensions/`, `lib/`, plus
+skills/agents/prompts bound to Pi-only tools) and stays in the `pi` package.
 
 ## Day to day
 
