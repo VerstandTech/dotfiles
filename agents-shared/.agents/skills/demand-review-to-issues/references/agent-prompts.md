@@ -3,7 +3,8 @@
 Fill `{{DEMANDS}}` with the numbered demand list (keep the client's original wording, plus a
 short gloss if it's in another language). Fill `{{REPO_PATH}}` with the absolute repo path so
 the agent can read files, but instruct it to OUTPUT repo-relative paths only. Spawn both in a
-single message (parallel), `subagent_type: general-purpose`, named `Alex` and `Blair`.
+single parallel dispatch using the harness's available read-only subagent mechanism, named
+`Alex` and `Blair`.
 
 ## Contents
 - Alex — implementation/feasibility lens
@@ -35,7 +36,7 @@ single message (parallel), `subagent_type: general-purpose`, named `Alex` and `B
 > (1–3 sharp questions where Blair's product/UX/safety lens is needed to finalize). End with
 > a one-line recommendation per demand.
 >
-> When asked, SendMessage your full report and converged plan to "main".
+> Return your full report and converged plan to the parent orchestrator.
 
 ## Blair — product/UX + safety lens
 
@@ -59,13 +60,13 @@ single message (parallel), `subagent_type: general-purpose`, named `Alex` and `B
 > where Alex's implementation knowledge is needed to finalize). End with a one-line
 > recommendation per demand.
 >
-> When asked, SendMessage your full report and converged plan to "main".
+> Return your full report and converged plan to the parent orchestrator.
 
-## Convergence facilitation messages (sent by main via SendMessage)
+## Convergence facilitation messages (sent by the parent orchestrator)
 
-- To get the report to you (agents often message each other, not main):
-  > "Send your full structured report to `main` now via SendMessage — for each demand:
-  > findings, recommendation, and your open questions for the other reviewer."
+- To request a complete report:
+  > "Return your full structured report now — for each demand: findings, recommendation,
+  > and your open questions for the other reviewer."
 - To relay cross-questions:
   > "Blair asks: «{{questions}}». Answer with your implementation knowledge, then state your
   > updated recommendation for that demand."

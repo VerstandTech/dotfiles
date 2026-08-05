@@ -1,7 +1,7 @@
 {
-  "lastChangelogVersion": "0.82.1",
-  "defaultProvider": "fireworks",
-  "defaultModel": "accounts/fireworks/routers/kimi-k3-fast",
+  "lastChangelogVersion": "0.83.0",
+  "defaultProvider": "xai",
+  "defaultModel": "grok-4.5",
   "defaultThinkingLevel": "high",
   "packages": [
     "npm:pi-subagents",

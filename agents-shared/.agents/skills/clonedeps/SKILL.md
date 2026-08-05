@@ -1,16 +1,16 @@
 ---
 name: clonedeps
-description: Clone important project dependency source code into an ignored local workspace so OpenCode can inspect library internals. Use when the user asks to clone dependencies, inspect dependency/source internals, understand SDK/framework behavior from source, debug library implementation details, or make core dependency repos locally readable. Do not use for ordinary API/docs questions where @librarian is enough.
+description: Clone important project dependency source code into an ignored local workspace so coding agents can inspect library internals. Use when the user asks to clone dependencies, inspect dependency/source internals, understand SDK/framework behavior from source, debug library implementation details, or make core dependency repos locally readable. Do not use for ordinary API/docs questions where the librarian skill is enough.
 ---
 
 # Clonedeps Skill
 
 You help users make a small set of important dependency source repositories
-locally readable to OpenCode.
+locally readable to their coding agent.
 
 This is a workflow skill, not a command wrapper. Do not use a helper script for
 dependency detection, ref validation, cloning, status, or cleanup. The
-orchestrator and `@librarian` do the repo-specific thinking; the orchestrator
+orchestrator and the `librarian` skill do the repo-specific thinking; the orchestrator
 performs the approved filesystem/git operations directly.
 
 ## Workflow
@@ -31,7 +31,8 @@ Do not rescan/re-plan from scratch when the manifest already has useful entries.
 
 ### Step 2: Ask Librarian for the Clone Plan
 
-Delegate dependency discovery and source resolution to `@librarian`.
+Load the `librarian` skill and delegate dependency discovery and source resolution through
+its supported workflow.
 
 Use this prompt:
 
@@ -183,7 +184,7 @@ Update `.gitignore` with an idempotent marker block:
 # END oh-my-opencode-slim clonedeps
 ```
 
-Update `.ignore` so OpenCode can read the cloned source while git still ignores
+Update `.ignore` so tools that honor it can read the cloned source while git still ignores
 it:
 
 ```ignore

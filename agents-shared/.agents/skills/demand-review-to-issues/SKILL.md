@@ -48,8 +48,11 @@ and genuine forks become "decision needed" blocks inside the issue.
 
 ### 3. Spawn two named, persistent agents in parallel
 
-Use the Agent tool with `subagent_type: general-purpose`, named `Alex` and `Blair`, in ONE
-message so they run concurrently. The two lenses are **fixed**:
+Use the harness's available parallel subagent mechanism and keep the parent as orchestrator.
+In Pi, inspect executable agents first, then use `pi-subagents` to dispatch both read-only
+reviews in one parallel call. In Claude Code, use the Agent tool with
+`subagent_type: general-purpose`. Name the roles `Alex` and `Blair`. The two lenses are
+**fixed**:
 - **Alex** = implementation/feasibility (where the code is, how to change it, what already
   exists, what's risky to touch).
 - **Blair** = product/UX + safety (real user intent, UX flow, edge cases, destructive/
@@ -62,11 +65,10 @@ questions for the other agent.
 
 ### 4. Facilitate convergence
 
-The agents run in the background and notify when idle. Relay via `SendMessage`:
-- **Agents tend to message each other directly instead of you.** Explicitly require each to
-  also `SendMessage` its full report AND converged plan to `"main"`, or you won't see it.
-- Relay each agent's open questions to the other; bring back answers until they converge
-  per demand. Distinct lenses make these cross-questions genuinely useful — that's the point.
+Wait for both reports, then relay each agent's open questions to the other with the harness's
+follow-up or inter-agent messaging mechanism. Require every report and converged plan to be
+returned to the parent orchestrator. Continue until they converge per demand. Distinct lenses
+make these cross-questions genuinely useful — that's the point.
 
 ### 5. Resolve what you can verify yourself
 
@@ -85,7 +87,8 @@ chosen from the repo's existing label set (category + type). Report the issue UR
 
 ### 7. Stand the agents down
 
-Send a brief closing `SendMessage` to each so they stop. Ignore further idle notifications.
+Close or stop persistent child sessions when the harness requires it. Ignore further idle
+notifications after the final reports are collected.
 
 ## Hard-won rules
 

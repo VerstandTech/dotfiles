@@ -37,7 +37,10 @@ Collect and verify. Ungrounded panels produce plausible-sounding fiction; the be
 
 ## Phase 1 — Independent positions (10 agents in parallel)
 
-Spawn **all ten** named agents in one message (`subagent_type: "general-purpose"`, distinct descriptions / ids):
+Use the harness's available parallel subagent mechanism and keep the parent as the only
+orchestrator. In Pi, inspect executable agents first, then use `pi-subagents` to dispatch ten
+independent read-only reviews in one parallel call. In Claude Code, use the Agent tool with
+`subagent_type: "general-purpose"`. Assign distinct descriptions/ids to **all ten** roles:
 
 **UX:** `ux-ia`, `ux-interaction`, `ux-visual`, `ux-a11y`, `ux-minimal`  
 **UI experts:** `ui-density`, `ui-craft-polish`, `ui-systems`, `ui-content`, `ui-motion-micro`
@@ -49,14 +52,19 @@ Non-negotiables in every brief:
 - Name peers (other 9) and warn the position will be debated — committed calls, not hedges.
 - Read listed code before judging; cite file/line or computed numbers (contrast, targets, timing).
 - Fixed output shape: (a) top-3 problems + severity, (b) concrete redesign prescription, (c) pre-emptive defenses against **two** named peers' likely objections.
-- Prefer returning the full position as the agent's final message (and SendMessage to `main` when available).
+- Require each full position to be returned to the parent orchestrator.
 
-**Choreography:** wait until **all 10** round-1 positions are in before round 2. Nudge idle agents once.
+**Choreography:** wait until **all 10** round-1 positions are in before round 2. Nudge or
+resume idle agents once using the harness's follow-up mechanism.
 
 ## Phase 2 — Cross-examination (round 2)
 
 1. Read all **10** positions. Extract **contested points** (disagreements + code contradictions). Number them (typically 5–10).
-2. **Round 2 is mandatory for all 10 agents** (not UX-only). Send each a round-2 brief (template in lens-briefs.md): conflict digest, who-said-what, tailored so each agent sees attacks on *their* claims; require attack ≥2 peers, concessions, FINAL vote on every numbered point (≤400 words).
+2. **Round 2 is mandatory for all 10 agents** (not UX-only). Resume each persistent child
+   when supported; otherwise launch a fresh child with its round-1 position included. Send the
+   round-2 brief from `lens-briefs.md`: conflict digest, who-said-what, tailored so each agent
+   sees attacks on *their* claims; require attack ≥2 peers, concessions, FINAL vote on every
+   numbered point (≤400 words).
 3. Route checkable claims to the right specialist (e.g. a11y re-runs contrast math; systems verifies component API; content rewrites contested copy).
 
 Optional efficiency: if a UI expert fully aligns with a UX peer and has no unique contested claim, still collect a short FINAL vote on all points so tallies stay complete.
