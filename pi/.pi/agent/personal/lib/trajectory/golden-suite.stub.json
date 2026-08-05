@@ -1,0 +1,41 @@
+{
+  "version": 1,
+  "name": "pi-high-assurance-golden",
+  "entries": [
+    {
+      "id": "happy-red-green",
+      "description": "Minimal red → green path with isolated roles (record a real run here)",
+      "runPath": "fixtures/happy-red-green.json",
+      "tags": ["bdd", "core"],
+      "assertions": [
+        {
+          "id": "red-before-green-tools",
+          "description": "bdd_assert_red appears before bdd_assert_green",
+          "requiredTools": ["bdd_assert_red", "bdd_assert_green"],
+          "matchMode": "subset",
+          "forbidSuccessAfterFailedGate": true,
+          "maxToolCalls": 200
+        },
+        {
+          "id": "has-phases",
+          "description": "Phase changes are recorded",
+          "requiredKinds": ["phase_change", "tool_call"]
+        }
+      ]
+    },
+    {
+      "id": "caid-test-designer-isolation",
+      "description": "Test Designer handoff without production writes",
+      "runPath": "fixtures/caid-test-designer.json",
+      "tags": ["caid", "isolation"],
+      "assertions": [
+        {
+          "id": "no-impl-tools-required",
+          "description": "Designer path records handoff",
+          "requiredKinds": ["handoff"],
+          "forbiddenTools": []
+        }
+      ]
+    }
+  ]
+}

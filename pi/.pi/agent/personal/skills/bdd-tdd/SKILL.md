@@ -1,6 +1,6 @@
 ---
 name: bdd-tdd
-description: >
+description: >-
   Cross-project BDD → TDD workflow for Pi: Example Mapping, Gherkin/acceptance
   scenarios, red-green-refactor, mutation checks, and handoff evidence. Use when
   the user wants behavior-driven or test-driven development, Example Maps,
@@ -22,10 +22,11 @@ Roadmap / design locks: `docs/agentic-bdd-roadmap.md`.
 
 For high-assurance, multi-agent, or production-critical work, read both package documents before planning:
 
-- `docs/high-assurance-playbook.md` — canonical July 2026 v1.0 normative playbook
-- `docs/high-assurance-pi-implementation.md` — honest enforced/configurable/roadmap mapping for this Pi package
+- `docs/high-assurance-playbook.md` — canonical **August 2026 v1.2** normative playbook (CAID, trajectory, decisions, budgets, overnight rhythm)
+- `docs/high-assurance-pi-implementation.md` — honest enforced / scaffolding / roadmap mapping for this Pi package
+- `docs/overnight-rhythm.md` — day/night cadence when batching agent work
 
-Operationalize the playbook through deterministic phase control, independent test design, one writer, fresh role contexts, least-privilege tools, schema-constrained handoffs, current hard-gate evidence, and explicit human approvals. **Human merge authority** is final. Do not claim a roadmap control is enforced, and do not auto-install or synthesize an unpinned command for a named tool.
+Operationalize the playbook through deterministic phase control, **CAID isolation** (skill `caid`), independent test design, one writer, fresh role contexts, least-privilege tools, schema-constrained handoffs, trajectory evaluation (skill `trajectory`), cost budgets (`lib/bdd/cost-budget.ts`), current hard-gate evidence, and explicit human approvals. **Human merge authority** is final. Do not claim a roadmap control is enforced, and do not auto-install or synthesize an unpinned command for a named tool.
 
 ## When to load
 
@@ -40,6 +41,8 @@ Operationalize the playbook through deterministic phase control, independent tes
 3. **Red before green** — prove failure with `bdd_assert_red` before `/bdd green` or any implementation. The machine **blocks** `green` and `verify` until red evidence exists.
 4. **Green minimum** — smallest change that passes; `bdd_assert_green` must **cover** the red command (`strictGreenCoversRed` default on).
 5. **Handoff evidence** — red command/reason, green command/result, acceptance path or N/A + reason, mutation note when acceptance changed, CRAP notes for new branches.
+6. **CAID for multi-role work** — Test Designer and Implementer use separate worktrees (`lib/worktree/caid.ts`); never collude in one writable tree.
+7. **Trajectory + budgets on verify** — evaluate process anti-patterns and cost circuit breakers before claiming done.
 
 ## Extension API (use these tools)
 
@@ -62,6 +65,8 @@ Operationalize the playbook through deterministic phase control, independent tes
 | `bdd_handoff` | Completeness checklist; `asPr` / `/bdd handoff pr` for PR body |
 | `agentic_doctor` | `/agentic doctor` — config/auth/RPC diagnostics |
 | skill `ship` | Full discovery→verify fleet→handoff recipe |
+| skill `caid` | Plan isolated worktrees + handoffs |
+| skill `trajectory` | Score agent paths / golden suite |
 
 Path gates block `edit`/`write` by phase (e.g. no `src/**` in red).
 
@@ -74,6 +79,7 @@ Path gates block `edit`/`write` by phase (e.g. no `src/**` in red).
 /bdd profile       # inspect deterministic local stack/command detection
 /bdd gates         # inspect required/advisory gate plan; no execution
 /bdd init          # creates .pi/bdd.json from detected local stacks/scripts
+# copy templates/AGENTS.md and templates/decisions.store.json when high-assurance
 # edit patterns, commands, assurance.requiredGateKinds, and thresholds if needed
 /bdd on            # or /bdd discovery
 ```
@@ -87,6 +93,7 @@ Config search order: `.pi/bdd.json` → `bdd.json` → `.bdd-tdd.json` → infer
 - Identify actor + goal + behavior change.
 - Write **Rules (R#)**, **Examples (R#-E#)**, **Questions (Q#)**.
 - Prefer the tracking issue body; else `docs/bdd/` or a short markdown note.
+- Query decision store for prior constraints.
 - `bdd_record_evidence` with `exampleMapRef`, rule/example counts.
 - `/bdd formulation` when examples are concrete.
 
@@ -101,16 +108,16 @@ Skip a formal map only for tiny pure-tech fixes; still record acceptance N/A rea
 - Do **not** implement production behavior yet.
 - `/bdd red`
 
-### 3. Red
+### 3. Red (prefer CAID Test Designer)
 
-- Finish failing tests.
+- Finish failing tests in an isolated designer worktree when multi-agent.
 - `bdd_assert_red` with focused command (use `append` for a file path).
 - Confirm the failure message matches the intended missing behavior (not compile noise from unrelated breakage).
 - `/bdd green` only after red evidence is stored.
 
-### 4. Green
+### 4. Green (prefer CAID Implementer)
 
-- Implement **minimum** production code.
+- Implement **minimum** production code on a **separate** worktree from Test Designer.
 - `bdd_assert_green` on the same focus (then broader suite if needed).
 - Run acceptance command from config when user-visible (`acceptanceTest` in bdd.json).
 
@@ -122,6 +129,7 @@ Skip a formal map only for tiny pure-tech fixes; still record acceptance N/A rea
 
 - `/bdd verify`
 - Run `bdd_run_quality_gates` with `workspaceConfirmed=true`; required unavailable/failing gates block handoff when assurance is enabled.
+- Evaluate trajectory + cost budget for the session when artifacts exist.
 - Use isolated read-only `bdd-breaker`, `bdd-fitness-guardian`, and `bdd-qa` roles when independent verification is warranted. The parent remains the orchestrator and sole decision-maker.
 - Mutation/sensitivity: deliberately break the behavior, run the fail command, restore, then use `bdd_assert_mutation` so proven mutation evidence is command-backed.
 - Review fleet synthesis must live under `.pi/fleet-runs/<runId>/` and record `fleetNoBlockers=true` or accepted/deferred blocker dispositions.
@@ -139,6 +147,9 @@ Skip a formal map only for tiny pure-tech fixes; still record acceptance N/A rea
 - Mutation: proven | n/a — note
 - CRAP: branches/errors/permissions covered or simplified
 - Assurance: profile fingerprint + gate-plan fingerprint + required gate results
+- CAID: designer/implementer paths (if multi-agent)
+- Trajectory: run id + anti-pattern summary (if recorded)
+- Budget: cost/tokens/iterations vs policy (if recorded)
 ```
 
 ## Project adapters (learn once per repo)
@@ -167,6 +178,8 @@ Never invent a second test stack. **Wrap what the repo already runs.**
 - Acceptance N/A without reason
 - Using `/bdd bypass` to avoid writing tests
 - Ignoring project Gherkin tag/layout rules when they exist
+- Test Designer and Implementer sharing one writable worktree
+- Claiming ship-ready without human merge authority
 
 ## Related prompts
 
@@ -183,4 +196,5 @@ Load only if present:
 - `docs/bdd/example-mapping.md`
 - `docs/bdd/gherkin-conventions.md`
 - `AGENTS.md` testing section
+- `docs/decisions/decisions.json`
 - `.pi/bdd.json`

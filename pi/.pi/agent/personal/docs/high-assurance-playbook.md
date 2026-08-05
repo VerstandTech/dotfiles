@@ -1,437 +1,476 @@
 # High-Assurance Multi-Agent Software Development Playbook
 
-**Achieving Process Determinism with AI Coding Agents**
+**Achieving Process Determinism with AI Coding Agents**  
+*(Optimized for Pi + Herdr + Uncle Bob–style testing · VerstandTech)*
 
-*Version 1.0 — July 2026*
-*Synthesized from Uncle Bob Martin’s practices, constrained generation research (XGrammar, Outlines, etc.), multi-agent patterns, formal methods, and high-assurance engineering techniques.*
+*Version 1.2 — August 2026*  
+*Canonical location: `pi/.pi/agent/personal/docs/high-assurance-playbook.md` in [VerstandTech/dotfiles](https://github.com/VerstandTech/dotfiles).*
+
+*Synthesized from Uncle Bob Martin’s practices, constrained generation research, multi-agent patterns (CAID, trajectory supervision, Requirements-as-Code), formal methods, and high-assurance engineering. Tuned for the Pi coding agent harness and Herdr agent-aware terminal multiplexer.*
+
+---
+
+## Changelog (1.0 → 1.2)
+
+| Version | Highlights |
+|---------|------------|
+| **1.0** | Core roles, gates, Uncle Bob stack, production hardening (§13) |
+| **1.1** | Pi + Herdr runtime, spawned vs sub-agent isolation |
+| **1.2** | **CAID** worktree isolation, **trajectory** golden suite, **Requirements-as-Code** decision store, **cost budgets** as gates, **overnight rhythm**, **AGENTS.md** contract, package scaffolding under `lib/{worktree/caid,trajectory,decisions,bdd/cost-budget}` |
+
+Companion (honest enforcement map): [`high-assurance-pi-implementation.md`](./high-assurance-pi-implementation.md).
 
 ---
 
 ## 1. Purpose & Goals
 
-This playbook defines a practical, production-oriented workflow for teams (or individuals) running **multiple specialized sub-agents** to produce software with significantly higher reliability and lower variance than unconstrained LLM coding.
+This playbook defines a practical, production-oriented workflow for teams (or individuals) running **multiple specialized agents** to produce software with significantly higher reliability and lower variance than unconstrained LLM coding.
 
-**Primary goal**: *Process determinism* — given the same requirements and constraints, the system consistently produces high-quality, thoroughly verified code that meets functional and non-functional requirements. Bit-identical source outputs are not required (and often undesirable); verified equivalence of behavior and quality is the target.
+**Primary goal**: *Process determinism* — given the same requirements and constraints, the system consistently produces high-quality, thoroughly verified code that meets functional and non-functional requirements. Bit-identical source outputs are not required; verified equivalence of behavior and quality is the target.
 
-**How this complements Uncle Bob**:
-We take his aggressive testing philosophy (unit + Gherkin/acceptance + property + mutation + QA + jitter + exploratory) and amplify it with generation constraints, multi-agent separation of powers, hard fitness gates, trajectory assertions, and a deterministic orchestrator that owns control flow.
+**Recommended concrete stack (2026)**:
+- **Pi (pi.dev)** — primary coding agent harness. Minimal core (read / write / edit / bash), highly extensible via skills and TypeScript extensions.
+- **Herdr** — agent-aware terminal multiplexer. Named panes/tabs with real-time state (working / blocked / idle).
+- **Uncle Bob–style testing** — multi-layer verification (unit + Gherkin/acceptance + property + mutation + QA + jitter + exploratory) as the primary interface agents optimize against.
+- **CAID worktrees** — physical isolation of roles via git worktrees + fresh Pi instances.
+- **Trajectory + decision store** — process oracles and institutional memory, not only final diffs.
 
 **Core philosophy**:
 - LLMs are powerful but stochastic. Treat them as focused but unreliable “idiot savants.”
-- Determinism and reliability come primarily from **scaffolding, constraints, independent oracles, and architectural separation**, not from better prompting alone.
+- Determinism comes primarily from **scaffolding, constraints, independent oracles, and architectural separation**, not from better prompting alone.
 - Tests, metrics, and formal checks are the primary interface the agents optimize against.
-- The overall control flow should be owned by deterministic code (the Orchestrator), not by an LLM.
+- Control flow is owned by **deterministic code** (the Orchestrator), not by an LLM.
+- Prefer **true process isolation** (separate Herdr panes + fresh Pi + CAID worktrees) over shared-context sub-agents when roles must not collude.
 
 ---
 
 ## 2. Guiding Principles
 
 1. **Surround agents with deterministic tools and oracles**
-   Agents write and run small, deterministic checker programs (complexity, duplication, coverage, mutation score, architectural rules, contracts). Vague prompts such as “write clean code” are insufficient.
-
-2. **Separation of powers**
-   Distinct agents (or strongly isolated contexts) own specification, test writing, implementation, critique, and architecture enforcement. Minimize shared context to reduce correlated failures and collusion.
-
+2. **Separation of powers** (and *physical* isolation via CAID when stakes are high)
 3. **Independent test generation**
-   Tests (especially acceptance, property, and trajectory tests) are produced independently from the production code whenever possible.
-
 4. **Over-constrain with oracles**
-   Use the speed of agents to run far more rigorous verification than a human could normally afford. Multiple overlapping oracles create “peer pressure” that makes unwanted changes hard to hide.
-
-5. **Small, decoupled units**
-   Prefer small functions and modules (e.g., cyclomatic complexity ≤ 6–8). Smaller units are easier for agents to reason about and improve semantic stability.
-
+5. **Small, decoupled units** (cyclomatic complexity ≤ 6–8)
 6. **Blueprint / executable specification first**
-   Prefer generating formal or semi-formal specs, Gherkin, properties, and contracts *before* (or independently of) implementation code. Deterministic control flow owns the process.
-
-7. **Hard gates before hand-off**
-   No work moves to the next agent or stage until all defined hard gates are green.
-
-8. **Human as final judge**
-   Manual exploratory testing and architectural judgment remain essential, especially for novel domains or high-stakes systems.
-
+7. **Hard gates before hand-off** (including cost/latency budgets)
+8. **Human as final judge** (merge authority never delegated overnight)
 9. **Agents maintain their own checkers**
-   Encourage agents to write, improve, and run the deterministic tools that police them.
+10. **Score the path, not only the outcome** (trajectory supervision)
+11. **Memory-as-governance** (decisions are queryable constraints, not chat lore)
+12. **Minimal AGENTS.md** — human-curated, strict, short; deep policy lives in this playbook + skills
 
 ---
 
 ## 3. Multi-Agent Architecture & Roles
 
-Recommended specialized roles (implement as distinct agents, crews, or carefully isolated contexts):
+### Recommended Runtime
+
+- **Pi** instances run inside **Herdr** panes.
+- Each major role preferably runs as an independent Pi process in its own named Herdr pane (true isolation).
+- **CAID** assigns each sensitive role a dedicated git worktree under `.worktrees/caid/<task>/<role>/`.
+- The deterministic **Orchestrator** decides when to spawn a new Herdr pane + Pi agent with a clean handoff document versus using a lighter sub-agent pattern.
+
+### Specialized Roles
 
 | Role | Primary Responsibilities | Key Constraints / Isolation |
 |------|---------------------------|-----------------------------|
-| **Orchestrator / Blueprint Engine** | Owns overall control flow, state, sequencing, and gate enforcement. Calls specialized agents only for bounded tasks. | **Pure deterministic code** (LangGraph preferred for production, CrewAI for rapid prototyping, or custom state machine). Never an LLM. |
-| **Specifier / Requirements Agent** | Turns informal goals into structured tasks, Gherkin scenarios, properties, contracts, and formal sketches. | Outputs only specs and tests; does not write production code. |
-| **Test Designer / Property Agent** | Independently writes unit tests, property tests, trajectory assertions, acceptance tests, and edge cases from the specs. | Strongly isolated from Implementer. Different context (and ideally different model) preferred. |
-| **Implementer / Coder Agent** | Writes production code to satisfy the locked tests and contracts. | Does not modify tests. Receives only necessary specs and failure feedback. |
-| **Critic / Breaker / Adversarial Agent** | Tries to find bugs, surviving mutants, weak assertions, or architectural violations. Generates adversarial cases. | Adversarial posture; separate context. |
-| **Architect / Fitness Guardian** | Enforces architecture rules, complexity limits, duplication, dependency direction, fitness functions, **coverage thresholds**, and **doctor scanners** (react-doctor, rust-doctor, Node/Bun stack). Can force refactoring. | Can reject work. Runs continuous structural + health-score checks. Automatically invokes language-appropriate doctor and coverage tools. |
-| **Refactorer** | Improves structure while keeping all tests and fitness gates green. | Operates under strict constraints from the Guardian. |
-| **QA / Performance Agent** | Executes scripted QA procedures, performance analysis, jitter/concurrency tests. | Complements human exploratory testing. |
-| **Human Operator** | Spot-checks critical artifacts, performs exploratory testing, sets thresholds, flushes context when needed, and has final merge authority. | Ultimate quality and business-value judgment. |
+| **Orchestrator / Blueprint Engine** | Owns control flow, state, sequencing, gate + budget enforcement, CAID planning | **Pure deterministic code**. Never an LLM for control flow. |
+| **Specifier / Requirements Agent** | Structured tasks, Gherkin, properties, contracts; may draft decision records | Specs only; no production code. CAID worktree preferred. |
+| **Test Designer / Property Agent** | Unit, property, trajectory, acceptance tests from locked specs | **Strict CAID**: `worktree+fresh-pi`. Different model preferred. |
+| **Implementer / Coder Agent** | Production code for locked tests | Does not modify tests. Own CAID worktree. |
+| **Critic / Breaker / Adversarial Agent** | Bugs, mutants, weak assertions | Adversarial; separate Herdr pane + worktree. |
+| **Architect / Fitness Guardian** | Architecture, complexity, coverage, doctor, **cost budgets**, trajectory anti-patterns | Can reject work. Read-only tree preferred. |
+| **Refactorer** | Structure under green gates | Serial writer; not concurrent with Implementer on same tree. |
+| **QA / Performance Agent** | Scripted QA, jitter, budgets | Complements human exploratory testing. |
+| **Human Operator** | Approvals, exploratory testing, thresholds, merge | Ultimate authority. |
 
-**Key isolation & communication rules**:
-- Test Designer should not see the production implementation while designing tests (and vice versa when possible).
-- Prefer intermediate representations (Gherkin → IR → executable tests) to create semantic distance.
-- All inter-agent messages use strict schemas (JSON Schema / Pydantic / Zod).
+### Sub-agents vs Spawned Agents vs CAID
+
+| Type | Implementation | Isolation | When to use |
+|------|----------------|-----------|-------------|
+| **Sub-agent** | Same Pi process / shared context | Low–Medium | Short helpers |
+| **Spawned agent** | New Herdr pane + fresh Pi + handoff | High | Role separation |
+| **CAID assignment** | Spawned agent **+ dedicated worktree** + board registry | Highest | Test Designer ↔ Implementer, overnight writers, parallel features |
+
+**Rule of thumb**: When the playbook says “strongly isolated,” use **CAID** (`lib/worktree/caid.ts`, skill `caid`).
+
+### Isolation & communication rules
+
+- Test Designer must not see production implementation while designing tests (and vice versa).
+- Prefer intermediate representations (Gherkin → IR → executable tests).
+- Inter-agent messages use schemas or clean **handoff documents** (paths/refs, not content dumps).
 - Flush or heavily summarize context between major stages when drift is detected.
 - Tool allowlists per role.
+- Use Herdr state (working / blocked / idle) to know who needs attention.
+- Decision store + AGENTS.md are read before repeating past approaches.
 
 ---
 
-## 4. Generation Constraints Layer
+## 4. Concrete Runtime: Pi + Herdr
 
-Make invalid or low-quality outputs difficult or impossible at generation time:
+### Why this stack
 
-- **Temperature ≤ 0.2** (ideally 0) + fixed seeds for implementation and verification steps.
-- **Structured outputs / JSON Schema / tool-calling schemas** enforced by the runtime for all plans, tool calls, and intermediate artifacts.
-- **Grammar-constrained decoding** (XGrammar — high performance and widely integrated; Outlines; Guidance; GBNF; provider-native structured outputs).
-- Type-directed or context-sensitive constraints where available.
-- Prefer generating small, pure, or well-scoped units rather than large unstructured blobs.
-- Multi-stage generation (plan → intermediate representation → code) rather than direct end-to-end generation for complex features.
-- Model version, system prompt, and tool-schema pinning. Every generation is tagged with the exact configuration used.
-- Optional self-consistency / majority vote for high-stakes decisions.
+- **Pi** does not impose a heavy multi-agent runtime — we own process via skills, extensions, AGENTS.md, and the Orchestrator.
+- **Herdr** provides process isolation and visibility.
+- Combined with Uncle Bob–style testing + CAID, we get isolation **and** extreme verification pressure.
+
+### Recommended practices with Pi
+
+- Project contract in **`AGENTS.md`** (template: `templates/AGENTS.md`).
+- Skills: `bdd-tdd`, `caid`, `trajectory`, `ship`, `agentic-fleet`, `herdr`.
+- Prefer **CAID spawned agents** for strongly isolated roles.
+- Route cheaper models to Test Designer / simple implementer steps; stronger models to Architect / Critic.
+
+### Handoff / Spawn standard
+
+1. Create a short handoff (temp or `.pi/handoffs/`).
+2. Include: goal, **artifact refs by path**, suggested skills, constraints/red lines.
+3. Redact secrets.
+4. Launch fresh Pi in a named Herdr pane.
+5. Register CAID + worktree-board cards; acquire writer caps.
 
 ---
 
-## 5. Layered Verification & Testing Stack
+## 5. Generation Constraints Layer
 
-We amplify Uncle Bob’s regime into a multi-layered oracle system that the multi-agent crew optimizes against.
+- Temperature ≤ 0.2 (ideally 0) + fixed seeds for implementation/verification.
+- Structured outputs / JSON Schema / tool-calling schemas.
+- Grammar-constrained decoding where available.
+- Small, well-scoped units; multi-stage generation (plan → IR → code).
+- Pin model version, system prompt, tool schemas; tag every generation.
+- Optional self-consistency for high-stakes decisions.
+
+---
+
+## 6. Layered Verification & Testing Stack
 
 ### Tier 1 – Core (Always-on)
 
-- Unit tests (target: mid-to-high 90s coverage)
-- Acceptance / Gherkin scenarios (human spot-check recommended)
+- Unit tests (mid-to-high 90s coverage on critical/changed code)
+- Acceptance / Gherkin
 - Property-based tests
-- Scripted QA procedures
-- Mutation testing of unit *and* acceptance tests (high kill rate required)
-- Jitter / concurrency tests for multi-threaded or concurrent code
-- Manual exploratory testing (final human judgment)
+- Scripted QA
+- Mutation testing (high kill rate)
+- Jitter / concurrency where relevant
+- Manual exploratory testing
 
 ### Tier 2 – Process & Behavioral Determinism
 
 | Technique | Purpose |
 |-----------|---------|
-| **Trajectory / Action assertions** | Verify the sequence of tool calls, arguments, and intermediate states. Prevents “path cheating.” |
-| **Differential / Characterization / Golden-master tests** | Behavioral equivalence or improvement vs previous version or recorded golden runs. |
-| **Semantic stability measurement** | Multiple runs of the same goal; measure variance in AST structure, metrics, or observable behavior. Fail if variance exceeds threshold. |
-| **Impact analysis / selective regression** | Code-to-test dependency map; only claim success after the relevant tests + full suite pass. |
-| **Design-by-Contract / runtime contracts** | Explicit pre/post-conditions and invariants checked at runtime or statically. |
-| **Fuzzing** | Of agent inputs/specs and of the generated code. |
+| **Trajectory / Action assertions** | Tool-call sequences, phase order; prevent path cheating (`lib/trajectory`) |
+| **Anti-pattern detectors** | False completion, same-agent test+impl, missing red-before-green |
+| **Golden trajectory suite** | Regression of process quality on prompt/skill changes |
+| **Differential / golden-master** | Behavioral equivalence |
+| **Semantic stability** | Variance across repeated runs |
+| **Design-by-Contract** | Pre/post/invariants |
+| **Fuzzing** | Specs and generated code |
 
 ### Tier 3 – High-Assurance / Formal (Selective)
 
-- Agents co-generate formal models (TLA+, Alloy, Quint) or verified implementations (Dafny, Lean) for critical components (concurrency, protocols, security properties, complex state machines).
-- Model checker / verifier becomes an independent oracle.
-- Emerging patterns: iterative proof-repair loops with agents.
+- TLA+ / Alloy / Quint / Dafny / Lean on critical components
+- Model checker as independent oracle
+- Iterative proof-repair loops
 
-**Key practice**: Test Designer works in isolation from Implementer. Implementation never sees the full private test suite until the verification stage when possible.
-
----
-
-## 6. Deterministic Gates & Fitness Functions
-
-These are **hard gates** enforced by the deterministic Orchestrator. Work does not advance until they pass.
-
-**Recommended minimum gates**:
-- All unit + acceptance + property tests pass
-- Mutation score above defined threshold (e.g., ≥ 80–95% on changed / critical code; aim to kill survivors)
-- Cyclomatic complexity (or CRAP metric) per function ≤ 6–8
-- Duplication below threshold
-- Architectural fitness rules satisfied (dependency direction, layering, no cycles, forbidden imports, etc.)
-- **Coverage thresholds met** (language-specific tools: nyc / c8 / Vitest for JS/TS; cargo-llvm-cov for Rust). Typical target: ≥ 95% on critical / changed code.
-- **Doctor / health-score gates**: react-doctor score ≥ 90 (or no high-severity findings on changed files via `--diff`); equivalent clean score / findings from rust-doctor or the Node/Bun doctor stack.
-- Trajectory assertions clean
-- Contracts / invariants hold
-- Performance / resource budgets not exceeded (when defined)
-- Static analysis clean (or only approved exceptions)
-- Semantic stability within threshold for critical paths
-
-Agents are encouraged to write, maintain, and run these deterministic checkers themselves. The Fitness Guardian and Implementer agents should automatically invoke the appropriate coverage and doctor tools (leveraging their agent skills / MCP where available). The Orchestrator simply refuses to advance the state machine until the gates report success.
+**Key practice**: Test Designer isolated from Implementer. Prefer private tests until verification when operationally feasible.
 
 ---
 
-## 7. Orchestration: Blueprint-First / Compiled AI Pattern
+## 7. Deterministic Gates & Fitness Functions
 
-For production-critical paths, prefer this architecture:
+Hard gates enforced by the Orchestrator — work does not advance until green:
 
-1. A **deterministic orchestrator** (LangGraph state graph, custom state machine, or equivalent) owns control flow, state, and sequencing.
-2. LLM agents are invoked only as tools for *bounded creative subtasks* (e.g., “implement this pure function given these contracts and the current failing tests”).
-3. Generated artifacts pass through multi-stage validation (syntax → types → tests → fitness → security).
-4. Once validated, the code becomes a static artifact; further LLM calls are removed from that path (“compiled”).
+- Unit + acceptance + property tests pass
+- Mutation score ≥ threshold (e.g. 80–95% on changed/critical code)
+- Complexity / CRAP ≤ 6–8 per function
+- Duplication + architecture fitness
+- Coverage thresholds (c8/nyc/Vitest; cargo-llvm-cov)
+- Doctor / health-score (react-doctor ≥ 90 or no high-severity on diff)
+- **Trajectory assertions clean + no error-level anti-patterns**
+- Contracts hold
+- Performance budgets
+- Static analysis clean
+- **Cost / token / iteration / wall-clock budgets** (`lib/bdd/cost-budget.ts`)
+- Security / secret scan / SCA when configured
+- **Decision-store pre-action gate** for accepted constraints (advisory → hard when project enables)
 
-This pattern dramatically improves predictability, auditability, cost control, and security surface compared with long-running agent loops that keep calling the model at runtime.
-
-**Recommended frameworks**:
-- **LangGraph** — Preferred for production (explicit graphs, checkpointing, human-in-the-loop, durable execution).
-- **CrewAI** — Excellent for rapid role-based prototyping.
-- Hybrid approaches are common and effective.
-
----
-
-## 8. End-to-End Feature Workflow (Example)
-
-1. Human provides goal + non-negotiable constraints and quality bars.
-2. **Specifier Agent** produces executable specs, Gherkin, properties, and contracts. Human reviews.
-3. **Test Designer Agent** (isolated) expands into full unit, property, trajectory, and acceptance tests. Gates: tests are valid and cover the required properties.
-4. Orchestrator materializes a blueprint / skeletal structure / interfaces that satisfy the contracts.
-5. **Implementer Agent(s)** loop under constrained generation: write code → local tests → fix until local gates + contracts pass.
-6. **Critic / Breaker** attacks the solution (mutation survivors, adversarial properties, differential checks).
-7. **Fitness Guardian** + full global suite (coverage, mutation, architecture, performance, semantic stability).
-8. **QA + Human exploratory** testing and spot-checks of key artifacts.
-9. Promote / merge only if all hard gates are green. Archive the full trajectory + artifacts.
-
-Record the entire multi-agent trajectory for later replay, debugging, and continuous improvement.
+Agents write and run checkers; Orchestrator refuses state transitions on red.
 
 ---
 
-## 9. Observability, Replay & Versioning
+## 8. Orchestration: Blueprint-First / Compiled AI
 
-- Full append-only trajectory logs for every agent (prompts, structured thoughts, tool calls, observations, decisions, code diffs).
-- Record-and-replay infrastructure (agentverify-style cassettes, Docker Cagent-style, or VCR pattern) so multi-agent sessions can be deterministically re-executed in CI or for debugging.
-- Version everything that affects outcomes: models, system prompts, role definitions, schemas, fitness function definitions, and the orchestrator itself.
-- Semantic stability dashboards and variance metrics over time.
-- Prompt and schema registries so changes are deliberate and reviewable.
-- Tag successful runs so they can later serve as golden examples or few-shot material.
+1. Deterministic orchestrator owns control flow (LangGraph, Pi extension state machine, or pure `lib/bdd/*` + CAID planner).
+2. LLM agents are tools for bounded creative subtasks.
+3. Multi-stage validation: syntax → types → tests → fitness → security → trajectory → budget.
+4. “Compile” stable features: remove further LLM calls from runtime paths once validated.
 
 ---
 
-## 10. Recommended Tooling Stack (2026)
+## 9. End-to-End Feature Workflow
 
-**Constrained generation & structured outputs**
-XGrammar (high performance, widely integrated), Outlines, Guidance, provider-native structured outputs, Instructor-style libraries, GBNF.
-
-**Testing & oracles**
-- Property-based: Hypothesis (Python), fast-check (JS/TS), etc.
-- Mutation: language-appropriate tools (mutmut, Stryker, PIT, mewt-style, or custom AI-assisted mutation).
-- Trajectory / agent testing: agentverify-style pytest plugins, Promptfoo, custom assertions.
-- Formal: TLA+ / TLC, Alloy, Dafny, Lean / Quint (selective use).
-
-**Test Coverage Tools**
-- **JavaScript / TypeScript**: `nyc` (Istanbul CLI) with `@istanbuljs/nyc-config-typescript` for accurate source-mapped coverage. Modern preferred alternatives: `c8` (V8-native, faster) or the built-in V8 coverage providers in Vitest and Jest. Enforce high thresholds (e.g. statements / branches / functions ≥ 95% on changed code) as hard gates.
-- **Rust**: Prefer `cargo-llvm-cov` (precise LLVM source-based instrumentation, excellent multi-platform support, HTML/LCOV reports). Alternative: `cargo-tarpaulin`. Same high-threshold policy; integrate into CI and agent loops.
-
-**Deterministic “Doctor” / Best-Practice Scanners** (highly recommended for agentic workflows)
-- **React / Frontend**: **react-doctor** (`npx react-doctor@latest`). Deterministic scanner for state & effects anti-patterns, performance regressions, architecture issues, security risks, and accessibility problems that regular linters and agents often miss. Produces a 0–100 health score + actionable diagnostics. Excellent agent integration (skills, `--diff` mode for changed files, Git hooks, CI PR comments). Make a minimum score (e.g. ≥ 90) or “no high-severity findings” a hard gate. Agents should run it automatically after React changes and self-correct.
-- **Rust**: **rust-doctor** (or equivalent stack combining strict Clippy + cargo-audit / cargo-deny + structural tools). Unified health score across security, performance, correctness, architecture, and dependencies. Integrate identically as a Fitness Guardian check and hard gate.
-- **Node / Bun Backend**: Recommended deterministic stack = Biome (or Oxlint) for speed + strict TypeScript + ESLint security/architecture plugins + `dependency-cruiser` (or ArchUnitTS / ts-arch) for enforceable architectural rules. Treat the combination as the backend “doctor” and run it as a gate.
-
-**Orchestration**
-LangGraph (production preference), CrewAI (rapid prototyping), custom deterministic state machines.
-
-**Fitness & static analysis**
-Complexity / CRAP tools, duplication detectors, ArchUnit / dependency-cruiser / custom fitness functions, strong type checkers and linters, the coverage tools and doctor scanners listed above.
-
-**Replay & observability**
-Trajectory logging, cassette/record-replay systems, LangSmith or OpenTelemetry-style tracing.
-
-**Supporting**
-DSPy-style prompt optimization against measurable metrics; strong CI that treats the full gate suite as required.
+1. Human goal + non-negotiable constraints + budgets.
+2. Read **AGENTS.md** + query **decision store**.
+3. Specifier → specs/contracts; human plan review when high-risk.
+4. **CAID**: plan Test Designer worktree; spawn isolated designer; red proof.
+5. **CAID**: plan Implementer worktree; green minimum; no test edits.
+6. Breaker + Fitness Guardian (trajectory + gates + doctor + cost).
+7. QA + human exploratory; findings approval.
+8. Merge only if hard gates green; archive trajectory + decisions + evidence.
+9. Optional overnight queue for remaining green-bound tasks (`docs/overnight-rhythm.md`).
 
 ---
 
-## 11. Incremental Adoption Roadmap
+## 10. Observability, Replay & Versioning
 
-**Phase 0 – Hygiene (1–2 weeks)**
-Temperature control, structured outputs on critical agents, Uncle Bob core suite + mutation testing, basic complexity/coverage gates (nyc/c8 or cargo-llvm-cov), start logging trajectories.
-
-**Phase 1 – Multi-Agent Separation (2–6 weeks)**
-Introduce independent Test Designer + Implementer + simple Orchestrator. Add trajectory assertions. Wire coverage thresholds **and** the relevant doctor tools (react-doctor for React work, rust-doctor or Node/Bun stack for backend) as automated gates. Enforce basic hand-off gates.
-
-**Phase 2 – Hard Gates & Fitness (ongoing)**
-Full architecture fitness functions, semantic stability checks, stronger mutation gates, doctor score thresholds, record/replay of sessions, differential testing.
-
-**Phase 3 – Blueprint-First & High Assurance**
-Move control flow fully into deterministic orchestrator. LLM agents become pure tools for bounded tasks. Selectively introduce formal methods on critical paths. “Compile” stable features to remove further LLM calls from runtime.
-
-Start minimal: Specifier + Test Designer + Implementer + Critic, orchestrated by a simple script or LangGraph, with the Uncle Bob suite + constrained outputs + mutation as the first hard gates.
+- Append-only trajectories (`.pi/trajectories/`) — no secrets in previews.
+- Record/replay cassettes where available.
+- Version models, prompts, roles, schemas, fitness defs, orchestrator.
+- Golden trajectory suite on every skill/prompt change.
+- Semantic stability dashboards over time.
+- Tag successful runs as golden candidates.
 
 ---
 
-## 12. Limitations, Anti-Patterns & Human Oversight
+## 11. Recommended Tooling Stack (2026)
+
+**Runtime**: Pi + Herdr + this personal package (`leo-pi-personal` / VerstandTech dotfiles).
+
+**Package scaffolding (v1.2)**:
+
+| Area | Path |
+|------|------|
+| CAID | `lib/worktree/caid.ts`, skill `caid` |
+| Trajectory | `lib/trajectory/*`, skill `trajectory` |
+| Decisions | `lib/decisions/*`, template `templates/decisions.store.json` |
+| Cost budgets | `lib/bdd/cost-budget.ts` |
+| Overnight | `docs/overnight-rhythm.md` |
+| AGENTS template | `templates/AGENTS.md` |
+| BDD / fleet / worktree board | existing `extensions/*`, `lib/bdd/*`, `lib/fleet/*` |
+
+**Constrained generation**: XGrammar, Outlines, provider structured outputs.
+
+**Testing**: Hypothesis / fast-check; mutation tools; agentverify-style trajectory tests; Promptfoo.
+
+**Coverage / doctors**: c8/nyc/Vitest; cargo-llvm-cov; react-doctor; Clippy/audit stack; Biome + dependency-cruiser.
+
+**Orchestration**: Deterministic Pi extensions + optional LangGraph for product systems.
+
+---
+
+## 12. Incremental Adoption Roadmap
+
+**Phase 0 – Hygiene**: temperature, structured outputs, core suite + mutation, basic coverage, trajectory logging.
+
+**Phase 1 – Multi-agent separation**: Test Designer + Implementer + Orchestrator; wire doctor + coverage gates.
+
+**Phase 2 – CAID + hard gates**: worktree isolation, architecture fitness, decision store, cost budgets.
+
+**Phase 3 – Trajectory golden suite + overnight rhythm**: process regression CI, batch queues with circuit breakers.
+
+**Phase 4 – Blueprint-first / formal**: full deterministic control flow; selective formal methods; compile stable paths.
+
+---
+
+## 13. Limitations, Anti-Patterns & Human Oversight
 
 ### Limitations
-- Perfect bit-level determinism across model updates remains unrealistic.
-- Formal methods have non-trivial cost; apply selectively where the ROI is high.
-- Agents can still soften soft assertions if isolation and mutation testing are weak.
-- Novel or poorly specified domains still require strong human judgment.
 
-### Anti-Patterns to Avoid
-- Letting the same agent (or a long shared context) write both the production code and the tests that verify it.
-- Relying primarily on free-text “LLM-as-judge” approval instead of deterministic oracles.
-- Allowing free-form natural language hand-offs without schemas.
-- Giving agents unrestricted tool access or unbounded loops without circuit breakers.
-- Skipping mutation testing or fitness functions “for speed.”
-- Letting context windows grow unbounded without flushing.
-- Treating bit-identical output as the goal.
-- Promoting work that only passes happy-path tests.
+- Perfect bit-level determinism across model updates is unrealistic.
+- Formal methods have cost; apply selectively.
+- Soft isolation (prompt-only) is weaker than CAID worktrees.
+- Novel domains still need strong human judgment.
 
-### Human Role Remains Essential
-- Define initial requirements and non-negotiable quality bars.
-- Spot-check Gherkin, high-level design, and critical contracts.
-- Perform exploratory / UX / business-value testing.
-- Decide when to flush context or reset agents.
-- Continuously evolve the fitness functions and risk thresholds based on observed failures.
-- Retain final merge / ship authority.
+### Anti-Patterns
+
+- Same agent/context writes production code **and** the tests that verify it
+- Free-text LLM-as-judge instead of deterministic oracles
+- Schema-free handoffs
+- Unrestricted tools / unbounded loops without circuit breakers
+- Skipping mutation, fitness, or trajectory checks “for speed”
+- Unbounded context without flush
+- Bit-identical output as the goal
+- Happy-path-only promotion
+- Overnight merge / unsupervised production deploys
+- Raising cost budgets automatically after circuit break
+- Treating playbook recommendations as “enforced” without commands/config
+
+### Human Role
+
+- Requirements and quality bars
+- Spot-check Gherkin, design, contracts
+- Exploratory / UX / business-value testing
+- Flush/reset agents
+- Evolve fitness functions from observed failures
+- **Final merge / ship authority**
 
 ---
 
-## 13. Production Hardening & Continuous Improvement
+## 14. CAID — Centralized Asynchronous Isolated Delegation
 
-The previous sections establish a high-assurance *development* process. This chapter covers the additional practices required to run that process reliably, affordably, and safely at scale, and to continuously improve the multi-agent system itself.
+### Problem
 
-### 13.1 Trajectory & Process Evaluation
+Shared worktrees and shared contexts cause collusion: tests and code co-adapt, trajectory evidence becomes fiction, and parallel agents thrash the same files.
 
-Score the *path* the agents take, not only the final artifacts.
+### Pattern
 
-**Why it matters**: An agent can reach a green test suite via an unsafe, inefficient, or non-reproducible path. Outcome-only metrics hide these failures.
+1. **Centralized** planning in the Orchestrator / parent Pi (deterministic helpers).
+2. **Asynchronous** role execution in separate Herdr panes.
+3. **Isolated** git worktrees per role (`planCaidAssignment`).
+4. **Delegation** via handoff documents + board registry — not pasted megaprompts.
 
-**Key metrics**:
-- Tool-call F1 / correctness (right tool + right arguments)
-- Plan correctness / coherence
-- Recovery quality (how the agent handles failures)
-- False-completion rate (claims “done” while gates still fail)
-- Pass@k and variance across repeated runs of the same task
-- Efficiency (steps / tokens to success)
+### Defaults
 
-**Recommended tools & practices**:
-- **AgentLens** (open-source, production-assessed trajectory reviews specifically for coding agents)
-- LangChain **agentevals** / LangSmith trajectory match (strict, unordered, subset, superset modes) + LLM-as-judge
-- DeepEval, Arize Phoenix, Braintrust for broader agent metrics
-- Maintain a golden trajectory suite of past successful (and failed) tasks
-- Capture full OpenTelemetry / structured traces; support offline replay
-- Run nightly regression of the multi-agent crew against the golden set
-- Score dimensions separately rather than collapsing into a single number
+| Role | Isolation |
+|------|-----------|
+| test-designer, breaker, fitness-guardian, qa | `worktree+fresh-pi` |
+| implementer, refactorer, specifier | `worktree` |
+| orchestrator | `shared` |
 
-**Integration**: Fitness Guardian or a dedicated Evaluator agent owns these checks. Results feed back into prompt/role/skill improvements.
+### Collision policy
 
-### 13.2 Cost, Latency & Resource Budgets
+- Active Test Designer + Implementer on the **same path** is a hard process error (`detectCaidCollisions`).
+- Multiple writer roles on one path is a hard process error.
+- Worktree board `maxBusyWriters` still applies.
 
-Treat cost and latency as first-class fitness functions.
+### Operator commands (conceptual)
 
-**Practices**:
-- Per-task and per-agent hard token / spend budgets enforced by the Orchestrator
-- Loop iteration caps and total wall-clock limits with circuit breakers
-- Model routing by role and complexity (cheap/fast models for simple steps and Test Designer work; stronger models only for architecture, critique, or high-stakes decisions)
-- Cascade pattern: try cheaper path first; escalate only when deterministic gates fail
-- Prompt caching and context compression where supported
-- Explicit latency tiers (e.g., interactive coding assistant vs background research)
+```text
+plan CAID → add worktree → write handoff → spawn Herdr pane →
+acquire writer → work → release → evaluate trajectory → merge (human)
+```
 
-**Enforcement**: Prefer gateway-level or Orchestrator-level budgets that cannot be bypassed by individual agents. Log cost attribution per task and per agent.
+Implementation: `lib/worktree/caid.ts`, skill `skills/caid`, pairs with `extensions/worktree-board.ts`.
 
-### 13.3 Shared Persistent Context & Project Memory
+---
 
-Move beyond per-session context windows.
+## 15. Trajectory Supervision & Golden Suite
 
-**Recommended approach**:
-- Event-sourced, append-only project memory (typed events: issues, attempts, fixes, decisions, ADRs, constraints)
-- Deterministic projections / summaries served to agents (e.g., via MCP)
-- Pre-action gates that warn or block repetition of previously failed fixes or edits to known-fragile areas (“Memory-as-Governance”)
-- Selective persistence of high-value artifacts (specs, schemas, decisions, golden trajectories) rather than full chat history
-- Versioned, queryable, and preferably local-first where possible
+### Why
 
-**Tools / patterns**: projectmem-style systems, structured ADR stores, knowledge-graph or hybrid memory layers (Graphiti/Zep, Mem0, Hindsight, etc.), markdown-based decision logs that agents both read and write.
+Agents can reach green tests via unsafe, non-reproducible, or policy-violating paths. Outcome-only CI is insufficient.
 
-This layer is the institutional memory that prevents agents from re-deriving (or contradicting) past decisions.
+### Minimum metrics
 
-### 13.4 Security & Supply-Chain Gates
+- Tool-call correctness / required tool order
+- Phase order (red before green)
+- False-completion rate
+- Gate failures vs claimed success
+- Efficiency (steps/tokens to success)
+- Anti-pattern hits (error vs warning)
 
-Make security checks continuous and hard.
+### Package API
 
-**Minimum set**:
-- Secret scanning (Gitleaks, etc.) before any commit or push
-- SAST (Semgrep, CodeQL, Snyk, or equivalent) on changed code — ideally invocable by agents via MCP
-- Dependency / SCA scanning + SBOM generation and validation
-- License and known-vulnerability gates (cargo-deny, Socket, Trivy, etc.)
-- Treat agent-written configuration, hooks, and scripts as untrusted; prefer microVM or strong container isolation with default-deny egress
-- Never place long-lived secrets in the agent environment; broker short-lived credentials
-- Agentic / reasoning-based security review for logic and authorization issues that pure pattern scanners miss
+- `evaluateTrajectory(run, assertions)`
+- `detectTrajectoryAntiPatterns(run)`
+- `evaluateGoldenSuite(suite, runsByEntryId)`
+- Stub suite: `lib/trajectory/golden-suite.stub.json`
 
-These become additional hard gates owned by the Fitness Guardian (and, where possible, run in-loop so agents can remediate).
+### Error-level anti-patterns
 
-### 13.5 Explicit Human-in-the-Loop Approval Seams
+`SUCCESS_AFTER_FAILED_GATE`, `FALSE_COMPLETION`, `TEST_AND_IMPL_SAME_AGENT`, `MISSING_RED_BEFORE_GREEN`, `SECRET_IN_PREVIEW`.
 
-Define risk-based checkpoints instead of vague “human is the final judge.”
+Fitness Guardian (or CI) fails verify when error-level hits remain.
 
-**Common high-value gates**:
-1. **Plan review** — before any file modifications
-2. **Findings review** — after exploration, before implementation (unexpected complexity, missing migrations, etc.)
-3. **Diff / change review** — before commit or merge
+---
 
-**Supporting practices**:
-- Policy engine + confidence thresholds that force escalation
-- Structured approval payloads (exact arguments, hashed) so approvals cannot be subverted
-- Agents can (and should) escalate with clear questions rather than guess
-- Feed denial reasons back into context so the system learns
+## 16. Requirements-as-Code (Decision Store)
 
-Low-risk changes can proceed automatically; high-risk changes (auth, payments, public APIs, large architectural shifts, data model changes) always require human sign-off.
+### Why
 
-### 13.6 Documentation & Decision Artifacts as Pipeline Outputs
+Chat memory is not institutional memory. Agents re-derive or contradict past decisions without a durable store.
 
-Make knowledge first-class.
+### Model
 
-- Agents produce and update Architecture Decision Records (ADRs) using a standard format (Context, Decision, Consequences, Alternatives considered)
-- Store ADRs in a predictable location (e.g., `/docs/adr/`) with sequential numbering
-- Capture “why this approach” notes and generated API/component documentation
-- Prefer agent-aware ADR variants that record confidence and human review status
-- Index these artifacts in the shared project memory so future agents and humans can query them
+- Append-friendly records: id, kind, status, context, decision, consequences, scopePaths, tags, humanReview.
+- Kinds: requirement, constraint, architecture, policy, gate-threshold, adr, risk, non-goal.
+- Statuses: proposed → accepted | rejected | deprecated | superseded.
 
-This reduces repeated debate and context loss across sessions.
+### Governance
 
-### 13.7 Chaos & Resilience Testing
+- `checkDecisionGate({ store, action, paths })` before high-impact edits (heuristic keyword gate; projects may add stricter oracles).
+- Accepted constraints can block; rejected approaches warn when echoed.
+- Template: `templates/decisions.store.json` → project `docs/decisions/decisions.json`.
+- Library: `lib/decisions/*`.
 
-Deliberately stress both the agents and the system under test.
+### MCP / future
 
-**For the multi-agent system**:
-- Inject tool failures, LLM timeouts, rate limits, malformed responses, and network issues
-- Tools such as Flakestorm (agent reliability / chaos with behavioral contracts)
-- Measure whether invariants and recovery behavior still hold
+Expose query/upsert via MCP when ready; until then, agents read/write the JSON store under docs path gates.
 
-**For the generated software**:
-- Classic chaos engineering (dependency failures, latency, partial outages)
-- Concurrent conflicting changes
-- Unexpected input distributions
+---
 
-Every experiment should have a clear steady-state hypothesis, bounded blast radius, and abort criteria.
+## 17. Cost, Latency & Resource Budgets as Gates
 
-### 13.8 Agent Skill, Prompt & Schema Regression Suite
+Treat spend and time as fitness functions (`lib/bdd/cost-budget.ts`):
 
-Treat the configuration of the multi-agent system as code.
+| Profile | maxCostUsd | maxTokens | maxDuration | maxIterations |
+|---------|------------|-----------|-------------|---------------|
+| Interactive | 5 | 500k | 30 min | 80 |
+| Overnight | 25 | 2M | 8 h | 400 |
 
-- Version system prompts, role definitions, tool schemas, and skills in git
-- Maintain a fixed suite of representative tasks
-- On every change to prompts/schemas/skills, re-run the suite and compare:
-  - Success rate
-  - Trajectory quality metrics
-  - Cost and latency
-  - Retry / false-completion counts
-- Use shadow-mode or cassette-based CI so regressions are caught before they affect real work
-- Tools: Promptfoo, DeepEval, LangSmith datasets, agentverify-style trajectory regression
+- Warn at 80–85% of limit; **circuit break** over hard max.
+- Orchestrator stops spawns on `circuitBroken`.
+- Never auto-raise overnight limits.
+- Log attribution per task/agent in trajectory `budget` events.
 
-### Priority Order for Adoption
+Projects may also wire a shell command into assurance gates that exits non-zero on budget breach.
 
-1. Trajectory evaluation + golden task suite (closes the biggest feedback loop on the process itself)
-2. Cost / latency budgets and circuit breakers
-3. Security & supply-chain hard gates + basic sandboxing
-4. Shared project memory / decision log
-5. Explicit human approval seams for high-risk changes
-6. ADR / documentation generation
-7. Chaos experiments
-8. Full prompt/skill regression CI
+---
 
-These practices turn the multi-agent workflow from a high-assurance development process into a continuously improving, production-grade system.
+## 18. Overnight Agent Rhythm
+
+See full runbook: [`overnight-rhythm.md`](./overnight-rhythm.md).
+
+Summary:
+
+- Day: high-judgment planning, isolated test design, human approvals.
+- Night: only **locked-test** implementer/repair tasks under overnight budget.
+- Morning: triage board, re-gates, human diff, merge.
+- Never overnight-merge; never unsupervised production deploy.
+
+---
+
+## 19. AGENTS.md Contract
+
+Every serious repo should carry a **short** human-curated `AGENTS.md`:
+
+- Authority (human merge)
+- Red-before-green / one writer / CAID
+- Project commands table
+- Decision store path
+- Budget posture
+- Out-of-scope actions
+
+Template: `templates/AGENTS.md`.  
+Deep policy stays in this playbook + skills — do not paste the entire playbook into AGENTS.md.
+
+---
+
+## 20. Production Hardening & Continuous Improvement
+
+(Retained and extended from v1.0 §13.)
+
+1. Trajectory evaluation + golden task suite  
+2. Cost/latency budgets + circuit breakers  
+3. Security & supply-chain hard gates + sandboxing  
+4. Shared decision store / project memory  
+5. Explicit human approval seams (plan / findings / diff)  
+6. ADR / documentation as pipeline outputs  
+7. Chaos experiments (agents + system under test)  
+8. Prompt/skill/schema regression CI  
+9. **CAID** for all strongly isolated roles  
+10. Overnight queue with non-merge policy  
 
 ---
 
 ## Closing
 
-By combining Uncle Bob’s aggressive testing philosophy with constrained generation, multi-agent separation of powers, hard fitness gates, trajectory verification, and a deterministic orchestrator that owns control flow, teams can turn the speed of AI agents into a reliability *advantage* rather than a risk multiplier.
+By combining Uncle Bob’s aggressive testing philosophy with constrained generation, multi-agent separation of powers, **CAID isolation**, hard fitness gates (including **cost**), **trajectory** verification, a **decision store**, and a deterministic orchestrator, teams turn agent speed into a reliability advantage.
 
-The agents become extremely fast junior developers forced to work inside a high-assurance process. **The process itself becomes the primary source of determinism.**
+The agents are extremely fast juniors forced to work inside a high-assurance process. **The process itself is the primary source of determinism.**
 
-This playbook is intended as a living document. Update thresholds, roles, tooling, and gates as the ecosystem and your own experience evolve. Keep it in the repository so both humans and agents can reference it.
+Living document — update thresholds, roles, tooling, and gates as the ecosystem evolves. Keep it in the repository so humans and agents share one policy.
 
 ---
 
-*Document generated and refined collaboratively, July 2026.*
+*VerstandTech · Document refined collaboratively · August 2026 · v1.2*

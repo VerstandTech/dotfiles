@@ -9,6 +9,8 @@ Settings entry (relative to `../settings.json`):
 "packages": ["./personal"]
 ```
 
+Package version: **0.7.0** (high-assurance v1.2 scaffolding: CAID, trajectory, decisions, cost budgets).
+
 ## Subagent: project `researcher` (olhaminha.bio only)
 
 Project agent (not global) overrides builtin researcher so children use **`xai_web_search`**:
@@ -27,10 +29,14 @@ Mission-control for **git worktrees** from a root Pi session.
 |---------|------|
 | Commands | `/wt`, `/wt-board` |
 | Shortcut | **Ctrl+Alt+W** (left overlay) |
-| Lib | `lib/worktree/*` |
+| Lib | `lib/worktree/*` (+ **`caid.ts`** for CAID planning) |
 | Registry | `<repo>/.pi/worktree-board.json` |
+| CAID board | `<repo>/.pi/caid-board.json` (via `lib/worktree/caid.ts`) |
+| Skill | `caid` |
 
 Does **not** change session cwd on focus. Writer cap default 2 (`/wt acquire`).
+
+CAID helpers plan isolated paths under `.worktrees/caid/<task>/<role>/`, emit handoff markdown, and detect designer/implementer collisions. Extension UI wiring for `/wt caid` may follow; the library is usable now from orchestrator skills.
 
 ## Bundled: `ops-hud.ts`
 
@@ -83,8 +89,22 @@ Live inspector: `/subagents-fleet` or **Ctrl+Alt+F**.
 |-----|--------|
 | [`../docs/bdd-fleet-cheatsheet.md`](../docs/bdd-fleet-cheatsheet.md) | **Operator guide** — phases, red→green→verify, fleet gates, troubleshooting |
 | [`../docs/agentic-bdd-roadmap.md`](../docs/agentic-bdd-roadmap.md) | Design locks + P0/P1 implementation roadmap |
-| [`../docs/high-assurance-playbook.md`](../docs/high-assurance-playbook.md) | Canonical High-Assurance Multi-Agent Software Development Playbook v1.0 |
-| [`../docs/high-assurance-pi-implementation.md`](../docs/high-assurance-pi-implementation.md) | Enforced vs configurable vs roadmap mapping for this Pi package |
+| [`../docs/high-assurance-playbook.md`](../docs/high-assurance-playbook.md) | Canonical High-Assurance Multi-Agent Software Development Playbook **v1.2** |
+| [`../docs/high-assurance-pi-implementation.md`](../docs/high-assurance-pi-implementation.md) | Enforced vs scaffolding vs roadmap mapping for this Pi package |
+| [`../docs/overnight-rhythm.md`](../docs/overnight-rhythm.md) | 24h day/night agent cadence + queue format |
+
+## High-assurance v1.2 libraries (not separate extensions)
+
+| Lib | Purpose | Tests |
+|-----|---------|-------|
+| `lib/worktree/caid.ts` | CAID isolation planning | `bun test lib/worktree/caid.test.ts` |
+| `lib/trajectory/*` | Trajectory eval, anti-patterns, golden suite | `bun test lib/trajectory` |
+| `lib/decisions/*` | Requirements-as-Code decision store | `bun test lib/decisions` |
+| `lib/bdd/cost-budget.ts` | Cost/latency/iteration budgets | `bun test lib/bdd/cost-budget.test.ts` |
+
+Skills: `skills/caid`, `skills/trajectory` (plus existing `bdd-tdd`, `ship`, `agentic-fleet`, `herdr`).
+
+Templates: `templates/AGENTS.md`, `templates/decisions.store.json`, `templates/bdd.project.json`.
 
 ## Bundled: `bdd-mode.ts` (cross-project BDD → TDD)
 
@@ -110,7 +130,7 @@ Handoff: `/bdd handoff` or `/bdd handoff pr` (PR body). Mutation: `bdd_assert_mu
 4. Infer `commands` from `package.json` scripts (`test`, `gherkin:test`, `test:e2e`, …)
 
 ```text
-/bdd playbook # canonical v1.0 policy + honest Pi implementation status
+/bdd playbook # canonical v1.2 policy + honest Pi implementation status
 /bdd init     # write .pi/bdd.json template in the current project
 /bdd on       # start discovery
 /tdd …        # prompt → red phase
@@ -136,6 +156,7 @@ See:
 - [`../docs/high-assurance-playbook.md`](../docs/high-assurance-playbook.md)
 - [`../docs/high-assurance-pi-implementation.md`](../docs/high-assurance-pi-implementation.md)
 - [`../docs/high-assurance-example-map.md`](../docs/high-assurance-example-map.md)
+- [`../docs/overnight-rhythm.md`](../docs/overnight-rhythm.md)
 - skill `../skills/bdd-tdd/SKILL.md`
 - config reference `../skills/bdd-tdd/references/bdd-json-schema.md`.
 
@@ -171,14 +192,19 @@ cd ~/dotfiles/pi/.pi/agent/personal && bun test lib/xai-web-search
 
 ```text
 personal/
-  extensions/          # agentic-fleet, bdd-mode, ops-hud, xai-web-search
-  agents/              # fleet-researcher, fleet-reviewer, fleet-ux
-  lib/bdd/             # phase/path/config + stack profile + quality gates + role blueprint + tests
+  extensions/          # agentic-fleet, bdd-mode, ops-hud, worktree-board, xai-web-search
+  agents/              # bdd-* roles + fleet-*
+  lib/bdd/             # phase/path/config + quality gates + cost-budget + tests
+  lib/worktree/        # board + CAID
+  lib/trajectory/      # process supervision
+  lib/decisions/       # Requirements-as-Code store
   lib/fleet/           # personas, plan, caps, rpc + tests
   lib/ops-hud/
   lib/xai-web-search/
-  skills/bdd-tdd/ + skills/agentic-fleet/
+  skills/              # bdd-tdd, caid, trajectory, agentic-fleet, ship, herdr
+  templates/           # bdd.project.json, AGENTS.md, decisions.store.json
   prompts/             # bdd + fleet slash templates
+  docs/                # playbook v1.2, implementation profile, overnight rhythm, …
 ```
 
 `package.json` `pi` manifest loads extensions, skills, and prompts.
@@ -197,3 +223,8 @@ Do not put secrets here. Machine-local state belongs outside this tree.
 ## Project BDD template
 
 Copy `../templates/bdd.project.json` → `<repo>/.pi/bdd.json` (local/gitignored), or run `/bdd init`.
+
+Also consider:
+
+- `../templates/AGENTS.md` → `<repo>/AGENTS.md`
+- `../templates/decisions.store.json` → `<repo>/docs/decisions/decisions.json`

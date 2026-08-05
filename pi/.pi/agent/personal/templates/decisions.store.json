@@ -1,0 +1,36 @@
+{
+  "version": 1,
+  "project": "my-project",
+  "decisions": [
+    {
+      "id": "DEC-001",
+      "kind": "policy",
+      "status": "accepted",
+      "title": "Human merge authority",
+      "context": "Multi-agent coding can produce green tests via unsafe paths.",
+      "decision": "Agents must not merge or ship; humans retain final merge authority after diff review.",
+      "consequences": "Overnight agents stop at PR-ready evidence packs.",
+      "tags": ["governance", "safety"],
+      "scopePaths": ["**"],
+      "humanReview": "approved",
+      "createdAt": "2026-08-05T00:00:00.000Z",
+      "updatedAt": "2026-08-05T00:00:00.000Z",
+      "author": "human"
+    },
+    {
+      "id": "DEC-002",
+      "kind": "constraint",
+      "status": "accepted",
+      "title": "Test Designer isolation",
+      "context": "Collusion weakens oracles when the same context writes tests and code.",
+      "decision": "Test Designer must not share a writable worktree with Implementer; use CAID worktree+fresh-pi isolation.",
+      "consequences": "Slightly higher setup cost; stronger process determinism.",
+      "tags": ["caid", "bdd"],
+      "scopePaths": [".worktrees/**", "src/**", "tests/**"],
+      "humanReview": "approved",
+      "createdAt": "2026-08-05T00:00:00.000Z",
+      "updatedAt": "2026-08-05T00:00:00.000Z",
+      "author": "human"
+    }
+  ]
+}
