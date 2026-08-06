@@ -139,6 +139,27 @@ describe("herdLines + sameLines (R7-E2 publish-on-change)", () => {
     expect(herdLines(null)).toBeNull();
   });
 
+  test("idle collapse: all-idle herd renders summary only (quiet-by-default)", () => {
+    const idle = formatHerdRows({
+      result: {
+        type: "agent_list",
+        agents: [
+          { name: "grok", agent: "pi", agent_status: "idle", pane_id: "wH:p1" },
+          { name: "pi", agent: "pi", agent_status: "idle", pane_id: "wK:p1" },
+        ],
+      },
+    })!;
+    expect(idle.hot).toBe(false);
+    const lines = herdLines(idle)!;
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain("2 idle");
+  });
+
+  test("hot stays true while any agent works or blocks", () => {
+    const view = formatHerdRows(payload)!;
+    expect(view.hot).toBe(true);
+  });
+
   test("sameLines: structural equality, null-safe", () => {
     expect(sameLines(null, null)).toBe(true);
     expect(sameLines(["a"], ["a"])).toBe(true);

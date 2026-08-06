@@ -13,6 +13,9 @@ export interface HerdAgent {
 export interface HerdView {
   summary: string;
   rows: string[];
+  /** True when any agent is working/blocked/unknown — rows are signal then.
+   *  When false (all idle/done), adapters should render the summary only. */
+  hot?: boolean;
 }
 
 const ICON: Record<HerdState, string> = {
@@ -108,7 +111,9 @@ export function formatHerdRows(payload: unknown): HerdView | null {
   if (count("idle") > 0) parts.push(`○ ${count("idle")} idle`);
   if (count("unknown") > 0) parts.push(`? ${count("unknown")} unknown`);
 
-  return { summary: parts.join("  "), rows };
+  const hot =
+    count("working") > 0 || count("blocked") > 0 || count("unknown") > 0;
+  return { summary: parts.join("  "), rows, hot };
 }
 
 /**
@@ -135,9 +140,13 @@ export function withoutSelf(payload: unknown, selfPaneId: string | undefined): u
   return { ...top, result: { ...container, agents } };
 }
 
-/** Widget line array for a view: [summary, ...rows]; null view → null (R7-E2). */
+/** Widget line array for a view: [summary, ...rows]; null view → null (R7-E2).
+ *  Idle collapse: when nothing is working/blocked/unknown, only the summary
+ *  line renders — an all-idle herd is ambient, not a list. */
 export function herdLines(view: HerdView | null): string[] | null {
-  return view === null ? null : [view.summary, ...view.rows];
+  if (view === null) return null;
+  if (view.hot === false) return [view.summary];
+  return [view.summary, ...view.rows];
 }
 
 /**
