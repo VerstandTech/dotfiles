@@ -4,7 +4,7 @@
  * moon spinner + label + indeterminate progress bar filling the rest of the line.
  */
 
-import { amberGradient, fgHex, skyTealGradient } from "../ops-hud/chrome.ts";
+import { amberGradient, blendHex, fgHex } from "../ops-hud/chrome.ts";
 
 const MOONS = ["◐", "◓", "◑", "◒"] as const;
 
@@ -23,21 +23,24 @@ export function visibleLength(s: string): number {
 	return s.replace(/\x1b\[[0-9;]*m/g, "").length;
 }
 
-/** Build an indeterminate sky-blue progress bar that gently sweeps. */
+/**
+ * Solid sky progress bar (target TUI): a full `━` line with a soft gradient
+ * that slowly travels across the bar — the bar is always "solid", only the
+ * gradient animates.
+ */
 export function progressBar(width: number, frame: number): string {
 	const w = Math.max(0, Math.floor(width));
 	if (w === 0) return "";
-	const colors = skyTealGradient(Math.max(w, 8));
-	// Sweep a bright head across a dimmer track.
-	const head = ((frame * 2) % (w + 6)) - 3;
+	// Sky family loop; sampled per column, phase-shifted by frame.
+	const stops = ["#5c94dd", "#66a6f8", "#7eb6fa", "#66a6f8", "#5c94dd"];
+	const n = stops.length;
 	let out = "";
 	for (let i = 0; i < w; i++) {
-		const dist = Math.abs(i - head);
-		const ch = dist <= 1 ? "█" : dist <= 3 ? "▓" : dist <= 6 ? "▒" : "─";
-		const color = colors[i % colors.length]!;
-		// Head is brighter sky; track is deeper sky.
-		const tone = dist <= 3 ? color : colors[Math.floor(colors.length * 0.25)]!;
-		out += fgHex(tone, ch);
+		// Phase travels left→right over ~40 frames, then wraps.
+		const phase = (i / w + frame / 40) % 1;
+		const scaled = phase * (n - 1);
+		const idx = Math.min(n - 2, Math.floor(scaled));
+		out += fgHex(blendHex(stops[idx]!, stops[idx + 1]!, scaled - idx), "━");
 	}
 	return out;
 }

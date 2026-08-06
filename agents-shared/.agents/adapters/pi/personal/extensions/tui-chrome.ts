@@ -19,7 +19,13 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import type { EditorTheme, TUI } from "@earendil-works/pi-tui";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
-import { applyPromptPrefix, PROMPT_COLS } from "../lib/tui-chrome/editor-chrome.ts";
+import {
+	applyPromptPrefix,
+	CARD_INDENT,
+	cardBorderColor,
+	PROMPT_COLS,
+	renderEditorCard,
+} from "../lib/tui-chrome/editor-chrome.ts";
 import { renderFooterChips } from "../lib/tui-chrome/footer-chips.ts";
 import { renderWorkingRow } from "../lib/tui-chrome/working-row.ts";
 
@@ -217,8 +223,12 @@ export default function (pi: ExtensionAPI) {
 				if (this.getPaddingX() !== PROMPT_COLS) {
 					super.setPaddingX(PROMPT_COLS);
 				}
-				const lines = applyPromptPrefix(super.render(width), { maxWidth: width });
-				return fitLines(lines, width);
+				// Card borders: quiet hairline; amber only while bash mode is armed.
+				this.borderColor = cardBorderColor(this.getText().startsWith("!"));
+				// Render inside the card inset, then wrap with breathing room.
+				const inner = Math.max(1, width - CARD_INDENT);
+				const lines = applyPromptPrefix(super.render(inner), { maxWidth: inner });
+				return renderEditorCard(fitLines(lines, inner), width);
 			}
 		}
 		ctx.ui.setEditorComponent((tui, theme, kb) => new ChromeEditor(tui, theme, kb));

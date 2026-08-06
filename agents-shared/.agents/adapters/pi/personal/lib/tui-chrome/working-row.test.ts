@@ -15,6 +15,16 @@ describe("working-row", () => {
 		expect(visibleLength(bar)).toBe(20);
 	});
 
+	test("progressBar is a solid ━ line (target style), gradient animates", () => {
+		const a = progressBar(16, 0);
+		const b = progressBar(16, 7);
+		// Every visible glyph is the heavy rule — no track/head character mix.
+		const plain = a.replace(/\x1b\[[0-9;]*m/g, "");
+		expect(plain).toBe("━".repeat(16));
+		// Same glyph layout, different colors over time (traveling gradient).
+		expect(a).not.toBe(b);
+	});
+
 	test("renderWorkingRow fits width and includes label + bar", () => {
 		const line = renderWorkingRow({ width: 60, frame: 2, label: "Working..." });
 		expect(visibleLength(line)).toBeLessThanOrEqual(60);

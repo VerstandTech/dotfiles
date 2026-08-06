@@ -60,70 +60,59 @@ export function thinkingColor(level: string | null | undefined): string {
 }
 
 /**
- * Render one footer line of mode chips.
- * Priority when tight: mode+agent+thinking survive; path yields first, then model.
+ * Render one footer line of mode chips — all left-clustered like the target:
+ *   yolo swarm K3 thinking: high  .../production-
+ * Path trails the chips (dim, after two spaces) — never right-flushed.
+ * Shrinking order when tight: path → model → herd → agent; mode+thinking last.
  */
 export function renderFooterChips(input: FooterChipsInput): string {
 	const width = Math.max(0, Math.floor(input.width));
 	if (width === 0) return "";
 
-	const parts: string[] = [];
-	const plainParts: string[] = []; // parallel plain for budget math
-
-	if (input.mode) {
-		parts.push(fgHex(AMBER, input.mode));
-		plainParts.push(input.mode);
-	}
-	if (input.agent) {
-		parts.push(fgHex(TEAL, input.agent));
-		plainParts.push(input.agent);
-	}
-	if (input.herd) {
-		parts.push(fgHex(SKY, input.herd));
-		plainParts.push(input.herd);
-	}
-
-	const midPlain: string[] = [];
-	const midColor: string[] = [];
-	if (input.model) {
-		midPlain.push(input.model);
-		midColor.push(fgHex(INK, input.model));
-	}
+	// Build chip list in display order with plain-text twins for budget math.
+	type Chip = { color: string; plain: string; key: string };
+	const chips: Chip[] = [];
+	if (input.mode) chips.push({ key: "mode", color: AMBER, plain: input.mode });
+	if (input.agent) chips.push({ key: "agent", color: TEAL, plain: input.agent });
+	if (input.herd) chips.push({ key: "herd", color: SKY, plain: input.herd });
+	if (input.model) chips.push({ key: "model", color: INK, plain: input.model });
 	if (input.thinking) {
-		const t = `thinking: ${input.thinking}`;
-		midPlain.push(t);
-		midColor.push(fgHex(thinkingColor(input.thinking), t));
+		chips.push({
+			key: "thinking",
+			color: thinkingColor(input.thinking),
+			plain: `thinking: ${input.thinking}`,
+		});
 	}
 
-	const leftPlain = [...plainParts, ...midPlain].join(" ");
-	const leftColor = [...parts, ...midColor].join(" ");
+	let path = input.path?.trim() || "";
 
-	const pathRaw = input.path?.trim() || "";
-	let pathPlain = pathRaw;
-	let gap = width - leftPlain.length - (pathPlain ? pathPlain.length : 0);
+	const paint = (list: Chip[], tail: string): string => {
+		const left = list.map((c) => fgHex(c.color, c.plain)).join(" ");
+		if (!tail) return left;
+		return left + "  " + fgHex(FOG, tail);
+	};
+	const plainLen = (list: Chip[], tail: string) =>
+		list.map((c) => c.plain).join(" ").length + (tail ? 2 + tail.length : 0);
 
-	if (pathPlain && gap < 2) {
-		// Shrink path first.
-		const budget = Math.max(0, width - leftPlain.length - 2);
-		pathPlain = trunc(pathPlain, budget);
-		gap = width - leftPlain.length - pathPlain.length;
+	// 1. Shrink path to fit.
+	if (path && plainLen(chips, path) > width) {
+		const chipsLen = plainLen(chips, "");
+		path = trunc(path, Math.max(0, width - chipsLen - 2));
 	}
-	if (gap < 1 && pathPlain) {
-		// Drop path entirely.
-		pathPlain = "";
-		gap = width - leftPlain.length;
+	// 2. Drop path if still over.
+	if (path && plainLen(chips, path) > width) path = "";
+	// 3. Drop lowest-priority chips until fit (mode + thinking survive longest).
+	const droppable = ["model", "herd", "agent"];
+	for (const key of droppable) {
+		if (plainLen(chips, path) <= width) break;
+		const idx = chips.findIndex((c) => c.key === key);
+		if (idx >= 0) chips.splice(idx, 1);
 	}
-	if (gap < 0) {
-		// Last resort: plain truncate whole left.
-		const plain = leftPlain.slice(0, width);
-		return fgHex(INK, plain);
+	// 4. Last resort: hard plain truncate.
+	if (plainLen(chips, path) > width) {
+		const plain =
+			chips.map((c) => c.plain).join(" ") + (path ? `  ${path}` : "");
+		return fgHex(INK, plain.slice(0, width));
 	}
-
-	const pad = " ".repeat(Math.max(pathPlain ? gap : 0, pathPlain ? 2 : 0));
-	// When no path, don't right-pad — left-aligned chips like the reference.
-	if (!pathPlain) {
-		// Ensure we don't exceed width via ANSI (plain already fits).
-		return leftColor;
-	}
-	return leftColor + pad + fgHex(FOG, pathPlain);
+	return paint(chips, path);
 }

@@ -1,10 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import {
 	applyPromptPrefix,
+	CARD_INDENT,
+	cardBorderColor,
 	clampVisible,
 	isBorderLine,
 	PROMPT,
 	promptPreservesWidth,
+	renderEditorCard,
 	trimTrailingSpaces,
 } from "./editor-chrome.ts";
 import { visibleLength } from "./working-row.ts";
@@ -77,5 +80,25 @@ describe("editor-chrome", () => {
 	test("PROMPT is two columns", () => {
 		expect(PROMPT).toBe("> ");
 		expect(PROMPT.length).toBe(2);
+	});
+});
+
+describe("editor card", () => {
+	test("renderEditorCard adds breathing room and inset", () => {
+		const body = ["────", "> text", "────"];
+		const out = renderEditorCard(body, 40);
+		expect(out).toHaveLength(5); // blank + 3 + blank
+		expect(out[0]!.trim()).toBe("");
+		expect(out[4]!.trim()).toBe("");
+		expect(out[1]!.startsWith(" ".repeat(CARD_INDENT))).toBe(true);
+		expect(out[2]!).toContain("> text");
+	});
+
+	test("cardBorderColor: hairline idle, amber in bash mode", () => {
+		const idle = cardBorderColor(false)("─");
+		const bash = cardBorderColor(true)("─");
+		expect(idle).toContain("56;56;56"); // #383838
+		expect(bash).toContain("220;168;76"); // #dca84c
+		expect(idle).not.toBe(bash);
 	});
 });

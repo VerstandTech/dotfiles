@@ -14,6 +14,31 @@ import { visibleLength } from "./working-row.ts";
 
 export const PROMPT = "> ";
 export const PROMPT_COLS = 2;
+/** Left inset for the editor card (visual separation from scrollback edge). */
+export const CARD_INDENT = 2;
+const HAIRLINE = "#383838";
+const AMBER = "#dca84c";
+
+/**
+ * Card-ify rendered editor lines (target TUI): blank line above and below,
+ * every line inset by CARD_INDENT columns. Input lines must come from
+ * `super.render(width - CARD_INDENT)` so the result never exceeds `width`.
+ */
+export function renderEditorCard(lines: string[], width: number): string[] {
+	const indent = " ".repeat(CARD_INDENT);
+	const blank = " ".repeat(Math.max(0, width));
+	const body = lines.map((l) => indent + l);
+	return [blank, ...body, blank];
+}
+
+/**
+ * Border color policy for the card: quiet hairline by default, amber while
+ * bash mode (`!` prefix) is armed. Pass the editor's current text.
+ */
+export function cardBorderColor(bashArmed: boolean): (s: string) => string {
+	const color = bashArmed ? AMBER : HAIRLINE;
+	return (s: string) => fgHex(color, s);
+}
 
 /**
  * Inject a dim `> ` prompt into the first content line of a default Editor render.
