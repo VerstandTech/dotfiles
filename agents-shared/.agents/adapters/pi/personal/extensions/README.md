@@ -21,6 +21,21 @@ Project agent (not global) overrides builtin researcher so children use **`xai_w
 
 Only active when Pi cwd is that project (project agent discovery). `/reload` after edits.
 
+## Bundled: `tui-chrome.ts`
+
+Component chrome matched to the reference agent TUI (structure, not just colors):
+
+| Piece | Behavior |
+|-------|----------|
+| Working row | `◐ Working... ████████` above editor (hides built-in loader) |
+| Editor | `> ` prompt via `CustomEditor`; forces `paddingX: 2` (Pi would otherwise reset it to settings `editorPaddingX`, default 0) |
+| Footer | Single-line mode chips: `mode agent model thinking: lvl path` |
+| Command | `/chrome [on\|off\|footer]` |
+| Lib | `lib/tui-chrome/*` (pure renderers + tests) |
+| Safety | All chrome lines pass `truncateToWidth` — pi-tui aborts on any line wider than the terminal |
+
+Pairs with `ops-hud` (ops board/status only) and `herd` (sibling agent widget).
+
 ## Bundled: `worktree-board.ts`
 
 Mission-control for **git worktrees** from a root Pi session.
