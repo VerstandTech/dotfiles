@@ -14,8 +14,10 @@ import { visibleLength } from "./working-row.ts";
 
 export const PROMPT = "> ";
 export const PROMPT_COLS = 2;
-/** Left inset for the editor card (visual separation from scrollback edge). */
-export const CARD_INDENT = 2;
+/** Left inset for the editor card (small, target-TUI-like margin). */
+export const CARD_INDENT = 1;
+/** Right column reserved for pi's chat scrollbar (box never covers it). */
+export const RIGHT_MARGIN = 1;
 /** Side borders added by boxLines (│ on each side). */
 export const BOX_COLS = 2;
 const HAIRLINE = "#383838";
@@ -23,8 +25,10 @@ const AMBER = "#dca84c";
 
 /**
  * Card-ify rendered editor lines (target TUI): blank line above and below,
- * every line inset by CARD_INDENT columns. Input lines must come from
- * `super.render(width - CARD_INDENT)` so the result never exceeds `width`.
+ * every line inset by CARD_INDENT columns. Caller is responsible for width
+ * math: boxed lines at `width - RIGHT_MARGIN - CARD_INDENT` leave one free
+ * column on the right for pi's scrollbar, so the result never exceeds
+ * `width` and the margins read symmetric (1 left · 1 right + scrollbar).
  */
 export function renderEditorCard(lines: string[], width: number): string[] {
 	const indent = " ".repeat(CARD_INDENT);
@@ -112,10 +116,9 @@ function isBorderPlain(plain: string): boolean {
 	return plain.length > 0 && /^[─↑↓\d\s…]+$/.test(plain);
 }
 
-/** Swap the first/last rule char of a plain border line for rounded corners. */
+/** Wrap a plain border rule in rounded corners (+2 width, matching the │ sides). */
 function cornerize(plain: string, left: string, right: string): string {
-	if (plain.length < 2) return plain;
-	return left + plain.slice(1, -1) + right;
+	return left + plain + right;
 }
 
 /**

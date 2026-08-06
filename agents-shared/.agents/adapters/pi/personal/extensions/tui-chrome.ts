@@ -27,6 +27,7 @@ import {
 	cardBorderColor,
 	PROMPT_COLS,
 	renderEditorCard,
+	RIGHT_MARGIN,
 } from "../lib/tui-chrome/editor-chrome.ts";
 import { renderFooterChips } from "../lib/tui-chrome/footer-chips.ts";
 import { renderWorkingRow } from "../lib/tui-chrome/working-row.ts";
@@ -228,8 +229,10 @@ export default function (pi: ExtensionAPI) {
 				// Card borders: quiet hairline; amber only while bash mode is armed.
 				this.borderColor = cardBorderColor(this.getText().startsWith("!"));
 				// Render inside card inset + side borders, box it, then add the
-				// breathing-room indent (blank line above/below).
-				const cardWidth = Math.max(BOX_COLS + 1, width - CARD_INDENT);
+				// breathing-room indent (blank line above/below). One right column
+				// stays free for pi's scrollbar → margins read 1 left · 1 right.
+				const usable = Math.max(BOX_COLS + 3, width - RIGHT_MARGIN);
+				const cardWidth = Math.max(BOX_COLS + 1, usable - CARD_INDENT);
 				const contentWidth = Math.max(1, cardWidth - BOX_COLS);
 				const raw = applyPromptPrefix(super.render(contentWidth), {
 					maxWidth: contentWidth,

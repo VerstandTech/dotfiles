@@ -165,7 +165,7 @@ Reference: `examples/extensions/preset.ts`, overlay docs
 ### 7.6 Editor card — `tui-chrome`
 Target: inset input card with `> ` prompt and breathing room
 - Extend `CustomEditor` with `paddingX: 2`; inject dim `> ` on first content line
-- **Card wrap**: blank line above + below, whole editor inset 2 columns (`renderEditorCard`)
+- **Card wrap**: blank line above + below, symmetric margins — 1 col left inset, 1 col right reserved for pi's scrollbar (`renderEditorCard`)
 - **Full rounded box**: `boxLines` rewrites the Editor's top/bottom rules into `╭─╮`/`╰─╯` and adds `│` side borders; autocomplete dropdown lines are pulled inside the box; scroll labels (`↑ 3`) survive in the corners
 - **Border policy**: quiet hairline `#383838` always; amber only while bash mode (`!`) is armed — overrides pi's thinking-level border colors in favor of calm
 - App keybindings preserved (escape abort, ctrl+d, model switch)

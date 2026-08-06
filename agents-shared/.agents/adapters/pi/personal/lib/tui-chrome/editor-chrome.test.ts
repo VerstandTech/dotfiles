@@ -9,6 +9,7 @@ import {
 	PROMPT,
 	promptPreservesWidth,
 	renderEditorCard,
+	RIGHT_MARGIN,
 	trimTrailingSpaces,
 } from "./editor-chrome.ts";
 import { visibleLength } from "./working-row.ts";
@@ -95,6 +96,19 @@ describe("editor card", () => {
 		expect(out[2]!).toContain("> text");
 	});
 
+	test("card margins: 1 left, 1 right reserved for scrollbar", () => {
+		expect(CARD_INDENT).toBe(1);
+		expect(RIGHT_MARGIN).toBe(1);
+		// Full pipeline width math: boxed line at width-2 + indent never exceeds width.
+		const width = 60;
+		const cardWidth = width - RIGHT_MARGIN - CARD_INDENT;
+		const boxed = boxLines(["─".repeat(cardWidth - 2), "> x", "─".repeat(cardWidth - 2)], (s) => s);
+		const out = renderEditorCard(boxed, width);
+		for (const line of out) expect(visibleLength(line)).toBeLessThanOrEqual(width);
+		// Box right border lands one column before the scrollbar column.
+		expect(visibleLength(out[1]!)).toBe(width - RIGHT_MARGIN);
+	});
+
 	test("cardBorderColor: hairline idle, amber in bash mode", () => {
 		const idle = cardBorderColor(false)("─");
 		const bash = cardBorderColor(true)("─");
@@ -134,8 +148,8 @@ describe("boxLines", () => {
 		// Editor.render appends autocomplete AFTER the bottom border.
 		const lines = ["────────", "> /hel  ", "────────", "/help   ", "/history"];
 		const out = boxLines(lines, (s) => s);
-		expect(out[0]).toBe("╭──────╮"); // 8-col fixture: corner + 6 rules + corner
-		expect(out[out.length - 1]).toBe("╰──────╯");
+		expect(out[0]).toBe("╭────────╮"); // 8-col fixture + 2 corners = 10
+		expect(out[out.length - 1]).toBe("╰────────╯");
 		// autocomplete items are boxed, not dangling below the card
 		expect(out.some((l) => l === "│/help   │")).toBe(true);
 		expect(out.some((l) => l === "│/history│")).toBe(true);
