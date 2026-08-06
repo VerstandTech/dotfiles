@@ -1,26 +1,25 @@
 -- ~/.config/wezterm/tabbar.lua
--- A compact, iconed tab bar + status line themed for Catppuccin Mocha.
+-- Compact iconed tab bar + status line — charcoal ops palette (matches herd-dark).
 
 local wezterm = require("wezterm")
 
 local M = {}
 
--- Catppuccin Mocha palette
+-- Charcoal ops (aligned with pi herd-dark + wezterm.lua)
 local c = {
-	base = "#1e1e2e",
-	mantle = "#181825",
-	surface0 = "#313244",
-	surface1 = "#45475a",
-	text = "#cdd6f4",
-	subtext = "#a6adc8",
-	overlay = "#6c7086",
-	mauve = "#cba6f7",
-	blue = "#89b4fa",
-	sapphire = "#74c7ec",
-	green = "#a6e3a1",
-	peach = "#fab387",
-	red = "#f38ba8",
-	yellow = "#f9e2af",
+	bg = "#181818",
+	elevated = "#1c1c1c",
+	panel = "#222222",
+	hairline = "#383838",
+	border = "#5a5a5a",
+	fog = "#888888",
+	ink = "#e0e0e0",
+	ink_soft = "#c8c8c8",
+	sky = "#66a6f8",
+	teal = "#74bcbc",
+	amber = "#dca84c",
+	green = "#60a670",
+	rose = "#d07070",
 }
 
 -- Map common process names to Nerd Font icons for the tab title.
@@ -41,6 +40,7 @@ local process_icons = {
 	["zsh"] = wezterm.nerdfonts.dev_terminal,
 	["fish"] = wezterm.nerdfonts.dev_terminal,
 	["claude"] = wezterm.nerdfonts.md_robot,
+	["pi"] = wezterm.nerdfonts.md_robot,
 }
 
 local function basename(s)
@@ -65,29 +65,22 @@ function M.setup(config)
 	config.show_new_tab_button_in_tab_bar = false
 	config.tab_max_width = 32
 
-	config.colors = {
-		tab_bar = {
-			background = c.mantle,
-			new_tab = { bg_color = c.mantle, fg_color = c.overlay },
-		},
-	}
-
 	-- Flat tab blocks (no powerline arrows). Each tab is a clean colored block;
 	-- a thin gap in the tab-bar background keeps adjacent tabs distinct without
 	-- any protruding "tail" glyphs.
 	wezterm.on("format-tab-title", function(tab, tabs, panes, cfg, hover, max_width)
 		local title = tab_title(tab)
 		local active = tab.is_active
-		local fg = active and c.base or c.subtext
-		local bg = active and c.mauve or c.surface0
+		local fg = active and c.bg or c.fog
+		local bg = active and c.teal or c.panel
 		if hover and not active then
-			bg = c.surface1
-			fg = c.text
+			bg = c.hairline
+			fg = c.ink_soft
 		end
 		return {
 			-- leading gap in the bar background = flat separation, no arrow
-			{ Background = { Color = c.mantle } },
-			{ Foreground = { Color = c.mantle } },
+			{ Background = { Color = c.elevated } },
+			{ Foreground = { Color = c.elevated } },
 			{ Text = " " },
 			-- the tab block itself
 			{ Background = { Color = bg } },
@@ -97,7 +90,7 @@ function M.setup(config)
 		}
 	end)
 
-	-- Right status: workspace • cwd • git branch • time
+	-- Right status: cwd • git branch • time (sky / green / amber chips)
 	wezterm.on("update-status", function(window, pane)
 		local cells = {}
 
@@ -105,7 +98,7 @@ function M.setup(config)
 		if cwd_uri then
 			local cwd = cwd_uri.file_path or tostring(cwd_uri)
 			cwd = basename(cwd:gsub("/$", ""))
-			table.insert(cells, { c.blue, wezterm.nerdfonts.cod_folder .. "  " .. cwd })
+			table.insert(cells, { c.sky, wezterm.nerdfonts.cod_folder .. "  " .. cwd })
 		end
 
 		local ok, branch = pcall(function()
@@ -126,14 +119,14 @@ function M.setup(config)
 			table.insert(cells, { c.green, wezterm.nerdfonts.dev_git_branch .. "  " .. branch })
 		end
 
-		table.insert(cells, { c.peach, wezterm.nerdfonts.md_clock_outline .. "  " .. wezterm.strftime("%H:%M") })
+		table.insert(cells, { c.amber, wezterm.nerdfonts.md_clock_outline .. "  " .. wezterm.strftime("%H:%M") })
 
 		local elements = {}
 		for i, cell in ipairs(cells) do
 			table.insert(elements, { Foreground = { Color = cell[1] } })
 			table.insert(elements, { Text = cell[2] })
 			if i < #cells then
-				table.insert(elements, { Foreground = { Color = c.overlay } })
+				table.insert(elements, { Foreground = { Color = c.fog } })
 				table.insert(elements, { Text = "   " })
 			end
 		end
@@ -143,14 +136,14 @@ function M.setup(config)
 		-- Left status: leader indicator + active key table (e.g. resize mode)
 		local left = {}
 		if window:leader_is_active() then
-			table.insert(left, { Foreground = { Color = c.base } })
-			table.insert(left, { Background = { Color = c.yellow } })
+			table.insert(left, { Foreground = { Color = c.bg } })
+			table.insert(left, { Background = { Color = c.amber } })
 			table.insert(left, { Text = "  " .. wezterm.nerdfonts.md_keyboard .. " LEADER  " })
 		end
 		local kt = window:active_key_table()
 		if kt then
-			table.insert(left, { Foreground = { Color = c.base } })
-			table.insert(left, { Background = { Color = c.sapphire } })
+			table.insert(left, { Foreground = { Color = c.bg } })
+			table.insert(left, { Background = { Color = c.teal } })
 			table.insert(left, { Text = "  " .. kt:upper() .. "  " })
 		end
 		window:set_left_status(wezterm.format(left))

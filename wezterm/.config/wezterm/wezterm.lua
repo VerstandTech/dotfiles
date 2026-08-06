@@ -1,5 +1,5 @@
 -- ~/.config/wezterm/wezterm.lua
--- Catppuccin Mocha • JetBrainsMono Nerd Font • tuned for software engineering.
+-- Charcoal ops • JetBrainsMono Nerd Font • matched to pi herd-dark / reference TUI.
 -- Docs: https://wezfurlong.org/wezterm/config/files.html
 
 local wezterm = require("wezterm")
@@ -10,9 +10,92 @@ local config = wezterm.config_builder()
 require("tabbar").setup(config)
 
 --------------------------------------------------------------------------------
+-- Charcoal ops palette (screenshot-matched)
+-- Neutral #181818 base — deliberately NOT Catppuccin/Tokyo blue-lavender.
+--------------------------------------------------------------------------------
+local ops = {
+	bg = "#181818",
+	bg_elevated = "#1c1c1c",
+	panel = "#222222",
+	hairline = "#383838",
+	border = "#5a5a5a",
+	fog = "#888888",
+	ink = "#e0e0e0",
+	ink_soft = "#c8c8c8",
+	sky = "#66a6f8",
+	sky_deep = "#5c94dd",
+	teal = "#74bcbc",
+	amber = "#dca84c",
+	gold = "#f4cc50",
+	green = "#60a670",
+	rose = "#d07070",
+	violet = "#b0a0d0",
+}
+
+config.colors = {
+	foreground = ops.ink_soft,
+	background = ops.bg,
+	cursor_bg = ops.ink,
+	cursor_fg = ops.bg,
+	cursor_border = ops.ink,
+	selection_fg = ops.ink,
+	selection_bg = "#2a3038",
+	scrollbar_thumb = ops.hairline,
+	split = ops.hairline,
+
+	ansi = {
+		ops.bg, -- black
+		ops.rose, -- red
+		ops.green, -- green
+		ops.amber, -- yellow
+		ops.sky_deep, -- blue
+		ops.violet, -- magenta
+		ops.teal, -- cyan
+		ops.ink_soft, -- white
+	},
+	brights = {
+		ops.fog, -- bright black
+		"#e08888", -- bright red
+		"#78c088", -- bright green
+		ops.gold, -- bright yellow
+		ops.sky, -- bright blue
+		"#c8b8e0", -- bright magenta
+		"#8ac8c8", -- bright cyan
+		ops.ink, -- bright white
+	},
+
+	compose_cursor = ops.amber,
+
+	tab_bar = {
+		background = ops.bg_elevated,
+		active_tab = {
+			bg_color = ops.panel,
+			fg_color = ops.ink,
+			intensity = "Bold",
+		},
+		inactive_tab = {
+			bg_color = ops.bg_elevated,
+			fg_color = ops.fog,
+		},
+		inactive_tab_hover = {
+			bg_color = ops.hairline,
+			fg_color = ops.ink_soft,
+		},
+		new_tab = {
+			bg_color = ops.bg_elevated,
+			fg_color = ops.fog,
+		},
+		new_tab_hover = {
+			bg_color = ops.hairline,
+			fg_color = ops.teal,
+		},
+	},
+}
+
+--------------------------------------------------------------------------------
 -- Appearance
 --------------------------------------------------------------------------------
-config.color_scheme = "Catppuccin Mocha"
+-- Do not set color_scheme — it would override the charcoal ops colors above.
 
 config.font = wezterm.font_with_fallback({
 	{ family = "JetBrainsMono Nerd Font", weight = "Medium" },
@@ -29,11 +112,11 @@ config.harfbuzz_features = { "calt=1", "clig=1", "liga=1", "ss01", "ss19", "zero
 config.freetype_load_target = "Normal"
 config.freetype_render_target = "HorizontalLcd"
 
--- Window / chrome
-config.window_background_opacity = 0.94
-config.macos_window_background_blur = 30
+-- Window / chrome — solid charcoal (target TUI is fully opaque, not glass-blue)
+config.window_background_opacity = 1.0
+config.macos_window_background_blur = 0
 config.window_decorations = "RESIZE" -- keep resize handles, drop the title bar
-config.window_padding = { left = 14, right = 14, top = 10, bottom = 8 }
+config.window_padding = { left = 12, right = 12, top = 8, bottom = 6 }
 config.initial_cols = 120
 config.initial_rows = 34
 config.adjust_window_size_when_changing_font_size = false
