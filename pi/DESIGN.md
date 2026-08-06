@@ -132,21 +132,22 @@ Motion (ops-hud chrome):
 
 ### 7.1 Mode-chip footer (`ctx.ui.setFooter`) — `tui-chrome`
 Reference target: `yolo swarm K3 thinking: high .../production-`
-- **One line only** (no keybinding dump, no token stats as primary)
-- Left chips: mode (amber) · agent (teal) · model (ink) · `thinking: level` (ramp color)
-- Right: dim truncated path/branch; yields first when width is tight
+- **One line only**, all chips **left-clustered** (no right-flush)
+- Order: mode (amber) · agent (teal) · herd (sky) · model (ink) · `thinking: level` (ramp) · dim path trailing after two spaces
+- Shrink order when tight: path → model → herd → agent; mode+thinking survive
 - Pure renderer: `lib/tui-chrome/footer-chips.ts`
 
-### 7.2 Header / status (`setHeader`, `setStatus`, `setWidget`)
-Reference: `examples/extensions/plan-mode/index.ts`, `model-status.ts`
-- Persistent status pill for plan mode / bash mode (color from token, icon + text — never color alone)
-- Widget above editor for active fleet/subagent summary (gh-dash aligned rows: `● name····  meta`)
-- ops-hud board stays above editor for live parallel ops
+### 7.2 Task board (`setWidget` above editor) — `ops-hud`
+Reference target: `001 [⣿⣿:.......] Better location? Chec…  12s`
+- Numbered rows (3-digit sky index) with green dotted mini-bars, sweeping head per row
+- Fed by live tool executions (web/subagent/tool), dim age suffix; `+N more` overflow
+- Herd sibling widget stays gh-dash rows, but **collapses to the summary line when all idle**
+- Pure renderer: `lib/tui-chrome/task-board.ts`
 
 ### 7.3 Working row (component, not just a spinner) — `tui-chrome`
-Target: `◐ Working... ████████████████`
+Target: `◐ Working... ━━━━━━━━━━━━━━━━`
 - Hide built-in loader (`setWorkingVisible(false)`) while agent runs
-- Above-editor widget: gold half-moon + sky label + indeterminate sky→teal progress bar filling the rest of the line
+- Above-editor widget: gold half-moon + sky label + **solid `━` bar** with a slowly traveling sky gradient
 - Elapsed seconds appear after 1s; label specializes for web/subagent tools
 - Pure renderer: `lib/tui-chrome/working-row.ts`
 
@@ -161,11 +162,12 @@ Reference: `examples/extensions/preset.ts`, overlay docs
 - State conveyed by `toolPendingBg`/`toolSuccessBg`/`toolErrorBg` background + label text
 - Markdown results via `getMarkdownTheme()` + `Markdown` component
 
-### 7.6 Editor chrome — `tui-chrome`
-Target: boxed input with `> ` prompt
-- Extend `CustomEditor` with `paddingX: 2`; inject dim `> ` on first content line (`lib/tui-chrome/editor-chrome.ts`)
+### 7.6 Editor card — `tui-chrome`
+Target: inset input card with `> ` prompt and breathing room
+- Extend `CustomEditor` with `paddingX: 2`; inject dim `> ` on first content line
+- **Card wrap**: blank line above + below, whole editor inset 2 columns (`renderEditorCard`)
+- **Border policy**: quiet hairline `#383838` always; amber only while bash mode (`!`) is armed — overrides pi's thinking-level border colors in favor of calm
 - App keybindings preserved (escape abort, ctrl+d, model switch)
-- Borders still theme-driven (`borderMuted` idle, `borderAccent` focus, `bashMode` for `!`)
 - Stock Editor has no side borders — full rounded box (`╭╮`) is out of scope without a custom Editor rewrite
 
 ---
