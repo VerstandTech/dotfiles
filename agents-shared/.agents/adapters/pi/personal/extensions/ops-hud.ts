@@ -15,10 +15,10 @@ import {
 	buildHudSnapshot,
 	classifyTool,
 	formatStatusLine,
-	formatWidgetLines,
 	summarizeToolArgs,
 	type HudActivity,
 } from "../lib/ops-hud/format.ts";
+import { renderTaskBoard, type BoardTask } from "../lib/tui-chrome/task-board.ts";
 
 const STATUS_KEY = "ops-hud";
 const WIDGET_KEY = "ops-hud";
@@ -67,6 +67,7 @@ export default function (pi: ExtensionAPI) {
 			}
 			statusFrame++;
 			paintStatus(lastUiCtx, status);
+			paintWidget(lastUiCtx, snapshot);
 		}, 120);
 		statusTimer.unref?.();
 	};
@@ -80,12 +81,38 @@ export default function (pi: ExtensionAPI) {
 		if (ctx.hasUI) ctx.ui.setStatus(STATUS_KEY, undefined);
 	};
 
+	const paintWidget = (uiCtx: ExtensionContext, snapshot: ReturnType<typeof buildHudSnapshot>) => {
+		if (snapshot.activities.length === 0) {
+			uiCtx.ui.setWidget(WIDGET_KEY, undefined);
+			return;
+		}
+		// Target-TUI task board: numbered rows with green dotted mini-bars.
+		const tasks: BoardTask[] = snapshot.activities.map((a) => ({
+			id: a.id,
+			startedAt: a.startedAt,
+			label:
+				a.kind === "web_search"
+					? a.query
+					: a.kind === "subagent"
+						? a.detail
+							? `${a.label} · ${a.detail}`
+							: a.label
+						: a.detail
+							? `${a.name} · ${a.detail}`
+							: a.name,
+		}));
+		const lines = renderTaskBoard(tasks, {
+			width: 120, // clamped again by pi at render; keep generous
+			frame: statusFrame,
+		});
+		uiCtx.ui.setWidget(WIDGET_KEY, lines, { placement: "aboveEditor" });
+	};
+
 	const refresh = (ctx?: ExtensionContext) => {
 		const uiCtx = ctx ?? lastUiCtx;
 		if (!uiCtx?.hasUI || !enabled) return;
 		lastUiCtx = uiCtx;
 		const snapshot = buildHudSnapshot(activities.values());
-		const theme = uiCtx.ui.theme;
 
 		const status = formatStatusLine(snapshot);
 		if (status) {
@@ -95,18 +122,7 @@ export default function (pi: ExtensionAPI) {
 			stopStatusPulse(uiCtx);
 		}
 
-		const widgetLines = formatWidgetLines(snapshot);
-		if (widgetLines.length > 0) {
-			uiCtx.ui.setWidget(
-				WIDGET_KEY,
-				widgetLines.map((line, index) =>
-					index === 0 ? theme.fg("accent", line) : theme.fg("dim", line),
-				),
-				{ placement: "aboveEditor" },
-			);
-		} else {
-			uiCtx.ui.setWidget(WIDGET_KEY, undefined);
-		}
+		paintWidget(uiCtx, snapshot);
 
 		// Working row is owned by tui-chrome (moon + progress bar). Ops-hud only
 		// drives the title spinner + status/widget board while activities run.
