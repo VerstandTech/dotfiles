@@ -16,6 +16,8 @@ export const PROMPT = "> ";
 export const PROMPT_COLS = 2;
 /** Left inset for the editor card (visual separation from scrollback edge). */
 export const CARD_INDENT = 2;
+/** Side borders added by boxLines (│ on each side). */
+export const BOX_COLS = 2;
 const HAIRLINE = "#383838";
 const AMBER = "#dca84c";
 
@@ -99,6 +101,62 @@ export function isBorderLine(line: string): boolean {
 /** Sanity: prompt injection must not grow visible width when padding was reserved. */
 export function promptPreservesWidth(before: string, after: string): boolean {
 	return visibleLength(after) === visibleLength(before);
+}
+
+function stripAnsi(s: string): string {
+	// eslint-disable-next-line no-control-regex
+	return s.replace(/\x1b\[[0-9;]*m/g, "").replace(/\x1b[\]_][^\x07]*\x07/g, "");
+}
+
+function isBorderPlain(plain: string): boolean {
+	return plain.length > 0 && /^[─↑↓\d\s…]+$/.test(plain);
+}
+
+/** Swap the first/last rule char of a plain border line for rounded corners. */
+function cornerize(plain: string, left: string, right: string): string {
+	if (plain.length < 2) return plain;
+	return left + plain.slice(1, -1) + right;
+}
+
+/**
+ * Wrap Editor output in a full rounded box:
+ *   ╭────────╮
+ *   │ > text │
+ *   ╰────────╯
+ *
+ * Input contract: lines from Editor.render(contentWidth) — first line is the
+ * top border rule, and the LAST border-like line is the bottom rule. Lines
+ * after the bottom rule (autocomplete dropdown) are moved inside the box so
+ * the card stays closed. Output width = contentWidth + 2.
+ */
+export function boxLines(lines: string[], border: (s: string) => string): string[] {
+	if (lines.length < 3) return lines;
+	const plains = lines.map(stripAnsi);
+	if (!isBorderPlain(plains[0]!)) return lines;
+
+	// Find the last border-like line = bottom rule.
+	let bottomIdx = -1;
+	for (let i = lines.length - 1; i >= 1; i--) {
+		if (isBorderPlain(plains[i]!)) {
+			bottomIdx = i;
+			break;
+		}
+	}
+	if (bottomIdx === -1) return lines;
+
+	// Reorder so the bottom rule is last (pulls autocomplete inside the box).
+	const content = [
+		...lines.slice(1, bottomIdx),
+		...lines.slice(bottomIdx + 1),
+	];
+	const top = border(cornerize(plains[0]!, "╭", "╮"));
+	const bottom = border(cornerize(plains[bottomIdx]!, "╰", "╯"));
+	const width = visibleLength(lines[0]!);
+	const middle = content.map((l) => {
+		const pad = Math.max(0, width - visibleLength(l));
+		return border("│") + l + " ".repeat(pad) + border("│");
+	});
+	return [top, ...middle, bottom];
 }
 
 /** Clamp lines to maxWidth by dropping trailing plain characters (SGR-naive). */

@@ -21,6 +21,8 @@ import type { EditorTheme, TUI } from "@earendil-works/pi-tui";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import {
 	applyPromptPrefix,
+	BOX_COLS,
+	boxLines,
 	CARD_INDENT,
 	cardBorderColor,
 	PROMPT_COLS,
@@ -225,10 +227,15 @@ export default function (pi: ExtensionAPI) {
 				}
 				// Card borders: quiet hairline; amber only while bash mode is armed.
 				this.borderColor = cardBorderColor(this.getText().startsWith("!"));
-				// Render inside the card inset, then wrap with breathing room.
-				const inner = Math.max(1, width - CARD_INDENT);
-				const lines = applyPromptPrefix(super.render(inner), { maxWidth: inner });
-				return renderEditorCard(fitLines(lines, inner), width);
+				// Render inside card inset + side borders, box it, then add the
+				// breathing-room indent (blank line above/below).
+				const cardWidth = Math.max(BOX_COLS + 1, width - CARD_INDENT);
+				const contentWidth = Math.max(1, cardWidth - BOX_COLS);
+				const raw = applyPromptPrefix(super.render(contentWidth), {
+					maxWidth: contentWidth,
+				});
+				const boxed = boxLines(fitLines(raw, contentWidth), this.borderColor);
+				return renderEditorCard(boxed, width);
 			}
 		}
 		ctx.ui.setEditorComponent((tui, theme, kb) => new ChromeEditor(tui, theme, kb));

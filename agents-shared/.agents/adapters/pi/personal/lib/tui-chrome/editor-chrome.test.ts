@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
 	applyPromptPrefix,
+	boxLines,
 	CARD_INDENT,
 	cardBorderColor,
 	clampVisible,
@@ -100,5 +101,54 @@ describe("editor card", () => {
 		expect(idle).toContain("56;56;56"); // #383838
 		expect(bash).toContain("220;168;76"); // #dca84c
 		expect(idle).not.toBe(bash);
+	});
+});
+
+describe("boxLines", () => {
+	const border = (s: string) => `[B]${s}[/B]`; // visible fake border coloring
+
+	test("wraps editor output in a rounded box (+2 width)", () => {
+		const lines = ["────────", "> hello ", "────────"];
+		const out = boxLines(lines, border);
+		expect(out[0]).toContain("╭");
+		expect(out[0]).toContain("╮");
+		expect(out[0]).not.toContain("╰");
+		expect(out[2]).toContain("╰");
+		expect(out[2]).toContain("╯");
+		expect(out[1]).toContain("│");
+		expect(out[1]).toContain("> hello");
+		// visible width grows by exactly the two side borders
+		expect(visibleLength(out[1]!.replace(/\[\/?B\]/g, ""))).toBe(10);
+	});
+
+	test("preserves scroll labels in corners", () => {
+		const lines = ["─ ↑ 3 ────", "x       ", "─ ↓ 1 ────"];
+		const out = boxLines(lines, (s) => s);
+		expect(out[0]).toContain("↑ 3");
+		expect(out[2]).toContain("↓ 1");
+		expect(out[0]!.startsWith("╭")).toBe(true);
+		expect(out[2]!.endsWith("╯")).toBe(true);
+	});
+
+	test("autocomplete lines move inside the box", () => {
+		// Editor.render appends autocomplete AFTER the bottom border.
+		const lines = ["────────", "> /hel  ", "────────", "/help   ", "/history"];
+		const out = boxLines(lines, (s) => s);
+		expect(out[0]).toBe("╭──────╮"); // 8-col fixture: corner + 6 rules + corner
+		expect(out[out.length - 1]).toBe("╰──────╯");
+		// autocomplete items are boxed, not dangling below the card
+		expect(out.some((l) => l === "│/help   │")).toBe(true);
+		expect(out.some((l) => l === "│/history│")).toBe(true);
+	});
+
+	test("pads short content lines to the box width", () => {
+		const lines = ["────────", "> x", "────────"];
+		const out = boxLines(lines, (s) => s);
+		expect(out[1]).toBe("│> x     │");
+	});
+
+	test("non-editor input passes through untouched", () => {
+		const lines = ["no borders here"];
+		expect(boxLines(lines, border)).toEqual(lines);
 	});
 });
