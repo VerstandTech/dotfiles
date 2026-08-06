@@ -71,31 +71,51 @@ Galleries for ongoing reference: [terminaltrove.com](https://terminaltrove.com/c
 
 ## 5. Design Tokens
 
-Mapped to pi's theme schema (51 required tokens). Values below are the intended direction; concrete hex lives in the theme JSON.
+Mapped to pi's theme schema (51 required tokens). Concrete hex lives in `herd-dark.json` / `herd-light.json`.
+
+### 5.0 Charcoal ops palette (screenshot-matched, 2026-08)
+Neutral charcoal base — **not** blue-tinted Tokyo Night. Sampled from reference TUI:
+
+| Role | Dark hex | Notes |
+|---|---|---|
+| Page bg | `#181818` | export.pageBg; terminal should match |
+| Panel | `#222222` / `#1c1c1c` | user/tool surfaces |
+| Ink | `#e0e0e0` | primary text |
+| Fog / shadow | `#888888` / `#5a5a5a` | muted / dim |
+| **Accent (sky)** | `#66a6f8` | progress bar, focus, links |
+| **Teal** | `#74bcbc` | secondary brand ("swarm" labels, code) |
+| **Amber** | `#dca84c` | mode labels (yolo/bash), thinkingMax |
+| Success | `#60a670` | soft green progress dots |
+| Error | `#d07070` | desaturated rose |
+
+Motion (ops-hud chrome):
+- Default working indicator: gold half-moon `◐◓◑◒` with amber→gold gradient (~110ms)
+- Live ops indicator: braille spinner on sky→teal gradient (~80ms)
+- Status chip dot: slow sky→teal pulse (~120ms) while activities run
 
 ### 5.1 Core UI
-- `accent` — single brand accent (used sparingly: focus, links, active states)
-- `text` — default terminal foreground (`""`) for maximum compatibility
+- `accent` — sky blue brand accent (used sparingly: focus, links, active states)
+- `text` — soft ink (`#e0e0e0` dark / `#2a2a2a` light), not bare terminal default
 - `muted` / `dim` — two-level de-emphasis ramp for metadata
 - `success` / `warning` / `error` — semantic only, never decorative
 - `border` / `borderAccent` / `borderMuted` — three-level border hierarchy: default structure uses `borderMuted`, focused/active elements use `borderAccent`
 
 ### 5.2 Backgrounds & Content
-- `selectedBg` — subtle, low-saturation selection background (never high-chroma)
+- `selectedBg` — subtle blue-gray selection (`#2a3038` dark), never high-chroma
 - `userMessageBg` / `customMessageBg` — barely-different-from-terminal tint; user messages visually distinct from agent output by background, not borders
 - `toolPendingBg` / `toolSuccessBg` / `toolErrorBg` — state background tints for tool blocks (the lazygit "state is obvious" rule)
 
 ### 5.3 Markdown (agent output)
-- `mdHeading` accent-colored; `mdCode`/`mdCodeBlock` distinct from prose; `mdQuoteBorder` + `mdHr` muted; `mdLink` accent, `mdLinkUrl` dim
+- `mdHeading` accent-colored; `mdCode`/`mdCodeBlock` teal-tinted; `mdQuoteBorder` + `mdHr` muted; `mdLink` accent, `mdLinkUrl` dim
 
 ### 5.4 Thinking-level ramp (pi's signature)
-- `thinkingOff` → `thinkingMax`: a perceptually ordered gradient (muted → vivid), e.g. gray → blue → cyan → magenta → red. Borders of the editor/thinking blocks communicate reasoning level at a glance. This is our Crush-model-badge equivalent.
+- `thinkingOff` → `thinkingMax`: hairline → shadow → sky-deep → sky → teal → soft violet → amber. Borders of the editor/thinking blocks communicate reasoning level at a glance.
 
 ### 5.5 Syntax & diffs
-- Syntax palette harmonized with accent family (avoid rainbow); diffs use classic `toolDiffAdded`/`toolDiffRemoved` but desaturated to match the quiet aesthetic
+- Syntax palette harmonized with sky/teal/amber family (avoid rainbow); diffs use desaturated success/error greens and roses
 
 ### 5.6 Bash mode
-- `bashMode` — warm, high-attention color (e.g. amber): entering bash mode (`!`) must be unmissable
+- `bashMode` — warm amber (`#dca84c`): entering bash mode (`!`) must be unmissable
 
 ---
 
@@ -110,19 +130,25 @@ Mapped to pi's theme schema (51 required tokens). Values below are the intended 
 
 ## 7. Component Specs
 
-### 7.1 Custom footer (`ctx.ui.setFooter`)
-Reference: `examples/extensions/custom-footer.ts`
-- Line 1: keybinding hints (dim), discoverability-first
-- Line 2: model · thinking level (ramp-colored) · session name · branch
-- Never more than 2 lines; truncate middle segments first
+### 7.1 Mode-chip footer (`ctx.ui.setFooter`) — `tui-chrome`
+Reference target: `yolo swarm K3 thinking: high .../production-`
+- **One line only** (no keybinding dump, no token stats as primary)
+- Left chips: mode (amber) · agent (teal) · model (ink) · `thinking: level` (ramp color)
+- Right: dim truncated path/branch; yields first when width is tight
+- Pure renderer: `lib/tui-chrome/footer-chips.ts`
 
 ### 7.2 Header / status (`setHeader`, `setStatus`, `setWidget`)
 Reference: `examples/extensions/plan-mode/index.ts`, `model-status.ts`
 - Persistent status pill for plan mode / bash mode (color from token, icon + text — never color alone)
-- Widget above editor for active fleet/subagent summary (gh-dash row style)
+- Widget above editor for active fleet/subagent summary (gh-dash aligned rows: `● name····  meta`)
+- ops-hud board stays above editor for live parallel ops
 
-### 7.3 Working indicator (`setWorkingIndicator`)
-- Calm, non-strobing animation; includes elapsed time + current tool name (dim)
+### 7.3 Working row (component, not just a spinner) — `tui-chrome`
+Target: `◐ Working... ████████████████`
+- Hide built-in loader (`setWorkingVisible(false)`) while agent runs
+- Above-editor widget: gold half-moon + sky label + indeterminate sky→teal progress bar filling the rest of the line
+- Elapsed seconds appear after 1s; label specializes for web/subagent tools
+- Pure renderer: `lib/tui-chrome/working-row.ts`
 
 ### 7.4 Selector overlays
 Reference: `examples/extensions/preset.ts`, overlay docs
@@ -135,8 +161,12 @@ Reference: `examples/extensions/preset.ts`, overlay docs
 - State conveyed by `toolPendingBg`/`toolSuccessBg`/`toolErrorBg` background + label text
 - Markdown results via `getMarkdownTheme()` + `Markdown` component
 
-### 7.6 Editor
-- Keep default editor (CustomEditor semantics: escape-to-abort, ctrl+d, model switching must survive); restyle borders via theme tokens only (`borderAccent` focused, `borderMuted` idle, `bashMode` for `!`)
+### 7.6 Editor chrome — `tui-chrome`
+Target: boxed input with `> ` prompt
+- Extend `CustomEditor` with `paddingX: 2`; inject dim `> ` on first content line (`lib/tui-chrome/editor-chrome.ts`)
+- App keybindings preserved (escape abort, ctrl+d, model switch)
+- Borders still theme-driven (`borderMuted` idle, `borderAccent` focus, `bashMode` for `!`)
+- Stock Editor has no side borders — full rounded box (`╭╮`) is out of scope without a custom Editor rewrite
 
 ---
 
