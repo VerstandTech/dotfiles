@@ -82,9 +82,16 @@ export function formatHerdRows(payload: unknown): HerdView | null {
 
   const sorted = [...parsed].sort((a, b) => ORDER[a.state] - ORDER[b.state]);
 
-  const rows = sorted.map(
-    (a) => `${ICON[a.state]} ${a.name}${a.meta ? ` ${a.meta}` : ""}`,
+  // gh-dash style: icon · name (aligned) · dim meta. Meta kept plain here;
+  // the adapter may colorize. Keep single-space separation for width math.
+  const nameWidth = Math.min(
+    16,
+    Math.max(4, ...sorted.map((a) => a.name.length)),
   );
+  const rows = sorted.map((a) => {
+    const name = a.name.padEnd(nameWidth, " ");
+    return `${ICON[a.state]} ${name}${a.meta ? `  ${a.meta}` : ""}`;
+  });
 
   // Summary stays attention-focused (R5-E1): only actionable states (working,
   // blocked, idle, unknown). `done` is history — visible in rows, not the summary.

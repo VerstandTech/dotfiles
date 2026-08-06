@@ -35,7 +35,20 @@ export default function (pi: ExtensionAPI) {
         // Publish only on change (R7-E2): setWidget triggers a TUI re-layout,
         // so an unchanged poll must cost nothing. undefined clears (hides).
         if (lastLines === undefined || !sameLines(lastLines, lines)) {
-          ctx.ui.setWidget("herd", lines ?? undefined);
+          if (!lines) {
+            ctx.ui.setWidget("herd", undefined);
+          } else {
+            // gh-dash density: summary accent, rows dim meta — theme-colored at publish time.
+            const th = ctx.ui.theme;
+            const styled = lines.map((line, i) => {
+              if (i === 0) return th.fg("accent", line);
+              if (line.startsWith("⚠")) return th.fg("warning", line);
+              if (line.startsWith("●")) return th.fg("accent", line);
+              if (line.startsWith("✓")) return th.fg("success", line);
+              return th.fg("dim", line);
+            });
+            ctx.ui.setWidget("herd", styled);
+          }
           lastLines = lines;
         }
       } finally {

@@ -1,21 +1,21 @@
 /**
  * Ops HUD — richer Pi TUI visuals while sub-agents and web research run.
  *
- * - Footer status chips (web ×N, agents ×N)
+ * - Footer status chips (web ×N, agents ×N) with sky→teal gradient pulse
  * - Above-editor widget board for parallel live ops
- * - Custom working message while busy
+ * - Gold half-moon working indicator (screenshot aesthetic) + ops braille
  * - Terminal title spinner during multi-activity
  * - /ops-hud and /ops-hud off
  *
  * Complements pi-subagents' async widget + /subagents-fleet (Ctrl+Alt+F).
  */
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { statusDim, statusDotFrame } from "../lib/ops-hud/chrome.ts";
 import {
 	buildHudSnapshot,
 	classifyTool,
 	formatStatusLine,
 	formatWidgetLines,
-	formatWorkingMessage,
 	summarizeToolArgs,
 	type HudActivity,
 } from "../lib/ops-hud/format.ts";
@@ -23,6 +23,7 @@ import {
 const STATUS_KEY = "ops-hud";
 const WIDGET_KEY = "ops-hud";
 const BRAILLE = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+// Working row + spinner owned by tui-chrome (progress bar component).
 
 type ToolStartEvent = {
 	toolCallId?: string;
@@ -40,9 +41,44 @@ export default function (pi: ExtensionAPI) {
 	const activities = new Map<string, HudActivity>();
 	let enabled = true;
 	let titleTimer: ReturnType<typeof setInterval> | null = null;
+	let statusTimer: ReturnType<typeof setInterval> | null = null;
 	let titleFrame = 0;
+	let statusFrame = 0;
 	let lastUiCtx: ExtensionContext | null = null;
 	let baseTitle = "π";
+
+	const paintStatus = (uiCtx: ExtensionContext, status: string | undefined) => {
+		if (!status) {
+			uiCtx.ui.setStatus(STATUS_KEY, undefined);
+			return;
+		}
+		uiCtx.ui.setStatus(STATUS_KEY, statusDotFrame(statusFrame) + statusDim(` ${status}`));
+	};
+
+	const startStatusPulse = () => {
+		if (statusTimer) return;
+		statusTimer = setInterval(() => {
+			if (!lastUiCtx?.hasUI || !enabled) return;
+			const snapshot = buildHudSnapshot(activities.values());
+			const status = formatStatusLine(snapshot);
+			if (!status) {
+				stopStatusPulse(lastUiCtx);
+				return;
+			}
+			statusFrame++;
+			paintStatus(lastUiCtx, status);
+		}, 120);
+		statusTimer.unref?.();
+	};
+
+	const stopStatusPulse = (ctx: ExtensionContext) => {
+		if (statusTimer) {
+			clearInterval(statusTimer);
+			statusTimer = null;
+		}
+		statusFrame = 0;
+		if (ctx.hasUI) ctx.ui.setStatus(STATUS_KEY, undefined);
+	};
 
 	const refresh = (ctx?: ExtensionContext) => {
 		const uiCtx = ctx ?? lastUiCtx;
@@ -53,9 +89,10 @@ export default function (pi: ExtensionAPI) {
 
 		const status = formatStatusLine(snapshot);
 		if (status) {
-			uiCtx.ui.setStatus(STATUS_KEY, theme.fg("accent", "●") + theme.fg("dim", ` ${status}`));
+			paintStatus(uiCtx, status);
+			startStatusPulse();
 		} else {
-			uiCtx.ui.setStatus(STATUS_KEY, undefined);
+			stopStatusPulse(uiCtx);
 		}
 
 		const widgetLines = formatWidgetLines(snapshot);
@@ -71,17 +108,11 @@ export default function (pi: ExtensionAPI) {
 			uiCtx.ui.setWidget(WIDGET_KEY, undefined);
 		}
 
-		const working = formatWorkingMessage(snapshot);
-		if (working) {
-			uiCtx.ui.setWorkingMessage(working);
-			uiCtx.ui.setWorkingIndicator({
-				frames: BRAILLE.map((frame) => theme.fg("accent", frame)),
-				intervalMs: 80,
-			});
+		// Working row is owned by tui-chrome (moon + progress bar). Ops-hud only
+		// drives the title spinner + status/widget board while activities run.
+		if (snapshot.activities.length > 0) {
 			startTitleSpinner(uiCtx, snapshot.activities.length);
 		} else {
-			uiCtx.ui.setWorkingMessage();
-			uiCtx.ui.setWorkingIndicator();
 			stopTitleSpinner(uiCtx);
 		}
 	};
@@ -96,6 +127,7 @@ export default function (pi: ExtensionAPI) {
 			const n = activities.size;
 			lastUiCtx.ui.setTitle(n > 0 ? `${frame} π · ops×${n}${count > 1 ? " parallel" : ""}` : baseTitle);
 		}, 90);
+		titleTimer.unref?.();
 	};
 
 	const stopTitleSpinner = (ctx: ExtensionContext) => {
@@ -180,11 +212,10 @@ export default function (pi: ExtensionAPI) {
 	pi.on("session_shutdown", (_event, ctx) => {
 		activities.clear();
 		stopTitleSpinner(ctx);
+		stopStatusPulse(ctx);
 		if (ctx.hasUI) {
 			ctx.ui.setStatus(STATUS_KEY, undefined);
 			ctx.ui.setWidget(WIDGET_KEY, undefined);
-			ctx.ui.setWorkingMessage();
-			ctx.ui.setWorkingIndicator();
 		}
 	});
 
@@ -247,10 +278,9 @@ export default function (pi: ExtensionAPI) {
 			if (!enabled) {
 				activities.clear();
 				stopTitleSpinner(ctx);
+				stopStatusPulse(ctx);
 				ctx.ui.setStatus(STATUS_KEY, undefined);
 				ctx.ui.setWidget(WIDGET_KEY, undefined);
-				ctx.ui.setWorkingMessage();
-				ctx.ui.setWorkingIndicator();
 				ctx.ui.notify("Ops HUD off", "info");
 				return;
 			}
