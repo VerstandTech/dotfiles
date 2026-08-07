@@ -9,7 +9,7 @@ Settings entry (relative to `../settings.json`):
 "packages": ["./personal"]
 ```
 
-Package version: **0.7.0** (high-assurance v1.2 scaffolding: CAID, trajectory, decisions, cost budgets).
+Package version: **0.7.3** (high-assurance v1.2 scaffolding; `/goal`; mid-prompt skills; megazord fixes).
 
 ## Subagent: project `researcher` (olhaminha.bio only)
 
@@ -20,6 +20,82 @@ Project agent (not global) overrides builtin researcher so children use **`xai_w
 - Tools: `read, write, xai_web_search, bash, contact_supervisor, intercom`
 
 Only active when Pi cwd is that project (project agent discovery). `/reload` after edits.
+
+## Bundled: `inline-skills.ts` (mid-prompt skills)
+
+Pi only auto-opens `/` completions at the **start of the message** (and forbids
+registering `/` as a custom trigger). This extension adds real mid-prompt skill
+invocation with a dropdown.
+
+| Surface | Behavior |
+|---------|----------|
+| **`$` (recommended)** | Type `$` mid-prompt → skill dropdown; pick inserts `/skill:name` |
+| `$name` | Expands on submit when `name` is a known skill |
+| `/skill:name` mid-line | Tab completes; expands on submit |
+| `@skill:name` | Autocomplete via `@` (does not steal `@path`) |
+| Submit expansion | `/skill:`, `$skill:`, `@skill:`, bare `$name` → skill XML block |
+| Line-start `/skill:` | Unchanged Pi built-in |
+| Command | `/inline-skills` — help + sample list |
+| Lib | `lib/inline-skill/` (+ tests) |
+
+```text
+please use $bdd          ← dropdown → /skill:bdd-tdd
+fix the flaky test with /skill:ship and keep the PR small
+```
+
+After pull: `/reload` in Pi (or restart).
+
+## Bundled: `goal.ts` (Claude Code-style `/goal`)
+
+Session-scoped **completion condition**. After each agent run settles, a small/fast
+evaluator model judges the transcript. If unmet, Pi auto-continues with the
+evaluator’s reason as guidance. Clears when met (or via `/goal clear`).
+
+| Surface | Behavior |
+|---------|----------|
+| `/goal <condition>` | Set/replace goal and **kick off immediately** |
+| `/goal` | Status (condition, duration, turns, last reason) |
+| `/goal clear` | Stop early (aliases: `stop`, `off`, `reset`, `none`, `cancel`) |
+| Footer | `◎ /goal 3m · 4t` while active |
+| Resume | Active goal restored; timer/turns reset |
+| Fail-closed | Refuses start without evaluator; stops on eval error/timeout |
+| Lib | `lib/goal/goal.ts` (+ tests) |
+
+Write conditions the transcript can prove, e.g. “`bun test` exits 0 and git status is clean”.
+Optional bound in the text: `… or stop after 20 turns`.
+
+**Env:**
+
+| Var | Purpose |
+|-----|--------|
+| `PI_GOAL_MODEL` | Evaluator `provider/id` or id substring (else prefers haiku/flash/mini/fast) |
+| `PI_GOAL_MAX_TURNS` | Hard evaluation cap (default **40**; condition `stop after N` wins) |
+| `PI_GOAL_EVAL_TIMEOUT_MS` | Evaluator deadline (default **45000**) |
+
+Pair with permissive tool permissions if you want long unattended runs.
+
+```text
+/goal all unit tests pass and there are no TypeScript errors
+/goal
+/goal clear
+```
+
+After pull: `/reload` in Pi (or restart).
+
+## Bundled: `anti-hang.ts`
+
+Stops the agent loop from wedging forever on hung tools (Pi + context-mode leave
+timeouts unset; `pi-agent-core` has no `toolTimeoutMs`).
+
+| Surface | Behavior |
+|---------|----------|
+| `tool_call` gate | Blocks `find / …`, `updatedb`, `ls -R /` |
+| Default timeouts | bash **120s** if omitted; `ctx_batch_execute` / `ctx_execute` **120000ms** if omitted |
+| Caps | bash ≤ 600s; ctx ≤ 600000ms |
+| Command | `/anti-hang` |
+| Lib | `lib/anti-hang/gate.ts` (+ tests) |
+
+After pull: `/reload` in Pi (or restart).
 
 ## Bundled: `tui-chrome.ts`
 
@@ -207,7 +283,9 @@ cd ~/dotfiles/agents-shared/.agents/adapters/pi/personal && bun test lib/xai-web
 
 ```text
 personal/
-  extensions/          # agentic-fleet, bdd-mode, ops-hud, worktree-board, xai-web-search
+  extensions/          # goal, inline-skills, agentic-fleet, bdd-mode, ops-hud, …
+  lib/goal/            # /goal pure helpers + tests
+  lib/inline-skill/    # mid-prompt /skill: autocomplete + expansion
   agents/              # bdd-* roles + fleet-*
   lib/bdd/             # phase/path/config + quality gates + cost-budget + tests
   lib/worktree/        # board + CAID
