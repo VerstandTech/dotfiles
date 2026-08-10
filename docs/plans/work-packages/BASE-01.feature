@@ -105,3 +105,17 @@ Feature: BASE-01 canonical playbook v1.2 and bounded Test Designer baseline
     And it must not weaken plain no-delegation isolation
     And it must not narrow the specification/test writable-path scope
     And it must not drop contracts/invariants, fuzz, differential, or golden-master responsibilities
+
+  Scenario: Secondary operator docs advertise only current canonical metadata (E14, E15, E16, R11)
+    Given secondary package docs still present stale current-policy v1.0 claims
+    And docs/bdd-fleet-cheatsheet.md still says Canonical v1.0 policy for /bdd playbook
+    And docs/high-assurance-example-map.md still frames July 2026 / v1.0 / sections 1–13 as current
+    And docs/agentic-bdd-roadmap.md shipped layer still says Canonical v1.0 policy
+    And the focused test "secondary package docs advertise only current canonical metadata" exists
+    When the focused command "cd agents-shared/.agents/adapters/pi/personal && bun test lib/bdd/playbook.test.ts" runs
+    Then it fails at "secondary package docs advertise only current canonical metadata"
+    And the failure identifies stale "Canonical v1.0 policy" and/or the July/sections 1–13 current rule
+    And it does not fail because of import, setup, timeout, or command-not-found
+    And historical v1.0 changelog references remain allowed outside current-policy claims
+    When secondary current-policy claims are repaired to v1.2 / August 2026 / sections 1–20
+    Then the focused playbook.test.ts command passes without weakening prior BASE-01 oracles

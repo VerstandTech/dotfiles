@@ -101,3 +101,40 @@ describe("bounded roles reflect the layered oracle model", () => {
 		expect(qa).toContain("human exploratory testing");
 	});
 });
+
+describe("secondary package operator docs", () => {
+	test("secondary package docs advertise only current canonical metadata", () => {
+		const cheatsheet = readPackageFile("docs/bdd-fleet-cheatsheet.md");
+		const exampleMap = readPackageFile("docs/high-assurance-example-map.md");
+		const roadmap = readPackageFile("docs/agentic-bdd-roadmap.md");
+		const canonicalPlaybook = readPackageFile("docs/high-assurance-playbook.md");
+
+		// Reject exact stale current-policy claims first (causal red signature).
+		expect(cheatsheet).not.toContain("Canonical v1.0 policy");
+		expect(roadmap).not.toContain("Canonical v1.0 policy");
+		expect(exampleMap).not.toContain(
+			"The July 2026 playbook is canonical and versioned",
+		);
+		expect(exampleMap).not.toContain("all thirteen numbered sections");
+		expect(exampleMap).not.toMatch(/sections 1[–-]13/);
+
+		// E14 — /bdd playbook row advertises current canonical policy only.
+		expect(cheatsheet).toMatch(
+			/\| `\/bdd playbook` \| Canonical v1\.2 policy \+ honest Pi implementation profile \|/
+		);
+
+		// E15 — package Example Map current canonical rule tracks August 2026 / v1.2 / 1–20.
+		expect(exampleMap).toMatch(/August 2026/);
+		expect(exampleMap).toMatch(/\bv1\.2\b/);
+		expect(exampleMap).toMatch(/sections 1[–-]20/);
+
+		// E16 — shipped roadmap layer advertises current canonical policy only.
+		expect(roadmap).toContain(
+			"Canonical v1.2 policy + separate enforced/configurable/roadmap implementation profile",
+		);
+
+		// Historical v1.0 remains allowed in the canonical changelog, not as current policy.
+		expect(canonicalPlaybook).toContain("## Changelog (1.0 → 1.2)");
+		expect(canonicalPlaybook).toContain("*Version 1.2 — August 2026*");
+	});
+});
