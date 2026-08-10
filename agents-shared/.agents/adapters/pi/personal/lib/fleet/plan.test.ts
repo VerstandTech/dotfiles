@@ -1,69 +1,18 @@
 import { describe, expect, test } from "bun:test";
-import { buildFleetPlan, pickModel, resolveModelPool } from "./plan.ts";
+import { basename, isAbsolute, normalize as normalizePath, sep as pathSep } from "node:path";
+import {
+	FORBIDDEN_PUBLIC_EXECUTION_KEYS,
+	normalizePublicSubagentExecutionFixture,
+	PI_SUBAGENTS_VERSION_PIN,
+	PUBLIC_CUTOVER_MESSAGE,
+	tryLoadRealNormalizePublicSubagentExecution,
+} from "./public-execution-0.45.2.fixture.ts";
+import { buildFleetPlan, buildFleetWorkflowScript, pickModel, resolveModelPool, type FleetTask } from "./plan.ts";
 
 /** pi-subagents 0.45.2 stable-key contract for runs.run / runs.all. */
 const RUN_KEY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 
-const FORBIDDEN_PUBLIC_KEYS = [
-	"action",
-	"tasks",
-	"chain",
-	"parallel",
-	"concurrency",
-	"chainDir",
-	"agent",
-	"task",
-	"step",
-] as const;
-
-const PUBLIC_CUTOVER_MESSAGE =
-	"Legacy top-level chain and parallel inputs were removed; use workflowScript.";
-
 type PublicParams = Record<string, unknown>;
-
-/** Test-local mirror of pi-subagents 0.45.2 public-execution cutover. */
-function normalizePublicSubagentExecutionMirror(
-	params: PublicParams,
-): { ok: true; params: PublicParams } | { ok: false; error: string } {
-	const action = params.action;
-	if (action !== undefined && (typeof action !== "string" || !action.trim())) {
-		return {
-			ok: false,
-			error:
-				"action must be a non-empty management/control action, or omit action and use workflowScript.",
-		};
-	}
-	const normalizedAction = typeof action === "string" ? action.trim() : undefined;
-	const hasLegacyOrchestration =
-		params.tasks !== undefined ||
-		params.chain !== undefined ||
-		params.parallel !== undefined ||
-		params.concurrency !== undefined ||
-		params.chainDir !== undefined;
-	if (hasLegacyOrchestration) {
-		return { ok: false, error: PUBLIC_CUTOVER_MESSAGE };
-	}
-	if (normalizedAction !== undefined) {
-		return {
-			ok: false,
-			error: "workflowScript execution must omit action; only schedule.create accepts action with workflowScript.",
-		};
-	}
-	if (params.agent !== undefined || params.task !== undefined || params.step !== undefined) {
-		return {
-			ok: false,
-			error: 'Direct execution was removed. Use workflowScript: "return runs.run(\'main\', { agent, task })".',
-		};
-	}
-	if (typeof params.workflowScript !== "string" || !params.workflowScript.trim()) {
-		return {
-			ok: false,
-			error:
-				'Execution requires a non-empty workflowScript. Direct execution was removed; use workflowScript: "return runs.run(\'main\', { agent, task })".',
-		};
-	}
-	return { ok: true, params };
-}
 
 function asPublicParams(plan: ReturnType<typeof buildFleetPlan>): PublicParams {
 	return plan.subagentParams as unknown as PublicParams;
@@ -74,9 +23,32 @@ function assertNoLegacyPublicPayload(params: PublicParams): void {
 	if (Object.prototype.hasOwnProperty.call(params, "tasks") || params.tasks !== undefined) {
 		throw new Error("legacy top-level tasks payload is still emitted");
 	}
-	for (const key of FORBIDDEN_PUBLIC_KEYS) {
+	for (const key of FORBIDDEN_PUBLIC_EXECUTION_KEYS) {
 		expect(params[key], `public params must omit ${key}`).toBeUndefined();
 	}
+}
+
+/** Filename segment must not itself encode path escape. */
+function assertSafeOutputPath(output: string, outputDir: string): void {
+	expect(output.startsWith(`${outputDir}/`), `output must stay under ${outputDir}: ${output}`).toBe(
+		true,
+	);
+	expect(isAbsolute(output), `output must not be absolute: ${output}`).toBe(false);
+	const normalized = normalizePath(output);
+	expect(normalized.startsWith(".."), `output must not traverse up: ${output}`).toBe(false);
+	expect(normalized.includes(`${pathSep}..${pathSep}`) || normalized.endsWith(`${pathSep}..`)).toBe(
+		false,
+	);
+	const file = basename(output);
+	expect(file.length).toBeGreaterThan(0);
+	expect(file.includes("/") || file.includes("\\")).toBe(false);
+	expect(file.includes("\0")).toBe(false);
+	expect(file === "." || file === "..").toBe(false);
+	// Single path segment after outputDir (no nested escape via persona id).
+	const rest = output.slice(outputDir.length + 1);
+	expect(rest.includes("/") || rest.includes("\\"), `filename must be one segment: ${output}`).toBe(
+		false,
+	);
 }
 
 type MockChild = {
@@ -92,29 +64,53 @@ type MockRunResult = {
 	key: string;
 	output: string;
 	success: boolean;
+	ok?: boolean;
+	error?: unknown;
 	agent?: string;
 	task?: string;
 	model?: string;
 	outputPath?: string;
 };
 
-function createMockRuns() {
+function createMockRuns(options?: {
+	/** 1-based member indices that should fail (ok:false). */
+	failMembers?: number[];
+}) {
+	const failSet = new Set(options?.failMembers ?? []);
 	const batches: MockChild[][] = [];
+	let memberOrdinal = 0;
 	const runs = {
 		all: async (items: MockChild[]) => {
 			if (!Array.isArray(items)) throw new Error("runs.all requires an array");
 			batches.push(items.map((item) => ({ ...item })));
-			return items.map(
-				(item): MockRunResult => ({
+			return items.map((item): MockRunResult => {
+				memberOrdinal += 1;
+				const index = memberOrdinal;
+				const failed = failSet.has(index);
+				if (failed) {
+					return {
+						key: String(item.key),
+						output: "",
+						success: false,
+						ok: false,
+						error: { code: "child_failed", message: `member ${index} failed`, member: index },
+						agent: typeof item.agent === "string" ? item.agent : undefined,
+						task: typeof item.task === "string" ? item.task : undefined,
+						model: typeof item.model === "string" ? item.model : undefined,
+						outputPath: typeof item.output === "string" ? item.output : undefined,
+					};
+				}
+				return {
 					key: String(item.key),
 					output: `result:${item.key}`,
 					success: true,
+					ok: true,
 					agent: typeof item.agent === "string" ? item.agent : undefined,
 					task: typeof item.task === "string" ? item.task : undefined,
 					model: typeof item.model === "string" ? item.model : undefined,
 					outputPath: typeof item.output === "string" ? item.output : undefined,
-				}),
-			);
+				};
+			});
 		},
 		run: async (key: string, params: Record<string, unknown>) => {
 			batches.push([{ key, ...params }]);
@@ -122,6 +118,7 @@ function createMockRuns() {
 				key,
 				output: `result:${key}`,
 				success: true,
+				ok: true,
 				agent: typeof params.agent === "string" ? params.agent : undefined,
 				task: typeof params.task === "string" ? params.task : undefined,
 				model: typeof params.model === "string" ? params.model : undefined,
@@ -141,6 +138,42 @@ async function executeWorkflowScript(
 	) => (...args: unknown[]) => Promise<unknown>;
 	const fn = new AsyncFunction("runs", script);
 	return await fn(runs);
+}
+
+/** Bounded execution so NaN/Infinity batch loops cannot hang the suite. */
+async function executeWorkflowScriptBounded(
+	script: string,
+	runs: ReturnType<typeof createMockRuns>["runs"],
+	timeoutMs = 400,
+): Promise<unknown> {
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	try {
+		return await Promise.race([
+			executeWorkflowScript(script, runs),
+			new Promise<never>((_, reject) => {
+				timer = setTimeout(() => {
+					reject(
+						new Error(
+							`workflow script exceeded bounded timeout ${timeoutMs}ms (possible infinite loop from non-finite batch size)`,
+						),
+					);
+				}, timeoutMs);
+			}),
+		]);
+	} finally {
+		if (timer) clearTimeout(timer);
+	}
+}
+
+function sampleTasks(count: number): FleetTask[] {
+	return Array.from({ length: count }, (_, i) => ({
+		agent: "fleet-researcher",
+		task: `task-${i + 1}`,
+		model: "xai/grok-4.5",
+		output: `.pi/fleet-runs/research-${String(i + 1).padStart(2, "0")}-sample.md`,
+		label: `Sample ${i + 1}`,
+		personaId: `sample-${i + 1}`,
+	}));
 }
 
 describe("resolveModelPool / pickModel exclusive precedence", () => {
@@ -325,7 +358,7 @@ describe("buildFleetPlan current RPC payload", () => {
 		expect(params.async).toBe(true);
 		expect(params.context).toBe("fresh");
 
-		const mirror = normalizePublicSubagentExecutionMirror(params);
+		const mirror = normalizePublicSubagentExecutionFixture(params);
 		expect(mirror.ok).toBe(true);
 
 		const { runs, batches } = createMockRuns();
@@ -448,7 +481,9 @@ describe("buildFleetPlan current RPC payload", () => {
 		expect(params.context).toBe("fork");
 	});
 
-	test("cutover mirror rejects legacy tasks and accepts WorkflowScript params", () => {
+	test("shared 0.45.2 fixture rejects legacy tasks and accepts WorkflowScript params", async () => {
+		expect(PI_SUBAGENTS_VERSION_PIN).toBe("0.45.2");
+
 		const legacy = {
 			tasks: [{ agent: "fleet-researcher", task: "x" }],
 			concurrency: 2,
@@ -460,15 +495,35 @@ describe("buildFleetPlan current RPC payload", () => {
 			context: "fresh",
 			async: true as const,
 		};
+		const direct = {
+			agent: "fleet-researcher",
+			task: "solo",
+		};
+		const management = {
+			action: "status",
+		};
+		const scheduleOk = {
+			action: "schedule.create",
+			workflowScript: "return [];",
+		};
 
-		const legacyResult = normalizePublicSubagentExecutionMirror(legacy);
+		const legacyResult = normalizePublicSubagentExecutionFixture(legacy);
 		expect(legacyResult.ok).toBe(false);
 		if (!legacyResult.ok) {
 			expect(legacyResult.error).toBe(PUBLIC_CUTOVER_MESSAGE);
 		}
 
-		const currentResult = normalizePublicSubagentExecutionMirror(current);
+		const currentResult = normalizePublicSubagentExecutionFixture(current);
 		expect(currentResult.ok).toBe(true);
+
+		const directResult = normalizePublicSubagentExecutionFixture(direct);
+		expect(directResult.ok).toBe(false);
+
+		const managementResult = normalizePublicSubagentExecutionFixture(management);
+		expect(managementResult.ok).toBe(true);
+
+		const scheduleResult = normalizePublicSubagentExecutionFixture(scheduleOk);
+		expect(scheduleResult.ok).toBe(true);
 
 		const plan = buildFleetPlan({
 			kind: "research",
@@ -476,8 +531,22 @@ describe("buildFleetPlan current RPC payload", () => {
 			count: 3,
 			concurrency: 2,
 		});
-		const production = normalizePublicSubagentExecutionMirror(asPublicParams(plan));
+		const production = normalizePublicSubagentExecutionFixture(asPublicParams(plan));
 		expect(production.ok).toBe(true);
+
+		// Optional real-validator integration when the pinned package is installed locally.
+		const real = await tryLoadRealNormalizePublicSubagentExecution();
+		if (real) {
+			const realLegacy = real(legacy);
+			expect(realLegacy.ok).toBe(false);
+			if (!realLegacy.ok) {
+				expect(realLegacy.error).toBe(PUBLIC_CUTOVER_MESSAGE);
+			}
+			expect(real(current).ok).toBe(true);
+			expect(real(asPublicParams(plan)).ok).toBe(true);
+			expect(real(direct).ok).toBe(false);
+			expect(real(management).ok).toBe(true);
+		}
 	});
 
 	test("does not launch a live fleet during contract validation", () => {
@@ -492,5 +561,181 @@ describe("buildFleetPlan current RPC payload", () => {
 		expect(typeof (globalThis as { fetch?: unknown }).fetch).not.toBe("undefined");
 		// Presence of fetch must not be used; we simply never call dispatch APIs here.
 		expect(plan.topic).toBe("no-live-dispatch");
+	});
+});
+
+describe("buildFleetPlan outputDir and persona path contract (R11)", () => {
+	test("accepts .pi/fleet-runs and safe nested relative dirs", () => {
+		for (const outputDir of [".pi/fleet-runs", ".pi/fleet-runs/nested", "artifacts/fleet"]) {
+			const plan = buildFleetPlan({
+				kind: "research",
+				topic: "safe-output-dir",
+				count: 2,
+				outputDir,
+			});
+			const normalizedRoot = outputDir.replace(/\/+$/, "");
+			for (const task of plan.tasks) {
+				expect(task.output).toBeDefined();
+				assertSafeOutputPath(String(task.output), normalizedRoot);
+			}
+		}
+	});
+
+	test("rejects empty, absolute, traversal, and NUL outputDir before spawn", () => {
+		const rejected = [
+			"",
+			"   ",
+			"/tmp/abs",
+			"/var/fleet",
+			"C:\\Windows\\Temp",
+			"C:/Windows/Temp",
+			".",
+			"..",
+			"../outside",
+			"foo/../bar",
+			"foo/../../etc",
+			"foo\\..\\bar",
+			".pi/fleet-runs/../secret",
+			".pi/fleet-runs\0evil",
+			"foo\0bar",
+		];
+
+		for (const outputDir of rejected) {
+			let threw = false;
+			try {
+				buildFleetPlan({
+					kind: "research",
+					topic: "bad-output-dir",
+					count: 1,
+					outputDir,
+				});
+			} catch {
+				threw = true;
+			}
+			expect(threw, `outputDir must be rejected before spawn: ${JSON.stringify(outputDir)}`).toBe(
+				true,
+			);
+		}
+	});
+
+	test("malicious persona ids keep identity but emit safe unique filename segments", () => {
+		const maliciousIds = [
+			"../../etc/passwd",
+			"..\\..\\windows\\system32",
+			"/absolute/look",
+			"C:\\abs\\look",
+			"seg/with/slashes",
+			"seg\\with\\backslashes",
+			"weird id 🚀 <script>|?*\"",
+			"日本語-and-punctuation!@#",
+		];
+		const outputDir = ".pi/fleet-runs";
+		const plan = buildFleetPlan({
+			kind: "custom",
+			topic: "malicious-persona-ids",
+			count: maliciousIds.length,
+			outputDir,
+			personas: maliciousIds.map((id, i) => ({
+				id,
+				label: `Mal ${i + 1}`,
+				angle: `angle-${i + 1}`,
+				agent: "fleet-researcher",
+			})),
+		});
+
+		expect(plan.tasks).toHaveLength(maliciousIds.length);
+		const outputs = plan.tasks.map((t) => t.output);
+		expect(new Set(outputs).size).toBe(maliciousIds.length);
+
+		for (let i = 0; i < maliciousIds.length; i++) {
+			const task = plan.tasks[i]!;
+			// Internal persona identity retained for display/ledger.
+			expect(task.personaId).toBe(maliciousIds[i]);
+			assertSafeOutputPath(String(task.output), outputDir);
+			// Member index participates in uniqueness even when ids collide after sanitize.
+			expect(String(task.output)).toContain(String(i + 1).padStart(2, "0"));
+		}
+	});
+});
+
+describe("buildFleetWorkflowScript batch size contract (R12)", () => {
+	test("NaN, Infinity, zero, negative, and fractional concurrency stay finite positive integers", async () => {
+		const tasks = sampleTasks(5);
+		const cases: Array<{ label: string; concurrency: number }> = [
+			{ label: "NaN", concurrency: Number.NaN },
+			{ label: "+Infinity", concurrency: Number.POSITIVE_INFINITY },
+			{ label: "-Infinity", concurrency: Number.NEGATIVE_INFINITY },
+			{ label: "0", concurrency: 0 },
+			{ label: "negative", concurrency: -3 },
+			{ label: "fractional", concurrency: 2.7 },
+		];
+
+		for (const c of cases) {
+			const script = buildFleetWorkflowScript(tasks, c.concurrency);
+			// Embedded batch size must serialize to a finite positive integer, never null/NaN.
+			const batchLine = script
+				.split("\n")
+				.find((line) => line.includes("__batchSize"));
+			expect(batchLine, `${c.label}: missing __batchSize`).toBeDefined();
+			const match = batchLine!.match(/__batchSize\s*=\s*([0-9eE+.-]+|null|undefined)/);
+			expect(match, `${c.label}: unparseable batch line ${batchLine}`).toBeTruthy();
+			const raw = match![1]!;
+			expect(raw === "null" || raw === "undefined", `${c.label}: batch serialized as ${raw}`).toBe(
+				false,
+			);
+			const batchSize = Number(raw);
+			expect(Number.isFinite(batchSize), `${c.label}: non-finite batch ${raw}`).toBe(true);
+			expect(Number.isInteger(batchSize), `${c.label}: non-integer batch ${raw}`).toBe(true);
+			expect(batchSize, `${c.label}: batch must be >= 1`).toBeGreaterThanOrEqual(1);
+
+			const { runs, batches } = createMockRuns();
+			const result = await executeWorkflowScriptBounded(script, runs, 400);
+			expect(Array.isArray(result), `${c.label}: result array`).toBe(true);
+			expect((result as MockRunResult[]).length, `${c.label}: all results`).toBe(5);
+			expect(batches.flat().length, `${c.label}: all children launched`).toBe(5);
+			for (const batch of batches) {
+				expect(batch.length, `${c.label}: empty batch`).toBeGreaterThanOrEqual(1);
+				expect(batch.length, `${c.label}: batch exceeds integer size`).toBeLessThanOrEqual(batchSize);
+			}
+		}
+	});
+});
+
+describe("buildFleetWorkflowScript partial child failures (R14)", () => {
+	test("members 2 and 4 fail but all five results and batches 2,2,1 are retained", async () => {
+		const plan = buildFleetPlan({
+			kind: "research",
+			topic: "partial-failures",
+			count: 5,
+			concurrency: 2,
+		});
+		const params = asPublicParams(plan);
+		assertNoLegacyPublicPayload(params);
+
+		const { runs, batches } = createMockRuns({ failMembers: [2, 4] });
+		const result = await executeWorkflowScript(String(params.workflowScript), runs);
+		expect(Array.isArray(result)).toBe(true);
+		const results = result as MockRunResult[];
+
+		expect(batches.map((b) => b.length)).toEqual([2, 2, 1]);
+		expect(results).toHaveLength(5);
+
+		// Order preserved; failures observable; successes still present.
+		expect(results[0]!.ok).toBe(true);
+		expect(results[0]!.success).toBe(true);
+		expect(results[1]!.ok).toBe(false);
+		expect(results[1]!.success).toBe(false);
+		expect(results[1]!.error).toBeDefined();
+		expect((results[1]!.error as { member?: number }).member).toBe(2);
+		expect(results[2]!.ok).toBe(true);
+		expect(results[3]!.ok).toBe(false);
+		expect(results[3]!.success).toBe(false);
+		expect(results[3]!.error).toBeDefined();
+		expect((results[3]!.error as { member?: number }).member).toBe(4);
+		expect(results[4]!.ok).toBe(true);
+
+		for (let i = 0; i < 5; i++) {
+			expect(results[i]!.key).toBe(batches.flat()[i]!.key);
+		}
 	});
 });

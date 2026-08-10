@@ -97,3 +97,48 @@ Feature: CMP-02 fleet_dispatch WorkflowScript compatibility
     When CMP-02 validation runs
     Then only mocked transport and fixture checks execute
     And no live research or review fleet is dispatched
+
+  Scenario: WorkflowScript fanout is blocked during one-writer phases (E13, E14, R10)
+    Given BDD phase is red, green, or refactor and a generated five-child WorkflowScript payload
+    When isMultiAgentSubagentLaunch and assertSubagentLaunchAllowed run
+    Then the launch is classified as multi-agent fanout and blocked
+    And the focused red signature is "WorkflowScript fleet fanout is still allowed during red" when production is blind
+    And an explicit fleet bypass still allows the launch
+    And a true one-child runs.run WorkflowScript remains allowed in red
+    And management actions stay non-launches
+
+  Scenario: outputDir contract rejects escape before spawn (E16, R11)
+    Given outputDir candidates including ".pi/fleet-runs" and safe nested relative dirs
+    When buildFleetPlan runs
+    Then safe relative dirs are accepted
+    And empty, absolute POSIX, absolute Windows, "."/"..", traversal segments, slash or backslash traversal, and NUL are rejected before spawn
+
+  Scenario: Malicious persona ids sanitize only the filename segment (E15, R11)
+    Given custom persona ids with separators, "..", absolute-looking forms, Unicode, and punctuation
+    When outputs are built under an accepted outputDir
+    Then internal persona identity is retained
+    And each child output is a safe single filename segment under that outputDir
+    And member index keeps output paths unique
+
+  Scenario: Direct batch size is always a finite positive integer (E17, R12)
+    Given direct buildFleetWorkflowScript callers pass NaN, +Infinity, -Infinity, 0, negative, or fractional concurrency
+    When the script executes under a bounded timeout against mock runs.all
+    Then it completes without hanging
+    And every batch size is a finite positive integer
+    And all child results are returned
+
+  Scenario: Shared 0.45.2 public-execution fixture replaces local mirrors (E18, R13)
+    Given the test-only fixture pinned to pi-subagents 0.45.2
+    When legacy and current public params are normalized
+    Then legacy tasks/concurrency fail with the exact cutover message
+    And WorkflowScript-only params succeed
+    And plan/rpc tests share that fixture instead of independent mirrors
+    And a real installed validator is used when deterministically available without installs
+
+  Scenario: Partial child failures stay visible across all batches (E19, R14)
+    Given concurrency 2 and five children where members 2 and 4 return ok false with error data
+    When the workflowScript executes against mock runs.all
+    Then batches remain 2, 2, and 1
+    And all five results are retained in persona order
+    And both failures remain observable to the parent
+    And no live fleet is dispatched

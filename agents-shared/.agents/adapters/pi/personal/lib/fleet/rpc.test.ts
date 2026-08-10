@@ -1,6 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import { buildFleetPlan } from "./plan.ts";
 import {
+	FORBIDDEN_PUBLIC_EXECUTION_KEYS,
+	normalizePublicSubagentExecutionFixture,
+	PI_SUBAGENTS_VERSION_PIN,
+	PUBLIC_CUTOVER_MESSAGE,
+	tryLoadRealNormalizePublicSubagentExecution,
+} from "./public-execution-0.45.2.fixture.ts";
+import {
 	callSubagentRpc,
 	replyChannel,
 	SUBAGENT_RPC_REQUEST,
@@ -8,68 +15,18 @@ import {
 } from "./rpc.ts";
 import { extractRunIdentity } from "./run-ledger.ts";
 
-const PUBLIC_CUTOVER_MESSAGE =
-	"Legacy top-level chain and parallel inputs were removed; use workflowScript.";
-
-const FORBIDDEN_PUBLIC_KEYS = [
-	"action",
-	"tasks",
-	"chain",
-	"parallel",
-	"concurrency",
-	"chainDir",
-	"agent",
-	"task",
-	"step",
-] as const;
-
-/** Test-local mirror of pi-subagents 0.45.2 public-execution cutover. */
-function normalizePublicSubagentExecutionMirror(
-	params: Record<string, unknown>,
-): { ok: true } | { ok: false; error: string } {
-	const hasLegacyOrchestration =
-		params.tasks !== undefined ||
-		params.chain !== undefined ||
-		params.parallel !== undefined ||
-		params.concurrency !== undefined ||
-		params.chainDir !== undefined;
-	if (hasLegacyOrchestration) {
-		return { ok: false, error: PUBLIC_CUTOVER_MESSAGE };
-	}
-	if (params.action !== undefined) {
-		return {
-			ok: false,
-			error: "workflowScript execution must omit action; only schedule.create accepts action with workflowScript.",
-		};
-	}
-	if (params.agent !== undefined || params.task !== undefined || params.step !== undefined) {
-		return {
-			ok: false,
-			error: 'Direct execution was removed. Use workflowScript: "return runs.run(\'main\', { agent, task })".',
-		};
-	}
-	if (typeof params.workflowScript !== "string" || !params.workflowScript.trim()) {
-		return {
-			ok: false,
-			error:
-				'Execution requires a non-empty workflowScript. Direct execution was removed; use workflowScript: "return runs.run(\'main\', { agent, task })".',
-		};
-	}
-	return { ok: true };
-}
-
 function assertCurrentPublicParams(params: Record<string, unknown>): void {
 	if (Object.prototype.hasOwnProperty.call(params, "tasks") || params.tasks !== undefined) {
 		throw new Error("legacy top-level tasks payload is still emitted");
 	}
-	for (const key of FORBIDDEN_PUBLIC_KEYS) {
+	for (const key of FORBIDDEN_PUBLIC_EXECUTION_KEYS) {
 		expect(params[key], `public params must omit ${key}`).toBeUndefined();
 	}
 	expect(typeof params.workflowScript).toBe("string");
 	expect(String(params.workflowScript).trim().length).toBeGreaterThan(0);
 	expect(params.async).toBe(true);
 	expect(params.context === "fresh" || params.context === "fork").toBe(true);
-	expect(normalizePublicSubagentExecutionMirror(params).ok).toBe(true);
+	expect(normalizePublicSubagentExecutionFixture(params).ok).toBe(true);
 }
 
 function createMockBus(options?: {
@@ -239,7 +196,9 @@ describe("callSubagentRpc", () => {
 		expect(bus.listenerCount(replyChannel("fleet-malformed-cmp02"))).toBe(0);
 	});
 
-	test("cutover mirror rejects legacy params and accepts WorkflowScript params", () => {
+	test("shared 0.45.2 fixture rejects legacy params and accepts WorkflowScript params", async () => {
+		expect(PI_SUBAGENTS_VERSION_PIN).toBe("0.45.2");
+
 		const legacy = {
 			tasks: [{ agent: "fleet-researcher", task: "hello" }],
 			concurrency: 2,
@@ -251,15 +210,19 @@ describe("callSubagentRpc", () => {
 			async: true,
 			context: "fork",
 		};
+		const direct = { agent: "fleet-researcher", task: "hello" };
+		const management = { action: "status" };
 
-		const legacyResult = normalizePublicSubagentExecutionMirror(legacy);
+		const legacyResult = normalizePublicSubagentExecutionFixture(legacy);
 		expect(legacyResult.ok).toBe(false);
 		if (!legacyResult.ok) {
 			expect(legacyResult.error).toBe(PUBLIC_CUTOVER_MESSAGE);
 		}
 
-		const currentResult = normalizePublicSubagentExecutionMirror(current);
+		const currentResult = normalizePublicSubagentExecutionFixture(current);
 		expect(currentResult.ok).toBe(true);
+		expect(normalizePublicSubagentExecutionFixture(direct).ok).toBe(false);
+		expect(normalizePublicSubagentExecutionFixture(management).ok).toBe(true);
 
 		// Production plan must already be on the current side of the cutover.
 		const plan = buildFleetPlan({
@@ -269,5 +232,16 @@ describe("callSubagentRpc", () => {
 			concurrency: 2,
 		});
 		assertCurrentPublicParams(plan.subagentParams as unknown as Record<string, unknown>);
+
+		const real = await tryLoadRealNormalizePublicSubagentExecution();
+		if (real) {
+			const realLegacy = real(legacy);
+			expect(realLegacy.ok).toBe(false);
+			if (!realLegacy.ok) {
+				expect(realLegacy.error).toBe(PUBLIC_CUTOVER_MESSAGE);
+			}
+			expect(real(current).ok).toBe(true);
+			expect(real(plan.subagentParams as unknown as Record<string, unknown>).ok).toBe(true);
+		}
 	});
 });
