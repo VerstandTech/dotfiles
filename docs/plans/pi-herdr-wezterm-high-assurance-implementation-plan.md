@@ -228,9 +228,9 @@ Estimates are engineering ranges for one focused writer plus an independent Test
 
 - **Objective:** prevent unrelated failures and untrusted project commands from becoming assurance evidence.
 - **Owned paths:** `agents-shared/.agents/adapters/pi/personal/lib/bdd/{run-command,config,types,quality-gates}*` and focused tests; one integrator owns any later `extensions/bdd-mode.ts` wiring.
-- **Dependencies:** GOV-01 and CON-01 schema shape; pure red-cause tests may start after GOV-01.
-- **Deliverables:** expected assertion/test-id/failure-signature matching; invalid-red reasons; assertion-level green sensitivity requirement; canonical gate result model supporting `command` and `internal` deterministic executors; strict gate config integrity and trust policy.
-- **Gate-command trust:** strict/overnight modes reject mutable untrusted `.pi/bdd.json` shell strings, use validated argv or a sandboxed approved command, sanitize inherited environment, and invalidate approval/evidence when gate config changes.
+- **Dependencies:** GOV-01 and BASE-01. BDD-01 freezes additive red/trust field semantics now; CON-01 may later wrap/version them but is not a Wave 0 prerequisite.
+- **Deliverables:** expected assertion/test-id/failure-signature matching; invalid-red reasons; assertion-level green sensitivity requirement; canonical gate result model supporting shell, argv, and `internal` deterministic executors; strict gate config integrity and trust policy.
+- **Gate-command trust:** interactive is the backwards-compatible default, but shell strings are labeled untrusted and cannot satisfy required assurance. Strict/overnight modes reject mutable `.pi/bdd.json` shell strings before spawn, use validated `shell:false` argv, sanitize inherited environment, and invalidate approval/evidence when gate config changes. SEC-01 later adds sandbox/egress controls.
 - **Acceptance:** unrelated assertion, import/setup, timeout, 126/127, or wrong test id cannot unlock green; deleting/skipping the focused assertion fails sensitivity; a malicious project gate cannot run unrestricted shell with inherited secrets.
 - **Risks:** migration of existing string commands; cross-platform argv behavior.
 - **Rollback:** keep legacy strings only in explicitly trusted interactive mode and label their evidence non-assurance.
@@ -787,6 +787,8 @@ An unchecked Gate B item blocks runtime expansion, not the Wave 0 packages that 
 Implementation must pause for these decisions:
 
 **Accepted Wave 0 ownership adjustment:** BASE-01 owns the minimal canonical v1.2 playbook metadata and bounded Test Designer baseline repair before BDD-01. ROLE-01 remains the later owner for broader role-schema/tool-policy evolution; tests may not be weakened or the canonical document downgraded.
+
+**Accepted BDD-01 Wave 0 boundary:** interactive remains the compatibility default; shell-string gate evidence is explicitly untrusted, strict/overnight reject it before spawn, trusted gates use scrubbed `shell:false` argv, and unknown internal checks fail closed. CON-01/SEC-01/FIT-01 retain later schema, sandbox/egress, and adapter ownership.
 
 1. **Workspace:** choose A/B/C and resolve the current dirty checkout. Recommended: a new integration worktree from a clean base.
 2. **Rulesync target map:** confirm which generated tools belong in this dotfiles repo and how the inherited `/Users/leonardoribeiro/AGENTS.md` relates to repo-local generated output. The authoring source must be `rulesync.jsonc` + `.rulesync/**`.
