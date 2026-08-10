@@ -89,8 +89,11 @@ Operator commands (pinned local Rulesync `16.9.1` via `node_modules/.bin/rulesyn
 bun install --frozen-lockfile   # once, after clone / lockfile change
 bun run rules:generate          # regenerate AGENTS.md
 bun run rules:check             # fail on drift (also: bash scripts/check-rulesync-drift.sh)
-bun test                        # root assurance: contracts + AI resources + Pi tests
+bun run test                    # root assurance: contracts + AI resources + Pi and personal tests
 ```
+
+Use `bun run test` or `bash scripts/test-root.sh` for root assurance. Bare
+`bun test` is Bun's file test runner and does not execute the root script.
 
 GOV-01 scope is project-root `agentsmd` rules only. Vendor stow-package outputs
 (`.codex/**`, `.claude/**`, `.cursor/**`, etc.) are not generated here yet.
