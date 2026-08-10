@@ -670,13 +670,13 @@ const EXACT_INSPECTION_TOOLS = ["read", "grep", "find", "ls"] as const;
 const EXACT_INTERNAL_TOOLS = ["contact_supervisor", "intercom"] as const;
 const EXACT_REVIEWER_TOOLS = [...EXACT_INSPECTION_TOOLS, ...EXACT_INTERNAL_TOOLS] as const;
 const EXACT_RESEARCHER_TOOLS = [...EXACT_REVIEWER_TOOLS, "xai_web_search"] as const;
+/** pi-subagents 0.45.2 rejects permissions.bash — deny only supported mutation keys. */
 const PERMISSION_DENY_TOOLS = [
 	"write",
 	"edit",
 	"apply_patch",
 	"subagent",
 	"notebook_edit",
-	"bash",
 ] as const;
 
 function sortedCopy(values: readonly string[]): string[] {
@@ -1104,7 +1104,9 @@ describe("SEC-00 review R2/R3/R6/R7 > exact tools, extensions, and permission de
 				expect(subOnly, `${name} subagentOnlyExtensions must be empty`).toEqual([]);
 			}
 
-			// Permission denies asserted even when forbidden tools are absent from tools:
+			// Permission denies asserted even when forbidden tools are absent from tools.
+			// bash must stay absent from tools AND absent from permissions (0.45.2 rejects permissions.bash);
+			// runtime child-policy remains the bash defense-in-depth layer.
 			const denies = parsePermissionDenies(fm);
 			for (const tool of PERMISSION_DENY_TOOLS) {
 				expect(
@@ -1112,6 +1114,15 @@ describe("SEC-00 review R2/R3/R6/R7 > exact tools, extensions, and permission de
 					`${name} permissions must deny ${tool} even when tools omit it`,
 				).toContain(tool);
 			}
+			expect(tools, `${name} must not declare bash in tools`).not.toContain("bash");
+			expect(
+				denies,
+				`${name} must not declare permissions.bash (pi-subagents 0.45.2 rejects it)`,
+			).not.toContain("bash");
+			expect(
+				fm,
+				`${name} frontmatter must not include bash: deny under permissions`,
+			).not.toMatch(/permissions:[\s\S]*\bbash\s*:\s*deny/i);
 
 			// Contract helper accepts the live definition.
 			expect(() =>

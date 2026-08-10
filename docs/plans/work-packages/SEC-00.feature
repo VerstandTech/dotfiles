@@ -141,7 +141,9 @@ Feature: SEC-00 minimum fleet containment
     When tools, extensions, and permissions are inspected
     Then each role has an exact tool allowlist with no ambient or mutation extras
     And researcher loads exactly policy plus xAI; reviewer and UX load exactly policy
-    And permissions deny write, edit, apply_patch, subagent, notebook_edit, and bash even when those tools are absent
+    And permissions deny write, edit, apply_patch, subagent, and notebook_edit even when those tools are absent
+    And bash is absent from tools and absent from permissions because pi-subagents 0.45.2 rejects permissions.bash
+    And runtime child-policy remains the bash defense-in-depth layer
     And extra tools or extensions fail assertCanonicalFleetAgentContract
     And the focused failure id is "SEC-00 review R2/R3/R6/R7 > exact tools, extensions, and permission denies"
 
