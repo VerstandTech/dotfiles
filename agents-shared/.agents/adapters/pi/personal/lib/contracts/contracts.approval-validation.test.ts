@@ -62,24 +62,12 @@ describe("CON-01 approval envelopes", () => {
 		});
 		expectRejected(parseDec(emptyProv), "E19 empty provenance", /human|provenance|actor|method/i);
 
-		// Rejected decisions may omit provenance
-		expectAccepted(
-			parseDec(
-				minimalApprovalDecision({
-					decision: "rejected",
-					humanProvenance: undefined,
-				}),
-			),
-			"rejected without provenance ok if parser strips undefined — or with explicit omit",
-		);
-
+		// Rejected decisions may omit provenance (must not look approved).
 		const rejectedOmit = minimalApprovalDecision({ decision: "rejected" });
 		delete rejectedOmit.humanProvenance;
 		const rejectedResult = parseDec(rejectedOmit);
-		// Either accepted without provenance, or requires a reason field — but must not look approved
-		if (rejectedResult.ok) {
-			expect((rejectedResult.value as { decision: string }).decision).toBe("rejected");
-		}
+		expectAccepted(rejectedResult, "rejected without provenance");
+		expect((rejectedResult.value as { decision: string }).decision).toBe("rejected");
 
 		const req = minimalApprovalRequest();
 		expectRejected(
@@ -209,17 +197,6 @@ describe("CON-01 ValidationContractV1 and BDD bridge", () => {
 		expectRejected(parse(noCmd), "E22 missing focused command", /command|focused|required/i);
 
 		// identity mode may omit signature
-		expectAccepted(
-			parse(
-				minimalValidationContract({
-					matchMode: "identity",
-					expectedFailureSignature: undefined,
-				}),
-			),
-			"identity mode without signature",
-		);
-
-		// identity with explicit delete
 		const identity = minimalValidationContract({ matchMode: "identity" });
 		delete identity.expectedFailureSignature;
 		expectAccepted(parse(identity), "identity mode omit signature");

@@ -69,7 +69,9 @@ describe("CON-01 P0", () => {
 			{ ...minimalRoleRequest(), schemaVersion: 0 },
 			{ ...minimalRoleRequest(), schemaVersion: 2 },
 			{ ...minimalRoleRequest(), schemaVersion: "1" },
-			{ ...minimalRoleRequest(), schemaVersion: 1.0 },
+			// 1.0 as Number is === 1 in JS; lock non-integer / boxed impostors instead.
+			{ ...minimalRoleRequest(), schemaVersion: 1.5 },
+			{ ...minimalRoleRequest(), schemaVersion: Number(1) && 1.0001 },
 			{ ...minimalRoleRequest(), schemaVersion: true },
 			{ ...minimalRoleRequest(), schemaVersion: null },
 			(() => {
