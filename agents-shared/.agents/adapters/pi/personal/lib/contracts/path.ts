@@ -1,13 +1,18 @@
 /**
  * CON-01 safe repository-relative path policy (structural only).
  * Filesystem realpath / symlink authority remains SEC-00 / ISO-01.
+ *
+ * Concrete refs (artifacts/owned/changed/evidence/scoped) use isSafeRepoRelativePath
+ * and reject every glob. ValidationContract.forbiddenProductionPathsBeforeRed uses
+ * isSafeValidationGlobPath (exactly one non-bare trailing double-star segment only).
  */
 
 import { CONTRACT_LIMITS_V1 } from "./limits.ts";
 
-/** Basenames structurally denied as credential/secret-shaped references. */
+/** Exact secret-shaped basenames denied as credential leaves. */
 const SECRET_BASENAME_EXACT = new Set([
 	".env",
+	".envrc",
 	".env.local",
 	".env.development",
 	".env.production",
@@ -26,8 +31,44 @@ const SECRET_BASENAME_EXACT = new Set([
 	"secret.key",
 ]);
 
-const SECRET_BASENAME_RE =
-	/^(?:.*\.)?(?:pem|key|p12|pfx|jks)$|^(?:id_rsa|id_dsa|id_ecdsa|id_ed25519)(?:\..+)?$|^\.env(\..+)?$|^(?:credentials|secrets?|auth|service-account)(?:\.[a-z0-9]+)?$/i;
+/**
+ * Secret leaf policy:
+ * - deny exact credential basenames
+ * - deny .env / .env.* / .envrc leaves
+ * - deny credential-stem leaves with extra extensions (auth.json.bak, credentials.json.enc, private.pem.bak)
+ * - deny private key basenames and id_* key leaves with extra suffixes
+ * - do NOT deny directory segments named auth/secrets or source files like auth.ts / auth-model.md
+ */
+function isSecretLeafBasename(name: string): boolean {
+	if (!name) return false;
+	if (SECRET_BASENAME_EXACT.has(name)) return true;
+
+	// .env family including .envrc and .env.<anything>
+	if (name === ".envrc" || name === ".env" || name.startsWith(".env.")) return true;
+
+	// id_* private key leaves (+ optional suffix)
+	if (/^id_(?:rsa|dsa|ecdsa|ed25519)(?:\..+)?$/i.test(name)) return true;
+
+	// private/secret key material leaves (+ optional extra extensions)
+	if (/^(?:private|secret)\.(?:pem|key)(?:\..+)?$/i.test(name)) return true;
+	if (/\.(?:pem|key|p12|pfx|jks)(?:\..+)?$/i.test(name) && /(?:private|secret|id_)/i.test(name)) {
+		return true;
+	}
+
+	// Credential-stem leaves with any extension chain:
+	// auth.json, auth.json.bak, credentials.json.enc, service-account.json, secrets.json
+	// But NOT auth.ts, auth-model.md, readme.md under secrets/.
+	if (
+		/^(?:auth|credentials|secrets?|service-account)(?:\.[a-z0-9]+){2,}$/i.test(name) ||
+		/^(?:auth|credentials|secrets?|service-account)\.(?:json|ya?ml|toml|ini|conf|cfg|env|pem|key|p12|pfx|jks)(?:\..+)?$/i.test(
+			name,
+		)
+	) {
+		return true;
+	}
+
+	return false;
+}
 
 function hasControlOrNul(s: string): boolean {
 	for (let i = 0; i < s.length; i++) {
@@ -42,19 +83,11 @@ function basenameOf(path: string): string {
 	return parts[parts.length - 1] ?? path;
 }
 
-function isSecretBasename(name: string): boolean {
-	if (!name) return false;
-	if (SECRET_BASENAME_EXACT.has(name)) return true;
-	if (SECRET_BASENAME_RE.test(name)) return true;
-	// Nested secret-shaped leaf e.g. secrets/private.pem
-	return false;
-}
-
 /**
- * Structural path policy for authoritative artifact/owned/changed refs.
- * Allows a single trailing `/**` glob segment used by ValidationContract forbidden paths.
+ * Shared structural checks for repo-relative paths (no glob handling).
+ * Returns false if fundamentally unsafe; does not inspect secret leaves or globs.
  */
-export function isSafeRepoRelativePath(path: unknown): boolean {
+function baseRepoRelativeOk(path: unknown): path is string {
 	if (typeof path !== "string") return false;
 	if (path.length === 0) return false;
 	if (path.length > CONTRACT_LIMITS_V1.maxPathLength) return false;
@@ -94,29 +127,60 @@ export function isSafeRepoRelativePath(path: unknown): boolean {
 	// Empty segments (leading/trailing/duplicate slashes) — reject
 	if (segments.some((s) => s.length === 0)) return false;
 
-	let sawGlobStar = false;
-	for (let i = 0; i < segments.length; i++) {
-		const seg = segments[i]!;
+	for (const seg of segments) {
 		if (seg === "." || seg === "..") return false;
-		if (seg === "**") {
-			// Only allow a single trailing `**` for forbidden-path globs
-			if (i !== segments.length - 1) return false;
-			if (sawGlobStar) return false;
-			sawGlobStar = true;
-			continue;
-		}
-		// No glob wildcards elsewhere
-		if (seg.includes("*") || seg.includes("?") || seg.includes("[")) return false;
 	}
 
+	return true;
+}
+
+function hasAnyGlobMeta(path: string): boolean {
+	return path.includes("*") || path.includes("?") || path.includes("[");
+}
+
+/**
+ * Structural path policy for authoritative artifact/owned/changed/evidence/scoped refs.
+ * Glob-free: rejects every `*`, `?`, `[`, and `**`.
+ * Secret policy applies to the leaf basename only (directories like auth/secrets are allowed).
+ */
+export function isSafeRepoRelativePath(path: unknown): boolean {
+	if (!baseRepoRelativeOk(path)) return false;
+	if (hasAnyGlobMeta(path)) return false;
+
 	const base = basenameOf(path);
-	// When path ends with /**, check the parent basename for secrets is N/A;
-	// still deny secret basenames on concrete leaves.
-	if (base !== "**" && isSecretBasename(base)) return false;
-	// Also deny if any path segment is a secret basename (e.g. secrets/private.pem handled by base)
-	for (const seg of segments) {
-		if (seg !== "**" && isSecretBasename(seg)) return false;
+	if (isSecretLeafBasename(base)) return false;
+
+	return true;
+}
+
+/**
+ * Validation-only glob path for ValidationContractV1.forbiddenProductionPathsBeforeRed.
+ * Allows exactly one non-bare trailing double-star segment (e.g. docs/**, not bare **).
+ * Still enforces structural safety and secret leaf denial on the concrete prefix leaf.
+ */
+export function isSafeValidationGlobPath(path: unknown): boolean {
+	if (!baseRepoRelativeOk(path)) return false;
+
+	const segments = path.split("/");
+
+	// Exactly one trailing `**`, and it must not be the only segment (non-bare).
+	if (segments.length < 2) return false;
+	if (segments[segments.length - 1] !== "**") return false;
+
+	// Prefix segments: no glob meta at all.
+	for (let i = 0; i < segments.length - 1; i++) {
+		const seg = segments[i]!;
+		if (seg.includes("*") || seg.includes("?") || seg.includes("[")) return false;
+		if (seg === "**") return false;
 	}
+
+	// No extra `**` or other glob forms after the trailing rule.
+	// (Already enforced: only last segment is ** and prefix has no *.)
+
+	// Secret leaf on the last concrete segment of the prefix (e.g. secrets/ + ** is ok as a dir;
+	// .env/ + ** or auth.json/ + ** would be secret-shaped leaves used as dirs — still deny).
+	const leaf = segments[segments.length - 2]!;
+	if (isSecretLeafBasename(leaf)) return false;
 
 	return true;
 }

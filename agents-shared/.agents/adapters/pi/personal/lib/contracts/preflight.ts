@@ -19,7 +19,7 @@ export type PreflightOk = {
 	depth: number;
 };
 
-function issue(code: string, path: string, message: string): ContractIssue {
+function issue(code: ContractIssue["code"], path: string, message: string): ContractIssue {
 	return { code, path, message };
 }
 
@@ -50,6 +50,10 @@ function err(issues: ContractIssue[]): ParseErr {
 /**
  * Walk untrusted input without invoking accessors.
  * Returns a plain data clone or a bounded issue list.
+ *
+ * maxObjectKeys is enforced on each plain object *before* cloning/walking values.
+ * Reflection failures (ownKeys / getOwnPropertyDescriptor / getPrototypeOf) become
+ * validation issues rather than escaping throws.
  */
 export function preflightUntrustedGraph(input: unknown): ParseResult<unknown> & { depth?: number } {
 	const seen = new WeakSet<object>();
@@ -70,6 +74,55 @@ export function preflightUntrustedGraph(input: unknown): ParseResult<unknown> & 
 			}
 		}
 	};
+
+	function safeOwnNames(obj: object, path: string): string[] | null {
+		try {
+			return Object.getOwnPropertyNames(obj);
+		} catch {
+			push(
+				issue(
+					"unsafe_reflect",
+					path,
+					"ownKeys / property name enumeration failed (proxy or host trap)",
+				),
+			);
+			return null;
+		}
+	}
+
+	function safeDescriptor(
+		obj: object,
+		key: PropertyKey,
+		path: string,
+	): PropertyDescriptor | null | undefined {
+		try {
+			return Object.getOwnPropertyDescriptor(obj, key);
+		} catch {
+			push(
+				issue(
+					"unsafe_reflect",
+					path,
+					"getOwnPropertyDescriptor failed (proxy or host trap)",
+				),
+			);
+			return null;
+		}
+	}
+
+	function safeProto(obj: object, path: string): object | null | undefined {
+		try {
+			return Object.getPrototypeOf(obj);
+		} catch {
+			push(
+				issue(
+					"unsafe_reflect",
+					path,
+					"getPrototypeOf failed (proxy or host trap)",
+				),
+			);
+			return undefined;
+		}
+	}
 
 	function walk(node: unknown, path: string, depth: number): unknown {
 		if (issues.length >= CONTRACT_LIMITS_V1.maxIssues) return null;
@@ -140,11 +193,25 @@ export function preflightUntrustedGraph(input: unknown): ParseResult<unknown> & 
 			}
 			const out: unknown[] = [];
 			for (let i = 0; i < len; i++) {
-				if (!Object.prototype.hasOwnProperty.call(obj, i)) {
+				let hasIdx: boolean;
+				try {
+					hasIdx = Object.prototype.hasOwnProperty.call(obj, i);
+				} catch {
+					push(
+						issue(
+							"unsafe_reflect",
+							`${path}[${i}]`,
+							"hasOwnProperty failed (proxy or host trap)",
+						),
+					);
+					return null;
+				}
+				if (!hasIdx) {
 					push(issue("unsafe_sparse", `${path}[${i}]`, "sparse array hole rejected"));
 					return null;
 				}
-				const desc = Object.getOwnPropertyDescriptor(obj, i);
+				const desc = safeDescriptor(obj, i, `${path}[${i}]`);
+				if (desc === null) return null; // reflection failed
 				if (!desc || "get" in desc || "set" in desc) {
 					// Accessor on array index — do not invoke
 					if (desc && ("get" in desc || "set" in desc)) {
@@ -161,14 +228,32 @@ export function preflightUntrustedGraph(input: unknown): ParseResult<unknown> & 
 		}
 
 		// Plain object only — reject custom prototypes
-		const proto = Object.getPrototypeOf(obj);
+		const proto = safeProto(obj, path);
+		if (proto === undefined) return null; // reflection failed
 		if (proto !== Object.prototype && proto !== null) {
 			push(issue("unsafe_prototype", path, "non-plain object / custom class rejected"));
 			return null;
 		}
 
-		// Enumerate own keys without invoking getters
-		const names = Object.getOwnPropertyNames(obj);
+		// Enumerate own keys without invoking getters — catch proxy ownKeys throws.
+		const names = safeOwnNames(obj, path);
+		if (names === null) return null;
+
+		// maxObjectKeys BEFORE cloning or walking property values.
+		// Count enumerable data string keys that would be cloned (JSON-shaped).
+		// We count all own string names first (dangerous keys counted too — still a key).
+		// Review oracle builds plain objects with maxObjectKeys data keys — match that.
+		if (names.length > CONTRACT_LIMITS_V1.maxObjectKeys) {
+			push(
+				issue(
+					"bound_exceeded",
+					path,
+					`object keys ${names.length} exceed maxObjectKeys ${CONTRACT_LIMITS_V1.maxObjectKeys}`,
+				),
+			);
+			return null;
+		}
+
 		const out: Record<string, unknown> = {};
 		for (const key of names) {
 			if (DANGEROUS_KEYS.has(key)) {
@@ -181,13 +266,15 @@ export function preflightUntrustedGraph(input: unknown): ParseResult<unknown> & 
 				);
 				return null;
 			}
-			const desc = Object.getOwnPropertyDescriptor(obj, key);
+			const childPath = path === "$" ? key : `${path}.${key}`;
+			const desc = safeDescriptor(obj, key, childPath);
+			if (desc === null) return null;
 			if (!desc) continue;
 			if (typeof desc.get === "function" || typeof desc.set === "function") {
 				push(
 					issue(
 						"unsafe_accessor",
-						path === "$" ? key : `${path}.${key}`,
+						childPath,
 						"accessor property rejected without invocation",
 					),
 				);
@@ -197,7 +284,7 @@ export function preflightUntrustedGraph(input: unknown): ParseResult<unknown> & 
 				push(
 					issue(
 						"unsafe_accessor",
-						path === "$" ? key : `${path}.${key}`,
+						childPath,
 						"non-data property rejected",
 					),
 				);
@@ -205,15 +292,21 @@ export function preflightUntrustedGraph(input: unknown): ParseResult<unknown> & 
 			}
 			// Skip non-enumerable (symbol keys already excluded via getOwnPropertyNames only for strings)
 			if (!desc.enumerable) continue;
-			const childPath = path === "$" ? key : `${path}.${key}`;
 			out[key] = walk(desc.value, childPath, depth + 1);
 			if (issues.length >= CONTRACT_LIMITS_V1.maxIssues) return null;
 		}
 
 		// Own symbol keys are not JSON — reject if any enumerable symbols present
-		const syms = Object.getOwnPropertySymbols(obj);
+		let syms: symbol[];
+		try {
+			syms = Object.getOwnPropertySymbols(obj);
+		} catch {
+			push(issue("unsafe_reflect", path, "getOwnPropertySymbols failed (proxy or host trap)"));
+			return null;
+		}
 		for (const s of syms) {
-			const desc = Object.getOwnPropertyDescriptor(obj, s);
+			const desc = safeDescriptor(obj, s, path);
+			if (desc === null) return null;
 			if (desc?.enumerable) {
 				push(issue("unsafe_type", path, "symbol key rejected"));
 				return null;
@@ -228,7 +321,19 @@ export function preflightUntrustedGraph(input: unknown): ParseResult<unknown> & 
 		return err([issue("invalid_type", "$", "undefined root rejected")]);
 	}
 
-	const cloned = walk(input, "$", 1);
+	let cloned: unknown;
+	try {
+		cloned = walk(input, "$", 1);
+	} catch {
+		// Last-resort: any unexpected throw becomes a bounded validation issue.
+		return err([
+			issue(
+				"unsafe_reflect",
+				"$",
+				"untrusted graph walk failed (proxy/ownKeys/descriptor/prototype trap)",
+			),
+		]);
+	}
 	if (issues.length > 0) return err(issues);
 	return { ok: true, value: cloned };
 }

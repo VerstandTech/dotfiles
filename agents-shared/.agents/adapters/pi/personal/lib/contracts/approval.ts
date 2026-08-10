@@ -2,8 +2,8 @@
  * CON-01 structural approval pair binding (no authority claim).
  */
 
-import { APPROVAL_AUTHORITY_NOTICE, type ParseResult } from "./limits.ts";
-import { isIsoTimestamp } from "./issues.ts";
+import { APPROVAL_AUTHORITY_NOTICE, type ContractIssue, type ParseResult } from "./limits.ts";
+import { parseStrictRfc3339ZMs } from "./issues.ts";
 import { parseApprovalDecisionV1, parseApprovalRequestV1 } from "./validate.ts";
 
 function pathsEqual(a: unknown, b: unknown): boolean {
@@ -18,6 +18,8 @@ function pathsEqual(a: unknown, b: unknown): boolean {
 /**
  * Structural request/decision binding + expiry check.
  * Does NOT grant authority — APR-01 owns machine-local non-forgeable approval.
+ *
+ * Pair time order: requestedAt <= decidedAt < expiresAt (strict Z RFC3339).
  */
 export function checkApprovalPairV1(
 	request: unknown,
@@ -28,9 +30,9 @@ export function checkApprovalPairV1(
 	const decR = parseApprovalDecisionV1(decision);
 	if (!decR.ok) return decR;
 
-	const req = reqR.value as Record<string, unknown>;
-	const dec = decR.value as Record<string, unknown>;
-	const issues: Array<{ code: string; path: string; message: string }> = [];
+	const req = reqR.value;
+	const dec = decR.value;
+	const issues: ContractIssue[] = [];
 
 	const bind = (field: string, a: unknown, b: unknown) => {
 		if (a !== b) {
@@ -55,19 +57,29 @@ export function checkApprovalPairV1(
 		});
 	}
 
+	const requestedAt = String(req.requestedAt ?? "");
 	const expiresAt = String(req.expiresAt ?? "");
 	const decidedAt = String(dec.decidedAt ?? "");
-	if (!isIsoTimestamp(expiresAt) || !isIsoTimestamp(decidedAt)) {
+	const reqT = parseStrictRfc3339ZMs(requestedAt);
+	const expT = parseStrictRfc3339ZMs(expiresAt);
+	const decT = parseStrictRfc3339ZMs(decidedAt);
+
+	if (!Number.isFinite(reqT) || !Number.isFinite(expT) || !Number.isFinite(decT)) {
 		issues.push({
 			code: "invalid_time",
 			path: "expiresAt",
-			message: "malformed expiry or decided timestamp",
+			message: "malformed requestedAt/expiresAt/decidedAt timestamp (strict Z RFC3339)",
 		});
 	} else {
-		const exp = Date.parse(expiresAt);
-		const decT = Date.parse(decidedAt);
-		// decidedAt must be strictly before expiresAt
-		if (!(decT < exp)) {
+		// requestedAt <= decidedAt < expiresAt
+		if (!(reqT <= decT)) {
+			issues.push({
+				code: "invalid_time",
+				path: "decidedAt",
+				message: "decidedAt must be >= requestedAt",
+			});
+		}
+		if (!(decT < expT)) {
 			issues.push({
 				code: "expired",
 				path: "decidedAt",

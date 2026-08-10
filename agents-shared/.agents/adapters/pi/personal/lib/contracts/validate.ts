@@ -8,11 +8,17 @@ import {
 	CONTRACT_LIMITS_V1,
 	GREEN_RELATIONS_V1,
 	ROLE_WRITE_SCOPE_MATRIX,
+	type ApprovalDecisionV1,
+	type ApprovalRequestV1,
 	type AssuranceRoleV1,
+	type ContractEnvelopeV1,
 	type ContractKindV1,
 	type MatchModeV1,
 	type ParseResult,
+	type RoleRequestV1,
+	type RoleResultV1,
 	type RoleStatusV1,
+	type ValidationContractV1,
 	type WriteScopeV1,
 } from "./limits.ts";
 import {
@@ -26,7 +32,7 @@ import {
 	requireFiniteNumber,
 	requireString,
 } from "./issues.ts";
-import { isSafeRepoRelativePath } from "./path.ts";
+import { isSafeRepoRelativePath, isSafeValidationGlobPath } from "./path.ts";
 import { preflightUntrustedGraph } from "./preflight.ts";
 
 function checkSerializedSize(value: unknown, sink: IssueSink): void {
@@ -66,12 +72,45 @@ function requireSafePath(
 	return value;
 }
 
+/** ValidationContract forbidden paths: concrete safe path OR single trailing double-star glob. */
+function requireValidationForbiddenPath(
+	value: unknown,
+	path: string,
+	sink: IssueSink,
+): string | undefined {
+	if (typeof value !== "string") {
+		sink.add("invalid_type", path, "expected string path");
+		return undefined;
+	}
+	if (value.length > CONTRACT_LIMITS_V1.maxPathLength) {
+		sink.addBound(path, `path length ${value.length} exceeds maxPathLength`);
+		return undefined;
+	}
+	// Prefer validation glob when trailing /** is present; otherwise concrete.
+	if (value.endsWith("/**") || value.includes("*") || value.includes("?") || value.includes("[")) {
+		if (!isSafeValidationGlobPath(value)) {
+			sink.add(
+				"unsafe_path",
+				path,
+				`unsafe validation glob path (exact non-bare trailing /** only): ${JSON.stringify(value)}`,
+			);
+			return undefined;
+		}
+		return value;
+	}
+	if (!isSafeRepoRelativePath(value)) {
+		sink.add("unsafe_path", path, `unsafe repository-relative path: ${JSON.stringify(value)}`);
+		return undefined;
+	}
+	return value;
+}
+
 function requireStringArray(
 	obj: Record<string, unknown>,
 	key: string,
 	path: string,
 	sink: IssueSink,
-	opts?: { safePaths?: boolean; maxItem?: number },
+	opts?: { safePaths?: boolean; validationGlobs?: boolean; maxItem?: number },
 ): string[] | undefined {
 	const p = path ? `${path}.${key}` : key;
 	if (!(key in obj)) {
@@ -100,7 +139,10 @@ function requireStringArray(
 			sink.addBound(ep, `string length ${el.length} exceeds max ${maxItem}`);
 			continue;
 		}
-		if (opts?.safePaths) {
+		if (opts?.validationGlobs) {
+			const sp = requireValidationForbiddenPath(el, ep, sink);
+			if (sp !== undefined) out.push(sp);
+		} else if (opts?.safePaths) {
 			const sp = requireSafePath(el, ep, sink);
 			if (sp !== undefined) out.push(sp);
 		} else {
@@ -754,7 +796,7 @@ function parseValidationContract(
 		"forbiddenProductionPathsBeforeRed",
 		"",
 		sink,
-		{ safePaths: true },
+		{ validationGlobs: true },
 	);
 
 	if (sink.issues.length > 0) return undefined;
@@ -812,7 +854,7 @@ function parseByKind(obj: Record<string, unknown>, sink: IssueSink): unknown {
 /**
  * Full untrusted → validated V1 parse path.
  */
-export function parseContractV1(input: unknown): ParseResult<unknown> {
+export function parseContractV1(input: unknown): ParseResult<ContractEnvelopeV1> {
 	const sink = new IssueSink();
 
 	// Fast root rejects
@@ -825,7 +867,7 @@ export function parseContractV1(input: unknown): ParseResult<unknown> {
 		return sink.err();
 	}
 
-	// Preflight: no getters, cycles, dangerous keys, etc.
+	// Preflight: no getters, cycles, dangerous keys, maxObjectKeys, etc.
 	const pre = preflightUntrustedGraph(input);
 	if (!pre.ok) return pre;
 
@@ -841,70 +883,70 @@ export function parseContractV1(input: unknown): ParseResult<unknown> {
 
 	const value = parseByKind(plain, sink);
 	if (sink.issues.length > 0 || value === undefined) return sink.err();
-	return sink.ok(value);
+	return sink.ok(value as ContractEnvelopeV1);
 }
 
-export function parseRoleRequestV1(input: unknown): ParseResult<unknown> {
+export function parseRoleRequestV1(input: unknown): ParseResult<RoleRequestV1> {
 	const r = parseContractV1(input);
 	if (!r.ok) return r;
-	const v = r.value as Record<string, unknown>;
+	const v = r.value;
 	if (v.kind !== "role-request") {
 		return {
 			ok: false,
 			issues: [{ code: "unknown_kind", path: "kind", message: "expected role-request" }],
 		};
 	}
-	return r;
+	return { ok: true, value: v };
 }
 
-export function parseRoleResultV1(input: unknown): ParseResult<unknown> {
+export function parseRoleResultV1(input: unknown): ParseResult<RoleResultV1> {
 	const r = parseContractV1(input);
 	if (!r.ok) return r;
-	const v = r.value as Record<string, unknown>;
+	const v = r.value;
 	if (v.kind !== "role-result") {
 		return {
 			ok: false,
 			issues: [{ code: "unknown_kind", path: "kind", message: "expected role-result" }],
 		};
 	}
-	return r;
+	return { ok: true, value: v };
 }
 
-export function parseApprovalRequestV1(input: unknown): ParseResult<unknown> {
+export function parseApprovalRequestV1(input: unknown): ParseResult<ApprovalRequestV1> {
 	const r = parseContractV1(input);
 	if (!r.ok) return r;
-	const v = r.value as Record<string, unknown>;
+	const v = r.value;
 	if (v.kind !== "approval-request") {
 		return {
 			ok: false,
 			issues: [{ code: "unknown_kind", path: "kind", message: "expected approval-request" }],
 		};
 	}
-	return r;
+	return { ok: true, value: v };
 }
 
-export function parseApprovalDecisionV1(input: unknown): ParseResult<unknown> {
+export function parseApprovalDecisionV1(input: unknown): ParseResult<ApprovalDecisionV1> {
 	const r = parseContractV1(input);
 	if (!r.ok) return r;
-	const v = r.value as Record<string, unknown>;
+	const v = r.value;
 	if (v.kind !== "approval-decision") {
 		return {
 			ok: false,
 			issues: [{ code: "unknown_kind", path: "kind", message: "expected approval-decision" }],
 		};
 	}
-	return r;
+	return { ok: true, value: v };
 }
 
-export function parseValidationContractV1(input: unknown): ParseResult<unknown> {
+export function parseValidationContractV1(input: unknown): ParseResult<ValidationContractV1> {
 	const r = parseContractV1(input);
 	if (!r.ok) return r;
-	const v = r.value as Record<string, unknown>;
+	const v = r.value;
 	if (v.kind !== "validation-contract") {
 		return {
 			ok: false,
 			issues: [{ code: "unknown_kind", path: "kind", message: "expected validation-contract" }],
 		};
 	}
-	return r;
+	return { ok: true, value: v };
 }

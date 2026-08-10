@@ -17,15 +17,30 @@ export {
 	GREEN_RELATIONS_V1,
 	ROLE_WRITE_SCOPE_MATRIX,
 	SCHEMA_VERSION_V1,
+	type ApprovalDecisionV1,
+	type ApprovalRequestV1,
+	type ArtifactRefV1,
 	type AssuranceRoleV1,
+	type BudgetV1,
+	type CommandClaimV1,
+	type ContractEnvelopeV1,
 	type ContractIssue,
+	type ContractIssueCode,
 	type ContractKindV1,
 	type ContractLimitsV1,
+	type CoveringGreenV1,
+	type HumanProvenanceV1,
 	type MatchModeV1,
 	type ParseErr,
 	type ParseOk,
 	type ParseResult,
+	type RedCauseV1,
+	type RoleRequestV1,
+	type RoleResultV1,
 	type RoleStatusV1,
+	type SensitivityV1,
+	type UsageV1,
+	type ValidationContractV1,
 	type WriteScopeV1,
 } from "./limits.ts";
 
@@ -34,6 +49,7 @@ export { CONTRACT_DESCRIPTORS_V1 } from "./descriptors.ts";
 export {
 	assertSafeRepoRelativePath,
 	isSafeRepoRelativePath,
+	isSafeValidationGlobPath,
 } from "./path.ts";
 
 export {
@@ -58,3 +74,5 @@ export { checkApprovalPairV1 } from "./approval.ts";
 export { toExpectedRedContract, type ExpectedRedBridge } from "./bridge.ts";
 
 export { parseLegacyMarkdownHandoff, type LegacyMarkdownHandoff } from "./legacy.ts";
+
+export { preflightUntrustedGraph } from "./preflight.ts";
