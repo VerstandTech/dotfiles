@@ -5,8 +5,8 @@ Feature: CMP-02 fleet_dispatch WorkflowScript compatibility
   contract-only; live research/review fleets stay disabled until SEC-00.
 
   Background:
-    Given the focused command is "cd agents-shared/.agents/adapters/pi/personal && bun test lib/fleet/plan.test.ts lib/fleet/rpc.test.ts"
-    And production paths "lib/fleet/plan.ts", "lib/fleet/rpc.ts", and "extensions/agentic-fleet.ts" stay untouched during red
+    Given the focused command is "cd agents-shared/.agents/adapters/pi/personal && bun test lib/bdd/fleet-gate.test.ts lib/fleet/plan.test.ts lib/fleet/rpc.test.ts"
+    And production paths "lib/bdd/fleet-gate.ts", "lib/fleet/plan.ts", "lib/fleet/rpc.ts", and "extensions/agentic-fleet.ts" stay untouched during red
     And pi-subagents 0.45.2 rejects top-level tasks, chain, parallel, concurrency, chainDir, action, and direct agent/task/step for execution
 
   Scenario: Legacy top-level tasks payload is the causal red (E1)
@@ -78,13 +78,13 @@ Feature: CMP-02 fleet_dispatch WorkflowScript compatibility
     And no run id is claimed
     And the reply listener is removed
 
-  Scenario: Cutover mirror rejects legacy and accepts WorkflowScript (E1, sensitivity)
-    Given a test-local mirror of the pi-subagents 0.45.2 public cutover message
+  Scenario: Pinned public-execution fixture rejects legacy and accepts WorkflowScript (E1, sensitivity)
+    Given a shared test-only public-execution fixture pinned to pi-subagents 0.45.2
     When legacy tasks and concurrency params are normalized
     Then normalization fails with "Legacy top-level chain and parallel inputs were removed; use workflowScript."
     When current WorkflowScript-only params are normalized
     Then normalization succeeds
-    And the production plan public payload must also pass the mirror
+    And the production plan public payload must also pass the shared fixture
 
   Scenario: Run-ledger fixtures accept the new public payload (E11, R8)
     Given a plan fixture whose subagentParams use workflowScript
