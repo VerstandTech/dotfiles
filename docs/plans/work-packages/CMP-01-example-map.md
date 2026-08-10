@@ -63,6 +63,10 @@ The matrix records exact tested versions and a support policy. Dependency/settin
 | E10 | stale docs say 0.7.5 is current | compatibility regression runs | it fails until wording is marked legacy/current correctly |
 | E11 | installed skill body matches Herdr 0.8 | vendored skill is reconciled | local `--kind pi` adaptation remains and footer records 0.8.0 |
 | E12 | future version is proposed | package policy is applied | fixtures/tests must change before support claim changes |
+| E13 | `pi: current` appears beside `omp: not installed` | Pi integration status is interpreted | Pi is installed; sibling absence cannot poison the Pi line |
+| E14 | integration status has no `pi:` line | status is interpreted | result is absent/unclear and never borrows another integration’s state |
+| E15 | version is 0.7.x, 0.9.x, malformed, or missing | compatibility check runs with protocol 19/schema 1 | wrong version is incompatible; missing/malformed version is unknown; no false compatible result |
+| E16 | installed Herdr 0.8 skill is captured | vendored skill provenance runs | normalized body hash matches the official capture after only the documented `--kind pi` adaptation/footer |
 
 ## Questions and disposition
 
@@ -71,12 +75,17 @@ The matrix records exact tested versions and a support policy. Dependency/settin
 3. **Install the missing Pi integration now?** No. HOST-01 owns idempotent install/status behavior.
 4. **Pin user-global Pi extension packages here?** No. Record observed versions; package/settings mutation waits for its owning package and user-owned settings reconciliation.
 5. **Use live session ids in fixtures?** No. Normalize every identifier/path while retaining schema shape.
+6. **How is the 0.8 skill footer proven rather than merely rebadged?** Capture the installed `herdr --skill` normalized SHA-256 plus provenance metadata; test the vendored body against it while allowing only the documented `codex`→`pi` example adaptation and local footer.
+
+## Adversarial review disposition
+
+A fresh Grok 4.5 review found two false-compatible/false-status gaps after the first green: non-0.8 versions were ignored, and a sibling integration’s `not installed` line could override `pi: current`. Both are accepted blockers and require new causal regression tests. Footer-only skill provenance is resolved by E16 evidence, not by another unverified version string.
 
 ## ValidationContractV1
 
 - **Focused red/green command:** `cd /Users/leonardoribeiro/worktrees/dotfiles-pi-herdr-high-assurance/pi && bun test tests/herd-compat.test.ts`
-- **Expected red test id:** `Herdr compatibility matrix > declares the current compatibility contract`
-- **Expected red signature:** `Herdr 0.8 compatibility contract is missing`
+- **Initial expected red:** `Herdr compatibility matrix > declares the current compatibility contract` with `Herdr 0.8 compatibility contract is missing`
+- **Review-remediation red:** `Pi integration status isolation > E13` and `Herdr runtime version policy > E15` must expose the false-absent/false-compatible results before repair.
 - **Additional intended red:** task launch lacks explicit `--no-focus`
 - **Forbidden production paths before red SHA:** `pi/.pi/agent/personal/extensions/herd/herd-compat.ts`, `herd-task.ts`, `pi/docs/pi-herdr-*`, personal `skills/herdr/SKILL.md`
 - **Covering green:** exact focused command passes; full `cd pi && bun test` is broader regression
