@@ -182,8 +182,14 @@ describe("CON-01 envelopes", () => {
 			{ label: "string", value: "nope" },
 			{ label: "array", value: [] },
 			{ label: "number", value: 1 },
-			{ label: "schemaVersion 0 full", value: minimalRoleRequest({ schemaVersion: 0 }) },
-			{ label: "unknown kind full", value: minimalRoleRequest({ kind: "nope" }) },
+			{
+				label: "schemaVersion 0 full",
+				value: minimalRoleRequest("test-designer", { schemaVersion: 0 }),
+			},
+			{
+				label: "unknown kind full",
+				value: minimalRoleRequest("test-designer", { kind: "nope" }),
+			},
 			{
 				label: "missing required",
 				value: (() => {

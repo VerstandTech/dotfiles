@@ -301,9 +301,18 @@ export const APPROVAL_DECIDED_AT_VALID = "2099-01-01T13:00:00.000Z";
 export const APPROVAL_DECIDED_AT_AFTER_EXPIRY = "2099-01-01T19:00:00.000Z";
 
 export function minimalRoleRequest(
-	role: AssuranceRoleV1 = "test-designer",
+	roleOrOverrides: AssuranceRoleV1 | Record<string, unknown> = "test-designer",
 	overrides: Record<string, unknown> = {},
 ): Record<string, unknown> {
+	// Prefer minimalRoleRequest(role, overrides). If a plain object is passed as the
+	// first argument, treat it as overrides-only (avoids TypeError on matrix lookup).
+	let role: AssuranceRoleV1 = "test-designer";
+	let ov = overrides;
+	if (typeof roleOrOverrides === "string") {
+		role = roleOrOverrides;
+	} else if (roleOrOverrides && typeof roleOrOverrides === "object") {
+		ov = roleOrOverrides;
+	}
 	const matrix = ROLE_WRITE_SCOPE_MATRIX[role];
 	return {
 		schemaVersion: 1,
@@ -325,7 +334,7 @@ export function minimalRoleRequest(
 				mediaType: "text/plain",
 			},
 		],
-		...overrides,
+		...ov,
 	};
 }
 
