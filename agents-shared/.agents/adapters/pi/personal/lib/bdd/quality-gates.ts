@@ -441,15 +441,17 @@ export function assuranceHandoffGaps(
 		gaps.push("assurance gate run is older than the latest green evidence");
 	}
 
-	// E28 / E43 — untrusted required gate cannot satisfy assurance.
-	// Executor kind shell is always untrusted even when tier string is forged as "trusted".
+	// E28 / E43 / E48 — required passing results are trusted only when executorKind is
+	// explicitly argv|internal and tier is not untrusted/policy-rejected. Shell, missing,
+	// and unknown kinds always create an executor/trust gap (no missing-kind legacy exception).
 	for (const result of run.results) {
 		if (!result.required || result.status !== "passed") continue;
 		const tier = `${result.trustTier ?? ""}`;
 		const kind = `${result.executorKind ?? ""}`;
-		if (/^shell$/i.test(kind)) {
+		const trustedKind = /^(argv|internal)$/i.test(kind);
+		if (!trustedKind) {
 			gaps.push(
-				`required gate ${result.kind} has untrusted executor kind shell (tier=${tier || "n/a"}) and cannot satisfy assurance`,
+				`required gate ${result.kind} has untrusted or missing executor kind (${kind || "missing"}) and cannot satisfy assurance`,
 			);
 			continue;
 		}
