@@ -447,8 +447,14 @@ function isSecretPath(candidate: string, home: string): string | undefined {
 	return undefined;
 }
 
-/** Deny hardlinks that share an inode with a known secret file (auth.json). */
-function isHardlinkToSecret(candidate: string, home: string): string | undefined {
+/**
+ * Deny multi-link regular files fail-closed.
+ *
+ * A benign basename can still alias `.env.local` / `.npmrc` / auth.json via
+ * hardlink. Prefer link-count over an incomplete secret-path graph; ordinary
+ * single-link in-cwd sources stay allowed. Auth hardlinks remain denied.
+ */
+function isHardlinkToSecret(candidate: string, _home: string): string | undefined {
 	let candStat: ReturnType<typeof statSync>;
 	try {
 		candStat = statSync(candidate);
@@ -456,20 +462,9 @@ function isHardlinkToSecret(candidate: string, home: string): string | undefined
 		return undefined;
 	}
 	if (!candStat.isFile()) return undefined;
-	const secretPaths = [join(home, ".pi", "agent", "auth.json")];
-	for (const secretPath of secretPaths) {
-		try {
-			const st = statSync(secretPath);
-			if (
-				st.isFile() &&
-				st.dev === candStat.dev &&
-				st.ino === candStat.ino
-			) {
-				return "hardlink to secret path denied";
-			}
-		} catch {
-			// secret missing — nothing to compare
-		}
+	// nlink > 1 ⇒ at least one additional directory entry shares this inode.
+	if (typeof candStat.nlink === "number" && candStat.nlink > 1) {
+		return "hardlink to secret path denied";
 	}
 	return undefined;
 }
@@ -537,7 +532,7 @@ export function evaluateInspectionPath(input: {
 		return { allowed: false, reason: secretHit };
 	}
 
-	// Hardlink-to-secret inode denial (benign in-cwd name → auth.json inode)
+	// Multi-link (hardlink) denial: benign basename may alias secret material.
 	const hardlinkHit =
 		isHardlinkToSecret(canonical, home) ??
 		isHardlinkToSecret(absolute, home);
@@ -841,24 +836,50 @@ function validateCanonicalAgentFile(name: CanonicalFleetAgent): void {
 	});
 }
 
-function childPolicyFilePresent(): boolean {
-	// Module file (this source) must exist; also check the installed/tilde path form used in agents.
-	const here = typeof import.meta.dir === "string"
-		? join(import.meta.dir, "child-policy.ts")
-		: "";
-	if (here && existsSync(here)) return true;
-	const expanded = CHILD_POLICY_EXTENSION.startsWith("~/")
+/** Expanded agent-declared policy path (`~/...` → `$HOME/...`). */
+function expandedChildPolicyExtensionPath(): string {
+	return CHILD_POLICY_EXTENSION.startsWith("~/")
 		? join(homedir(), CHILD_POLICY_EXTENSION.slice(2))
 		: CHILD_POLICY_EXTENSION;
-	return existsSync(expanded);
+}
+
+function missingPolicyResult(): PreflightResult {
+	return {
+		ok: false,
+		code: "missing-policy",
+		reason: "installed policy extension missing; disable live fleets",
+		blocked: true,
+	};
+}
+
+/**
+ * Resolve deterministic installed-policy injection.
+ * - path string → exact path agents load (preferred)
+ * - boolean → locked-test compatibility
+ * - neither → undefined (caller must require expanded CHILD_POLICY_EXTENSION)
+ *
+ * Local `import.meta.dir` module source never satisfies this check.
+ */
+function resolveInstalledPolicyInjection(input: {
+	installedPolicyExtensionPath?: string;
+	installedPolicyExtensionExists?: boolean;
+}): boolean | undefined {
+	if (typeof input.installedPolicyExtensionPath === "string") {
+		return existsSync(input.installedPolicyExtensionPath);
+	}
+	if (typeof input.installedPolicyExtensionExists === "boolean") {
+		return input.installedPolicyExtensionExists;
+	}
+	return undefined;
 }
 
 /**
  * Fail-closed dispatch preflight before any pi-subagents RPC spawn.
  * Never echoes topic/task text into the blocked result.
  *
- * `installedPolicyExtensionExists` is a deterministic injection point for tests
- * and parent callers that already resolved the installed extension path.
+ * `installedPolicyExtensionPath` / `installedPolicyExtensionExists` are
+ * deterministic injection points for tests and parent callers that already
+ * resolved the installed extension path agents will load.
  */
 export function preflightFleetContainment(input: {
 	agents: string[];
@@ -866,21 +887,18 @@ export function preflightFleetContainment(input: {
 	env?: Record<string, string | undefined>;
 	topic?: string;
 	installedPolicyExtensionExists?: boolean;
+	installedPolicyExtensionPath?: string;
 }): PreflightResult {
 	// topic intentionally unused — must never appear in results/audits.
 	void input.topic;
 
-	const installedPresent =
-		typeof input.installedPolicyExtensionExists === "boolean"
-			? input.installedPolicyExtensionExists
-			: childPolicyFilePresent();
-	if (!installedPresent) {
-		return {
-			ok: false,
-			code: "missing-policy",
-			reason: "installed policy extension missing; disable live fleets",
-			blocked: true,
-		};
+	// Injected installed-path/boolean fail closed immediately (never via module source).
+	const injectedPresent = resolveInstalledPolicyInjection({
+		installedPolicyExtensionPath: input.installedPolicyExtensionPath,
+		installedPolicyExtensionExists: input.installedPolicyExtensionExists,
+	});
+	if (injectedPresent === false) {
+		return missingPolicyResult();
 	}
 
 	if (input.agentScope !== "user") {
@@ -940,6 +958,14 @@ export function preflightFleetContainment(input: {
 					blocked: true,
 				};
 			}
+		}
+	}
+
+	// Default (no injection): require expanded agent-declared CHILD_POLICY_EXTENSION.
+	// Package source under import.meta.dir must not satisfy this.
+	if (injectedPresent === undefined) {
+		if (!existsSync(expandedChildPolicyExtensionPath())) {
+			return missingPolicyResult();
 		}
 	}
 
