@@ -3,6 +3,7 @@
  */
 
 import { spawn } from "node:child_process";
+import { realpathSync } from "node:fs";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import type { ExpectedRedContract, RedMatchMode, RedReasonCode, TrustTier } from "./types.ts";
 
@@ -127,11 +128,28 @@ export function isUnsafeExecutableName(file: string): boolean {
 }
 
 export function isCwdEscape(projectRoot: string, candidateCwd: string): boolean {
-	const root = resolve(projectRoot);
-	const resolved = isAbsolute(candidateCwd) ? resolve(candidateCwd) : resolve(root, candidateCwd);
-	const rel = relative(root, resolved);
-	if (rel === "") return false;
-	return rel.startsWith(`..${sep}`) || rel === ".." || isAbsolute(rel);
+	const rootLexical = resolve(projectRoot);
+	const candidateLexical = isAbsolute(candidateCwd)
+		? resolve(candidateCwd)
+		: resolve(rootLexical, candidateCwd);
+
+	// Lexical containment first (cheap fail-closed for `..` escapes).
+	const lexicalRel = relative(rootLexical, candidateLexical);
+	if (lexicalRel === ".." || lexicalRel.startsWith(`..${sep}`) || isAbsolute(lexicalRel)) {
+		return true;
+	}
+
+	// Realpath check: reject symlink escapes and realpath failures (E46).
+	try {
+		const rootReal = realpathSync(rootLexical);
+		const candidateReal = realpathSync(candidateLexical);
+		const realRel = relative(rootReal, candidateReal);
+		if (realRel === "") return false;
+		return realRel.startsWith(`..${sep}`) || realRel === ".." || isAbsolute(realRel);
+	} catch {
+		// Fail closed on realpath errors (missing path, permission, broken symlink).
+		return true;
+	}
 }
 
 export function scrubTrustedEnv(env: NodeJS.ProcessEnv = {}): Record<string, string> {
@@ -314,7 +332,20 @@ function runTrustedArgv(options: RunCommandOptions): Promise<RunCommandResult> {
 }
 
 export function runCommand(options: RunCommandOptions): Promise<RunCommandResult> {
-	if (options.trust === "trusted" && options.argv) {
+	const maxSummaryCharsEarly = options.maxSummaryChars ?? 400;
+
+	// E45 — trust:"trusted" without a valid argv spec must never shell-fallback.
+	if (options.trust === "trusted") {
+		if (!options.argv || typeof options.argv.file !== "string" || !options.argv.file.trim()) {
+			const command = options.command ?? "";
+			return Promise.resolve(
+				policyRejectResult(
+					command,
+					"policy rejected: trust=trusted requires a valid argv spec (no shell fallback)",
+					maxSummaryCharsEarly,
+				),
+			);
+		}
 		return runTrustedArgv(options);
 	}
 
@@ -443,8 +474,10 @@ function combinedOutput(result: RunCommandResult): string {
 function identityHit(result: RunCommandResult, expectedTestId: string): boolean {
 	const id = expectedTestId.trim();
 	if (!id) return false;
+	// E37 / Q9 — full expected identity may appear inside a richer hint/output,
+	// but a shorter unrelated hint contained by the expected id is never a match.
 	const hints = result.failedTestHints ?? [];
-	if (hints.some((h) => h.includes(id) || id.includes(h))) return true;
+	if (hints.some((h) => h.includes(id))) return true;
 	const haystack = combinedOutput(result);
 	return haystack.includes(id);
 }
@@ -474,6 +507,19 @@ export function validateRedResult(
 	result: RunCommandResult,
 	contract?: ExpectedRedContract,
 ): RedValidationResult {
+	// R12 / E47 — policyRejected is never red, regardless of exit code or matching hints.
+	if (result.policyRejected) {
+		return {
+			ok: false,
+			reasonCode: "policy_rejected",
+			cause: "policy_rejected",
+			assuranceEligible: false,
+			trustTier: "policy_rejected",
+			reason:
+				`Red rejected: policy rejected command (policyRejected=true is never causal red).\n` +
+				`Command: ${result.command}\n${result.summary}`,
+		};
+	}
 	// R2 precedence: timeout/124 → spawn → 126/127 → exit zero → setup/import → identity/signature
 	if (result.timedOut || result.exitCode === 124) {
 		return {

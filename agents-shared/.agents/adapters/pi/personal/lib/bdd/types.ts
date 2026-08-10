@@ -62,6 +62,7 @@ export type RedReasonCode =
 	| "expected_assertion"
 	| "legacy_interactive"
 	| "contract_required"
+	| "policy_rejected"
 	| "unknown";
 
 /** Additive expected-red contract supplied to validateRedResult / bdd_assert_red. */

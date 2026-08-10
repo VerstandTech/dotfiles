@@ -106,13 +106,16 @@ function resolveExecutor(
 		};
 	}
 	if (fromConfig?.kind === "shell") {
+		// E42 / R6 — shell can never self-label trusted; force interactive_untrusted.
+		const forced: GateExecutorSpec = {
+			...fromConfig,
+			kind: "shell",
+			trustTier: "interactive_untrusted",
+		};
 		return {
-			executor: fromConfig,
+			executor: forced,
 			executorKind: "shell",
-			trustTier:
-				assurance.commandTrust?.[kind] ??
-				fromConfig.trustTier ??
-				"interactive_untrusted",
+			trustTier: "interactive_untrusted",
 		};
 	}
 
@@ -121,12 +124,12 @@ function resolveExecutor(
 		const shellExec: GateExecutorSpec = {
 			kind: "shell",
 			command: shellCommand,
-			trustTier: assurance.commandTrust?.[kind] ?? "interactive_untrusted",
+			trustTier: "interactive_untrusted",
 		};
 		return {
 			executor: shellExec,
 			executorKind: "shell",
-			trustTier: shellExec.trustTier ?? "interactive_untrusted",
+			trustTier: "interactive_untrusted",
 		};
 	}
 
@@ -321,6 +324,24 @@ export async function runQualityGatePlan(input: {
 			continue;
 		}
 
+		// R11 / E44 — argv kind without a valid matching argv executor rejects before spawn
+		// (no shell fallthrough under any profile; especially strict/overnight).
+		const hasValidArgv =
+			gate.executor?.kind === "argv" &&
+			typeof gate.executor.file === "string" &&
+			Boolean(gate.executor.file.trim()) &&
+			Array.isArray(gate.executor.args);
+		if (gate.executorKind === "argv" && !hasValidArgv) {
+			results.push(
+				policyRejectedResult(
+					gate,
+					`policy rejected: argv executor kind requires a valid matching argv executor (no shell fallthrough)`,
+				),
+			);
+			if (gate.required) halted = true;
+			continue;
+		}
+
 		if (!gate.command && gate.executorKind !== "argv") {
 			results.push(resultForUnavailable(gate));
 			if (gate.required) halted = true;
@@ -420,10 +441,18 @@ export function assuranceHandoffGaps(
 		gaps.push("assurance gate run is older than the latest green evidence");
 	}
 
-	// E28 — untrusted required gate cannot satisfy assurance
+	// E28 / E43 — untrusted required gate cannot satisfy assurance.
+	// Executor kind shell is always untrusted even when tier string is forged as "trusted".
 	for (const result of run.results) {
 		if (!result.required || result.status !== "passed") continue;
 		const tier = `${result.trustTier ?? ""}`;
+		const kind = `${result.executorKind ?? ""}`;
+		if (/^shell$/i.test(kind)) {
+			gaps.push(
+				`required gate ${result.kind} has untrusted executor kind shell (tier=${tier || "n/a"}) and cannot satisfy assurance`,
+			);
+			continue;
+		}
 		if (/interactive_untrusted|untrusted|legacy|policy_rejected/i.test(tier)) {
 			gaps.push(
 				`required gate ${result.kind} result is untrusted (${tier}) and cannot satisfy assurance`,
@@ -441,14 +470,36 @@ export function assuranceHandoffGaps(
 		}
 	}
 
-	// E29 — note-only mutation cannot satisfy command-backed matched mutation
+	// E41 — red/green config fingerprints must bind current expected config
+	if (policy.expectedConfigFingerprint) {
+		const expected = policy.expectedConfigFingerprint;
+		if (evidence.red?.configFingerprint && evidence.red.configFingerprint !== expected) {
+			gaps.push(
+				`stale red config fingerprint (red=${evidence.red.configFingerprint}, expected=${expected})`,
+			);
+		}
+		if (evidence.green?.configFingerprint && evidence.green.configFingerprint !== expected) {
+			gaps.push(
+				`stale green config fingerprint (green=${evidence.green.configFingerprint}, expected=${expected})`,
+			);
+		}
+		// Missing fingerprints on red/green also gap when current expected fingerprint is required
+		if (evidence.red && !evidence.red.configFingerprint) {
+			gaps.push("red config fingerprint missing (must bind current config)");
+		}
+		if (evidence.green && !evidence.green.configFingerprint) {
+			gaps.push("green config fingerprint missing (must bind current config)");
+		}
+	}
+
+	// E29 / E40 — command-backed matched mutation requires explicit matched === true
 	if (policy.requireCommandBackedMatchedMutation) {
 		const mutation = evidence.mutation;
 		const hasCommands = Boolean(mutation?.failCommand?.trim() && mutation?.passCommand?.trim());
-		const matched = mutation?.matched !== false && hasCommands;
+		const matched = mutation?.matched === true && hasCommands;
 		if (!mutation?.proven || !matched) {
 			gaps.push(
-				"command-backed matched mutation / sensitivity evidence required (note-only is insufficient)",
+				"command-backed matched mutation / sensitivity evidence required (matched must be true; note-only or undefined matched is insufficient)",
 			);
 		}
 	}

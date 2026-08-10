@@ -556,6 +556,26 @@ export default function bddModeExtension(pi: ExtensionAPI): void {
 					details: { ok: false },
 				};
 			}
+			// E38 / R4 — direct bdd_assert_green under assurance requires causal red first.
+			const assuranceEnabled = config.assurance?.enabled === true;
+			if (assuranceEnabled && state.evidence.red?.assuranceEligible !== true) {
+				return {
+					content: [
+						{
+							type: "text",
+							text:
+								"Cannot record green under assurance without causal expected-red evidence " +
+								"(red.assuranceEligible === true). Legacy/non-causal red is non-assurance; " +
+								"refuses green and does not unlock implementation paths.",
+						},
+					],
+					details: {
+						ok: false,
+						assuranceEnabled: true,
+						assuranceEligible: state.evidence.red?.assuranceEligible ?? false,
+					},
+				};
+			}
 			const base = String(params.command ?? state.evidence.red?.command ?? config.commands.unitTest);
 			const command = params.append ? `${base} ${params.append}` : base;
 			const result = await runCommand({ cwd: cwdOf(extCtx), command });
@@ -590,11 +610,13 @@ export default function bddModeExtension(pi: ExtensionAPI): void {
 			const coverNote = covers
 				? ""
 				: `\nWarning: green command differs from red (\`${redCmd}\`).`;
+			const configFp = fingerprintConfig(config);
 			state.evidence.green = {
 				command,
 				exitCode: result.exitCode,
 				summary: result.summary,
 				at: nowIso(),
+				configFingerprint: configFp,
 			};
 			// Any implementation change makes prior structural/quality evidence stale.
 			delete state.evidence.assurance;
@@ -861,6 +883,28 @@ export default function bddModeExtension(pi: ExtensionAPI): void {
 					},
 				};
 			}
+			// E39 — under assurance, legacy/unrelated fail-leg is refused even if ok:true.
+			const mutationAssuranceEnabled = config.assurance?.enabled === true;
+			if (mutationAssuranceEnabled && failCheck.assuranceEligible !== true) {
+				return {
+					content: [
+						{
+							type: "text",
+							text:
+								`Mutation fail-leg refused under assurance: expected assurance-eligible assertion, ` +
+								`got legacy/non-causal red (matched=false).\n${failCheck.reason}`,
+						},
+					],
+					details: {
+						ok: false,
+						step: "fail",
+						matched: false,
+						assuranceEligible: false,
+						reasonCode: failCheck.reasonCode,
+						cause: failCheck.cause,
+					},
+				};
+			}
 			const passRun = await runCommand({ cwd: cwdOf(extCtx), command: passCommand });
 			const passCheck = validateGreenResult(passRun);
 			if (!passCheck.ok) {
@@ -886,7 +930,8 @@ export default function bddModeExtension(pi: ExtensionAPI): void {
 				expectedTestId,
 				expectedFailureSignature,
 				matchMode: failCheck.matchMode ?? matchMode,
-				matched: failCheck.assuranceEligible === true || failCheck.ok,
+				// E39 — matched is true only for assurance-eligible expected assertion.
+				matched: failCheck.assuranceEligible === true,
 				cause: failCheck.cause,
 				reasonCode: failCheck.reasonCode,
 			};
