@@ -5,7 +5,7 @@
  * - tools: fleet_plan, fleet_dispatch, fleet_status
  * - Raises pi-subagents parallel caps for agentic-heavy work
  * - Spawns via subagents RPC (async) when available; always returns a
- *   copy-pasteable subagent() payload the parent can run/synthesize
+ *   copy-pasteable WorkflowScript subagent() payload the parent can run/synthesize
  */
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -210,7 +210,7 @@ async function dispatchPlan(
 	if (!reply.success) {
 		const msg =
 			reply.error?.message ??
-			"Fleet RPC spawn failed. Is `npm:pi-subagents` installed and loaded? You can still call the `subagent` tool with the payload below.";
+			"Fleet RPC spawn failed. Is `npm:pi-subagents` installed and loaded? You can still call the `subagent` tool with the WorkflowScript payload below.";
 		return {
 			ok: false,
 			text: [
@@ -219,12 +219,13 @@ async function dispatchPlan(
 				``,
 				formatPlanSummary(plan),
 				``,
-				`### subagent() payload`,
+				`### subagent() WorkflowScript payload`,
 				"```json",
 				JSON.stringify(plan.subagentParams, null, 2),
 				"```",
 				``,
-				`Call the **subagent** tool with that object (omit wrapping). Then synthesize results.`,
+				`Call the **subagent** tool with that WorkflowScript object (omit wrapping; do not use legacy top-level tasks). Then synthesize results.`,
+				`Do not claim live dispatch success; SEC-00 still blocks dogfood until containment is green.`,
 			].join("\n"),
 			details: { ok: false, error: reply.error, plan },
 		};
@@ -388,7 +389,7 @@ export default function agenticFleetExtension(pi: ExtensionAPI): void {
 				const text = [
 					formatPlanSummary(plan),
 					``,
-					`### subagent() payload`,
+					`### subagent() WorkflowScript payload`,
 					"```json",
 					JSON.stringify(plan.subagentParams, null, 2),
 					"```",

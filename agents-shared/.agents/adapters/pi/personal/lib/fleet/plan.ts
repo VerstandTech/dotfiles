@@ -62,6 +62,14 @@ export interface FleetTask {
 	personaId: string;
 }
 
+/** Public pi-subagents 0.45.2 execution shape (WorkflowScript-only). */
+export interface FleetSubagentParams {
+	/** Statement body executed as `async (runs) => { ... }` */
+	workflowScript: string;
+	context: "fresh" | "fork";
+	async: true;
+}
+
 export interface FleetPlan {
 	kind: FleetKind;
 	topic: string;
@@ -69,19 +77,72 @@ export interface FleetPlan {
 	concurrency: number;
 	context: "fresh" | "fork";
 	async: boolean;
+	/** Internal display/persona model — not the public RPC spawn shape. */
 	tasks: FleetTask[];
-	subagentParams: {
-		tasks: Array<{
-			agent: string;
-			task: string;
-			model?: string;
-			output?: string;
-		}>;
-		concurrency: number;
-		context: "fresh" | "fork";
-		async: true;
-	};
+	subagentParams: FleetSubagentParams;
 	warnings: string[];
+}
+
+/** pi-subagents stable-key contract for runs.run / runs.all. */
+const RUN_KEY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+
+type WorkflowChild = {
+	key: string;
+	agent: string;
+	task: string;
+	model?: string;
+	output?: string;
+};
+
+/**
+ * Deterministic unique key independent of persona ids (which may collide).
+ * Matches /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.
+ */
+export function fleetChildKey(index: number): string {
+	const key = `m${String(index + 1).padStart(2, "0")}`;
+	if (!RUN_KEY_PATTERN.test(key)) {
+		throw new Error(`generated fleet child key is invalid: ${key}`);
+	}
+	return key;
+}
+
+/**
+ * Build a WorkflowScript body that:
+ * - embeds children as JSON data (no string interpolation of prompts),
+ * - batches with sequential `runs.all` calls of size `concurrency`,
+ * - returns all results in original persona order.
+ */
+export function buildFleetWorkflowScript(
+	tasks: FleetTask[],
+	concurrency: number,
+): string {
+	const batchSize = Math.max(1, concurrency);
+	const children: WorkflowChild[] = tasks.map((t, index) => {
+		const child: WorkflowChild = {
+			key: fleetChildKey(index),
+			agent: t.agent,
+			task: t.task,
+			output: t.output,
+		};
+		if (t.model) child.model = t.model;
+		return child;
+	});
+
+	// JSON.stringify keeps backticks / ${} / quotes / Unicode inert data.
+	const childrenJson = JSON.stringify(children);
+	const batchJson = JSON.stringify(batchSize);
+
+	return [
+		`const __children = ${childrenJson};`,
+		`const __batchSize = ${batchJson};`,
+		`const __results = [];`,
+		`for (let __i = 0; __i < __children.length; __i += __batchSize) {`,
+		`  const __batch = __children.slice(__i, __i + __batchSize);`,
+		`  const __batchResults = await runs.all(__batch);`,
+		`  __results.push(...__batchResults);`,
+		`}`,
+		`return __results;`,
+	].join("\n");
 }
 
 const DEFAULT_MAX_TASKS = 48;
@@ -294,16 +355,10 @@ export function buildFleetPlan(input: FleetPlanInput): FleetPlan {
 		};
 	});
 
-	const subagentParams = {
-		tasks: tasks.map((t) => ({
-			agent: t.agent,
-			task: t.task,
-			...(t.model ? { model: t.model } : {}),
-			output: t.output,
-		})),
-		concurrency,
+	const subagentParams: FleetSubagentParams = {
+		workflowScript: buildFleetWorkflowScript(tasks, concurrency),
 		context,
-		async: true as const,
+		async: true,
 	};
 
 	return {
@@ -342,9 +397,10 @@ export function formatPlanSummary(plan: FleetPlan): string {
 		``,
 		`## Next`,
 		`1. Ensure agents exist (\`fleet-researcher\`, \`fleet-reviewer\`, \`fleet-ux\`, or overrides).`,
-		`2. Launch with the \`subagent\` tool using the tasks payload (or \`fleet_dispatch\` / \`/fleet\`).`,
+		`2. Launch with the \`subagent\` tool using the WorkflowScript payload (or \`fleet_dispatch\` / \`/fleet\`).`,
 		`3. When complete, synthesize: **Agreements / Disagreements / Blockers / Actions / Residual risks**.`,
 		`4. Inspect live fleet: \`/subagents-fleet\` or Ctrl+Alt+F.`,
+		`5. Do not claim live dispatch success until SEC-00 containment is green.`,
 	);
 	return lines.join("\n");
 }
