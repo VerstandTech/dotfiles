@@ -191,6 +191,17 @@ Estimates are engineering ranges for one focused writer plus an independent Test
 - **Rollback:** remove Rulesync outputs/config together and restore previous documented governance; never leave partially generated files.
 - **Estimate:** M, 1–2 days.
 
+### BASE-01 — Canonical playbook and bounded Test Designer baseline
+
+- **Objective:** restore a truthful green package baseline without downgrading the canonical v1.2 playbook to stale v1.0 assertions.
+- **Owned paths:** `agents-shared/.agents/adapters/pi/personal/lib/bdd/{playbook,playbook.test,assurance-agents.test}.ts`, `agents/bdd-test-designer.md`; `docs/high-assurance-playbook.md` is the read-only normative v1.2 source for this repair unless a new acceptance rule proves a genuine document defect.
+- **Dependencies:** GOV-01 root aggregation and explicit human approval to move this minimal baseline repair into Wave 0 ahead of ROLE-01.
+- **Deliverables:** v1.2/August 2026 runtime metadata; tests aligned with the canonical 20-section living document and changelog; explicit Test Designer writable-path and no-delegation rules; contracts/invariants, fuzz, differential, and golden-master oracle responsibilities.
+- **Acceptance:** focused baseline tests pass after a causal red against stale runtime metadata and missing role requirements; the canonical document remains v1.2; full `bun test lib` and the root aggregate have no baseline role/playbook failures.
+- **Risks:** weakening tests to prose equivalence, brittle exact-string checks, or rewriting the normative document backward merely to satisfy stale assertions.
+- **Rollback:** revert runtime metadata and role wording together while retaining the v1.2 canonical document; never relabel stale v1.0 metadata as current.
+- **Estimate:** S, 0.5–1 day.
+
 ### CMP-01 — Version policy and Herdr 0.8 contract rebaseline
 
 - **Objective:** pin or constrain tested versions and update stale 0.7.5 assumptions.
@@ -431,10 +442,11 @@ Estimates are engineering ranges for one focused writer plus an independent Test
 1. Decide workspace/branch and preserve current dirty user changes.
 2. Approve architecture and the decisions at the end of this plan.
 3. Complete GOV-01 and CMP-01.
-4. Complete CMP-02 with mocked transport fixtures; do not run a live fleet yet.
-5. Complete the pure/security portions of BDD-01 that protect red evidence and gate commands.
-6. Complete SEC-00 before any live Grok fleet smoke.
-7. Gate: root BDD/test command exists; compatibility matrix accepted; mocked fleet dispatch green; contained child policy green.
+4. Complete BASE-01 so the canonical v1.2 playbook/role contract and full root baseline are green.
+5. Complete CMP-02 with mocked transport fixtures; do not run a live fleet yet.
+6. Complete the pure/security portions of BDD-01 that protect red evidence and gate commands.
+7. Complete SEC-00 before any live Grok fleet smoke.
+8. Gate: root BDD/test command and full baseline are green; compatibility matrix accepted; mocked fleet dispatch green; contained child policy green.
 
 ### Wave 1a — Independent foundations (parallel one-writer lanes)
 
@@ -491,7 +503,7 @@ Shared entrypoints are intentionally not edited in parallel.
 ### Dependency summary
 
 ```text
-GOV-01 ─► BDD-01 ─────────────────────────────────────────────┐
+GOV-01 ─► BASE-01 ─► BDD-01 ──────────────────────────────────┐
 CMP-01 ─► HOST-01 ─► HOST-02                                  │
    └────► CMP-02 ─► SEC-00 ───────────────────────────────┐    │
 CON-01 ─► RED-01 ─► OBS-01 ─► BUD-01 ────────────────────┼─► FIT-01
@@ -516,6 +528,7 @@ Use `P = agents-shared/.agents/adapters/pi/personal` as the canonical prefix; pl
 | Shared path | First owner | Later owner | Transfer rule |
 |---|---|---|---|
 | `P/lib/fleet/plan.ts`, `P/extensions/agentic-fleet.ts` | CMP-02 | BUD-01 | CMP-02 merged and green; BUD changes only usage/circuit-break seams |
+| `P/agents/bdd-test-designer.md` | BASE-01 | ROLE-01 | BASE v1.2/no-delegation/path/oracle contract is green; ROLE may strengthen schema/tool enforcement but cannot weaken it |
 | `pi/tests/herd-compat*.test.ts` | CMP-01 | none | HDR-01 adds `herd-client*.test.ts`; it does not rewrite compatibility corpus |
 | `P/extensions/herd/**` | HDR-01 | OPS-01 | HDR public API frozen; OPS owns only notification/recovery adapters |
 | `herdr/.config/herdr/config.toml` | HOST-01 | OPS-01 | HOST baseline tagged; OPS changes notification keys only |
@@ -603,6 +616,7 @@ GOV-01 should wrap these in a root deterministic command. Do not add a second JS
 | WP | Role owner | Focused command after formulation | Expected causal red |
 |---|---|---|---|
 | GOV-01 | governance Test Designer | `python3 -m unittest tests.test_rules_contract` | profile/generation assertion says root canonical source or test command is absent/drifting |
+| BASE-01 | baseline Test Designer | `cd P && bun test lib/bdd/playbook.test.ts lib/bdd/assurance-agents.test.ts` | tests lock canonical v1.2/August 2026, but runtime metadata still reports v1.0/July and the Test Designer role lacks an explicit required oracle/path/delegation contract |
 | CMP-01 | compatibility Test Designer | `cd pi && bun test tests/herd-compat.test.ts` | current 0.7.5-only fixture/expectation rejects observed Herdr 0.8 behavior |
 | CMP-02 | fleet transport Test Designer | `cd P && bun test lib/fleet/plan.test.ts lib/fleet/rpc.test.ts` | current plan sends removed top-level parallel payload |
 | BDD-01 | BDD oracle Test Designer | `cd P && bun test lib/bdd/run-command.test.ts lib/bdd/quality-gates.test.ts` | unrelated assertion or untrusted shell command is incorrectly accepted |
@@ -655,10 +669,10 @@ Each package’s `ValidationContractV1` stores its exact command, expected test 
 
 ## Rollout and rollback
 
-### Milestone 0 — Truthful and contained base (GOV-01, CMP-01, CMP-02, BDD-01, SEC-00)
+### Milestone 0 — Truthful and contained base (GOV-01, BASE-01, CMP-01, CMP-02, BDD-01, SEC-00)
 
 - **Rollout:** local only; no live fleet until SEC-00.
-- **Exit:** root tests, compatibility matrix, causal-red/gate-trust fixtures, contained child policy, and mocked fleet dispatch are green. Any Milestone 0 live Grok smoke is limited to a non-secret fixture with SEC-00 restrictions; product-code review fleets wait for SEC-01/G7.
+- **Exit:** root tests and the canonical v1.2 playbook/role baseline, compatibility matrix, causal-red/gate-trust fixtures, contained child policy, and mocked fleet dispatch are green. Any Milestone 0 live Grok smoke is limited to a non-secret fixture with SEC-00 restrictions; product-code review fleets wait for SEC-01/G7.
 - **Rollback:** revert governance/transport changes together; disable live fleets and use plan-only/manual workflowScript fallback.
 
 ### Milestone 1 — Reproducible host (HOST-01, HOST-02)
@@ -746,7 +760,7 @@ The start gate is split so the controls needed to unlock later work can themselv
 
 ### Gate A — Wave 0 bootstrap
 
-Only GOV-01, CMP-01, CMP-02, BDD-01, and SEC-00 may start when every item below is true:
+Only GOV-01, BASE-01, CMP-01, CMP-02, BDD-01, and SEC-00 may start when every item below is true:
 
 - [ ] Human selected workspace A/B/C and approved the exact branch/worktree; pre-existing dirty changes are committed, stashed, or explicitly excluded.
 - [ ] One parent integration owner and one writer per worktree are recorded.
@@ -761,7 +775,7 @@ An unchecked Gate A item permits read-only discovery/formulation only.
 HOST-01 and every later runtime package remain blocked until every item below is true:
 
 - [ ] Rulesync output map and tested version policy are approved.
-- [ ] GOV-01 root BDD command, CMP-01 matrix, CMP-02 mocked transport, BDD-01 causal-red/gate trust, and SEC-00 containment are green.
+- [ ] GOV-01 root BDD command, BASE-01 canonical v1.2 package baseline, CMP-01 matrix, CMP-02 mocked transport, BDD-01 causal-red/gate trust, and SEC-00 containment are green.
 - [ ] No live fleet or Herdr writer was launched before its required containment/integration gate.
 - [ ] The next package’s ValidationContractV1 satisfies the same Gate A contract.
 - [ ] Decisions required by the next package are accepted or explicitly deferred with a blocking reason that prevents dependent work.
@@ -771,6 +785,8 @@ An unchecked Gate B item blocks runtime expansion, not the Wave 0 packages that 
 ## Human decisions required
 
 Implementation must pause for these decisions:
+
+**Accepted Wave 0 ownership adjustment:** BASE-01 owns the minimal canonical v1.2 playbook metadata and bounded Test Designer baseline repair before BDD-01. ROLE-01 remains the later owner for broader role-schema/tool-policy evolution; tests may not be weakened or the canonical document downgraded.
 
 1. **Workspace:** choose A/B/C and resolve the current dirty checkout. Recommended: a new integration worktree from a clean base.
 2. **Rulesync target map:** confirm which generated tools belong in this dotfiles repo and how the inherited `/Users/leonardoribeiro/AGENTS.md` relates to repo-local generated output. The authoring source must be `rulesync.jsonc` + `.rulesync/**`.
