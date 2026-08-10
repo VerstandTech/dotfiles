@@ -51,6 +51,10 @@ Restoring runtime metadata to v1.0 or removing a required Test Designer boundary
 
 ROLE-01 may add schema/tool enforcement after Gate B, but it cannot downgrade v1.2 metadata, delegation isolation, writable-path scope, or layered oracle responsibilities.
 
+### R11 — Secondary operator documents cannot advertise stale canonical metadata
+
+The fleet cheatsheet, high-assurance Example Map, and agentic BDD roadmap describe v1.2/August 2026/sections 1–20 as current. v1.0/July/sections 1–13 may appear only as clearly historical changelog context, never as the current canonical policy.
+
 ## Examples
 
 | ID | Given | When | Then |
@@ -68,6 +72,9 @@ ROLE-01 may add schema/tool enforcement after Gate B, but it cannot downgrade v1
 | E11 | root aggregate | `scripts/test-root.sh` runs | Rulesync, AI resources, Pi tests, and personal tests all pass |
 | E12 | metadata is deliberately reverted to v1.0 | focused sensitivity runs | test fails, then passes after restore |
 | E13 | required Test Designer fuzz/path rule is deliberately removed | focused sensitivity runs | test fails, then passes after restore |
+| E14 | `/bdd playbook` row in fleet cheatsheet | operator reads current policy | it says canonical v1.2, not v1.0 |
+| E15 | high-assurance package Example Map R8 | agent reads canonical contract | it says August 2026, v1.2, sections 1–20, while v1.0 remains history only |
+| E16 | agentic BDD roadmap shipped layer | operator reads current surface | it says canonical v1.2 policy and current implementation profile |
 
 ## Questions and disposition
 
@@ -77,6 +84,7 @@ ROLE-01 may add schema/tool enforcement after Gate B, but it cannot downgrade v1
 4. **Does BASE-01 replace ROLE-01?** No. BASE-01 repairs the current package baseline; ROLE-01 later adds schema/tool-policy evolution.
 5. **May BASE-01 change tools?** No. The current Test Designer writer tools remain; only scope, isolation, and oracle responsibilities are clarified.
 6. **Can the four failures be labeled pre-existing and ignored?** No. They remain visible until repaired and block the root Milestone 0 exit.
+7. **May secondary docs still mention v1.0?** Yes, only when explicitly describing history/changelog. Current command, policy, or roadmap claims must use v1.2.
 
 ## ValidationContractV1
 
@@ -84,6 +92,7 @@ ROLE-01 may add schema/tool enforcement after Gate B, but it cannot downgrade v1
 - **Expected red test id:** `reports the canonical v1.2 runtime metadata`
 - **Expected red signature:** expected version `1.2`, received `1.0`
 - **Secondary red:** Test Designer contract test reports missing writable-path, no-delegation, contracts/invariants, or fuzz requirement
-- **Forbidden production paths before red SHA:** `lib/bdd/playbook.ts`, `agents/bdd-test-designer.md`, `docs/high-assurance-playbook.md`
+- **Review-remediation red:** `secondary package docs advertise only current canonical metadata` reports the stale `Canonical v1.0 policy` or July/1–13 current claim
+- **Forbidden production paths before red SHA:** `lib/bdd/playbook.ts`, `agents/bdd-test-designer.md`, `docs/high-assurance-playbook.md`, `docs/{bdd-fleet-cheatsheet,high-assurance-example-map,agentic-bdd-roadmap}.md`
 - **Covering green:** the exact focused command passes; `bun test lib` and root `scripts/test-root.sh` pass
-- **Sensitivity:** revert `HIGH_ASSURANCE_PLAYBOOK.version` to `1.0`, then remove one required Test Designer path/oracle rule; each break must fail the focused command and each restore must pass
+- **Sensitivity:** revert `HIGH_ASSURANCE_PLAYBOOK.version` to `1.0`, remove one required Test Designer path/oracle rule, or restore one secondary current-policy claim to v1.0; each break must fail the focused command and each restore must pass

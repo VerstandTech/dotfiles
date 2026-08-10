@@ -194,10 +194,10 @@ Estimates are engineering ranges for one focused writer plus an independent Test
 ### BASE-01 — Canonical playbook and bounded Test Designer baseline
 
 - **Objective:** restore a truthful green package baseline without downgrading the canonical v1.2 playbook to stale v1.0 assertions.
-- **Owned paths:** `agents-shared/.agents/adapters/pi/personal/lib/bdd/{playbook,playbook.test,assurance-agents.test}.ts`, `agents/bdd-test-designer.md`; `docs/high-assurance-playbook.md` is the read-only normative v1.2 source for this repair unless a new acceptance rule proves a genuine document defect.
+- **Owned paths:** `agents-shared/.agents/adapters/pi/personal/lib/bdd/{playbook,playbook.test,assurance-agents.test}.ts`, `agents/bdd-test-designer.md`, and current-metadata repairs in `docs/{bdd-fleet-cheatsheet,high-assurance-example-map,agentic-bdd-roadmap}.md`; `docs/high-assurance-playbook.md` is the read-only normative v1.2 source unless a new acceptance rule proves a genuine document defect.
 - **Dependencies:** GOV-01 root aggregation and explicit human approval to move this minimal baseline repair into Wave 0 ahead of ROLE-01.
-- **Deliverables:** v1.2/August 2026 runtime metadata; tests aligned with the canonical 20-section living document and changelog; explicit Test Designer writable-path and no-delegation rules; contracts/invariants, fuzz, differential, and golden-master oracle responsibilities.
-- **Acceptance:** focused baseline tests pass after a causal red against stale runtime metadata and missing role requirements; the canonical document remains v1.2; full `bun test lib` and the root aggregate have no baseline role/playbook failures.
+- **Deliverables:** v1.2/August 2026 runtime metadata; tests aligned with the canonical 20-section living document and changelog; explicit Test Designer writable-path and no-delegation rules; contracts/invariants, fuzz, differential, and golden-master oracle responsibilities; secondary operator/package docs contain no stale current-policy v1.0 claims.
+- **Acceptance:** focused baseline tests pass after causal reds against stale runtime metadata, missing role requirements, and stale secondary current-policy claims; the canonical document remains v1.2; full `bun test lib` and the root aggregate have no baseline role/playbook failures.
 - **Risks:** weakening tests to prose equivalence, brittle exact-string checks, or rewriting the normative document backward merely to satisfy stale assertions.
 - **Rollback:** revert runtime metadata and role wording together while retaining the v1.2 canonical document; never relabel stale v1.0 metadata as current.
 - **Estimate:** S, 0.5–1 day.
