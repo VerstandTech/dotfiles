@@ -1,6 +1,6 @@
 // CMP-01 — Herdr 0.8 compatibility matrix and observation checks.
 // Acceptance: docs/plans/work-packages/CMP-01.feature
-// Traces: docs/plans/work-packages/CMP-01-example-map.md R1–R7, E1–E4, E9, E12
+// Traces: docs/plans/work-packages/CMP-01-example-map.md R1–R7, E1–E4, E9, E12–E16
 //
 // Supported runtime is Herdr 0.8.x (protocol 19, schema version 1).
 // Legacy 0.7.5 envelopes remain parser fixtures only — not runtime support.
@@ -49,10 +49,41 @@ function isPresentNumber(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value);
 }
 
+/** Accepted forms locked by E15: optional `v` + major.minor.patch (e.g. 0.8.0, v0.8.0). */
+const HERDR_VERSION_RE = /^v?(\d+)\.(\d+)\.(\d+)$/i;
+
+type ParsedHerdVersion =
+  | { kind: "missing" }
+  | { kind: "malformed"; raw: string }
+  | { kind: "ok"; raw: string; major: number; minor: number; patch: number };
+
+function parseHerdVersion(version: string | null | undefined): ParsedHerdVersion {
+  if (version == null) return { kind: "missing" };
+  const raw = String(version).trim();
+  if (raw === "") return { kind: "missing" };
+  const match = HERDR_VERSION_RE.exec(raw);
+  if (!match) return { kind: "malformed", raw };
+  return {
+    kind: "ok",
+    raw,
+    major: Number(match[1]),
+    minor: Number(match[2]),
+    patch: Number(match[3]),
+  };
+}
+
+function isSupportedRuntimeVersion(parsed: {
+  major: number;
+  minor: number;
+}): boolean {
+  // Supported runtime band is exactly 0.8.x (patch any).
+  return parsed.major === 0 && parsed.minor === 8;
+}
+
 /**
  * Compare an observed Herdr runtime against the locked 0.8 compatibility matrix.
- * Missing protocol/schema → unknown (never silently compatible).
- * Drift → incompatible with actionable doctor guidance.
+ * Missing protocol/schema/version → unknown (never silently compatible).
+ * Non-0.8 runtime or protocol/schema drift → incompatible with actionable doctor guidance.
  */
 export function checkHerdrCompatibility(
   obs: HerdrCompatObservation,
@@ -80,6 +111,37 @@ export function checkHerdrCompatibility(
         `Expected runtime ${EXPECTED.runtime} (tested ${HERDR_COMPAT_MATRIX.herdrTestedVersion}), ` +
         `protocol ${EXPECTED.protocol}, schema version ${EXPECTED.schemaVersion}. ` +
         `Run the compatibility doctor to inspect the installed Herdr interfaces.`,
+      observed,
+      expected: { ...EXPECTED },
+    };
+  }
+
+  const parsedVersion = parseHerdVersion(obs.version);
+  if (parsedVersion.kind === "missing" || parsedVersion.kind === "malformed") {
+    const detail =
+      parsedVersion.kind === "missing"
+        ? "missing version"
+        : `malformed version ${JSON.stringify(parsedVersion.raw)}`;
+    return {
+      status: "unknown",
+      message:
+        `Herdr compatibility unknown: ${detail}. ` +
+        `Expected runtime ${EXPECTED.runtime} (tested ${HERDR_COMPAT_MATRIX.herdrTestedVersion}), ` +
+        `protocol ${EXPECTED.protocol}, schema version ${EXPECTED.schemaVersion}. ` +
+        `Run the compatibility doctor to inspect the installed Herdr interfaces.`,
+      observed,
+      expected: { ...EXPECTED },
+    };
+  }
+
+  if (!isSupportedRuntimeVersion(parsedVersion)) {
+    return {
+      status: "incompatible",
+      message:
+        `Herdr incompatible with supported matrix ${EXPECTED.runtime} ` +
+        `(protocol ${EXPECTED.protocol}, schema version ${EXPECTED.schemaVersion}): ` +
+        `observed version ${parsedVersion.raw}, expected runtime ${EXPECTED.runtime}. ` +
+        `Run the compatibility doctor before relying on herd commands.`,
       observed,
       expected: { ...EXPECTED },
     };
@@ -129,22 +191,31 @@ export type PiIntegrationStatus = {
 
 /**
  * Interpret `herdr integration status` text for the Pi hook.
- * Documents absence only — never installs hooks or packages (HOST-01).
+ * Only the selected `pi:` line is authoritative — sibling integrations never
+ * determine Pi state. Documents absence only; never installs (HOST-01).
  */
 export function interpretPiIntegrationStatus(text: string): PiIntegrationStatus {
-  const normalized = text.toLowerCase();
-  // Match lines like "pi: not installed (...)" from herdr integration status.
+  // Match lines like "pi: not installed (...)" / "pi: current (v7) (...)" only.
   const piLine = text
     .split(/\r?\n/)
     .map((l) => l.trim())
     .find((l) => /^pi\s*:/i.test(l));
 
-  const line = (piLine ?? text).toLowerCase();
+  if (!piLine) {
+    return {
+      installed: false,
+      message:
+        "Pi integration status is unclear or missing; treating as absent. " +
+        "CMP-01 does not install hooks or packages.",
+    };
+  }
+
+  // Interpret ONLY the Pi line. Whole-text / sibling wording must not poison state.
+  const line = piLine.toLowerCase();
   const absent =
     /\bnot installed\b/.test(line) ||
     /\babsent\b/.test(line) ||
-    /\bmissing\b/.test(line) ||
-    (/\bpi\b/.test(normalized) && /\bnot installed\b/.test(normalized));
+    /\bmissing\b/.test(line);
 
   if (absent) {
     return {
@@ -155,7 +226,7 @@ export function interpretPiIntegrationStatus(text: string): PiIntegrationStatus 
     };
   }
 
-  if (/\bpi\s*:\s*current\b/i.test(text) || /\bpi\b[\s\S]{0,40}\binstalled\b/i.test(text)) {
+  if (/\bcurrent\b/.test(line) || /(?<!not\s)\binstalled\b/.test(line)) {
     return {
       installed: true,
       message: "Pi integration appears installed according to herdr integration status.",
