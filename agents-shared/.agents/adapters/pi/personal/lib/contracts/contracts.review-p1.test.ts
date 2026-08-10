@@ -310,8 +310,11 @@ function assertEnumEquals(
 
 // ─── Bounded declaration-block extractor (typed public surface) ─────────────
 
-/** Strip // and /* *\/ comments and string/template literals so name hits are code-only. */
-function stripCommentsAndStrings(src: string): string {
+/**
+ * Strip // and /* *\/ comments only. String/template literal text is preserved so
+ * ContractIssueCode unions and kind/const literals remain analyzable after extract.
+ */
+function stripComments(src: string): string {
 	let out = "";
 	let i = 0;
 	while (i < src.length) {
@@ -332,22 +335,29 @@ function stripCommentsAndStrings(src: string): string {
 			out += " ";
 			continue;
 		}
-		// strings
+		// preserve string/template literals verbatim (including escapes)
 		if (c === '"' || c === "'" || c === "`") {
 			const quote = c;
+			out += c;
 			i++;
 			while (i < src.length) {
-				if (src[i] === "\\") {
-					i += 2;
+				const ch = src[i]!;
+				out += ch;
+				if (ch === "\\") {
+					if (i + 1 < src.length) {
+						out += src[i + 1]!;
+						i += 2;
+						continue;
+					}
+					i++;
 					continue;
 				}
-				if (src[i] === quote) {
+				if (ch === quote) {
 					i++;
 					break;
 				}
 				i++;
 			}
-			out += '""';
 			continue;
 		}
 		out += c;
@@ -357,12 +367,62 @@ function stripCommentsAndStrings(src: string): string {
 }
 
 /**
+ * Mask string/template literal *contents* (keep quotes) so token scans for
+ * any/unknown/Record/index do not false-positive on e.g. UsageV1 = "unknown" | {...}.
+ * Comments should already be stripped before calling this.
+ */
+function maskStringLiteralContents(src: string): string {
+	let out = "";
+	let i = 0;
+	while (i < src.length) {
+		const c = src[i]!;
+		if (c === '"' || c === "'" || c === "`") {
+			const quote = c;
+			out += quote;
+			i++;
+			while (i < src.length) {
+				if (src[i] === "\\") {
+					i += 2;
+					continue;
+				}
+				if (src[i] === quote) {
+					out += quote;
+					i++;
+					break;
+				}
+				i++;
+			}
+			continue;
+		}
+		out += c;
+		i++;
+	}
+	return out;
+}
+
+/** Advance index past a string/template starting at i (i points at opening quote). */
+function skipStringLiteral(code: string, i: number): number {
+	const quote = code[i]!;
+	i++;
+	while (i < code.length) {
+		if (code[i] === "\\") {
+			i += 2;
+			continue;
+		}
+		if (code[i] === quote) return i + 1;
+		i++;
+	}
+	return i;
+}
+
+/**
  * Extract a single top-level export type/interface/function declaration statement.
- * Stops at the matching `;` for type aliases, or balanced `{...}` block for interfaces/functions.
+ * Comments stripped; string literal text PRESERVED (required for ContractIssueCode).
+ * Boundary scan skips string interiors so ';' inside quotes cannot end the statement.
  * Does NOT greedily span later unions/types (statement-local).
  */
 function extractDeclaration(src: string, kind: "type" | "interface" | "function", name: string): string | null {
-	const code = stripCommentsAndStrings(src);
+	const code = stripComments(src);
 	const re =
 		kind === "function"
 			? new RegExp(String.raw`export\s+(?:async\s+)?function\s+${name}\b`)
@@ -373,8 +433,16 @@ function extractDeclaration(src: string, kind: "type" | "interface" | "function"
 	let i = start + m[0].length;
 
 	if (kind === "type") {
-		// Find '=' then consume until top-level ';' (track <> () [] depth, not braces from mapped types carefully).
-		while (i < code.length && code[i] !== "=") i++;
+		// Find '=' then consume until top-level ';' (string-aware).
+		while (i < code.length) {
+			const ch = code[i]!;
+			if (ch === '"' || ch === "'" || ch === "`") {
+				i = skipStringLiteral(code, i);
+				continue;
+			}
+			if (ch === "=") break;
+			i++;
+		}
 		if (code[i] !== "=") return null;
 		i++;
 		let angle = 0;
@@ -382,8 +450,12 @@ function extractDeclaration(src: string, kind: "type" | "interface" | "function"
 		let bracket = 0;
 		let brace = 0;
 		const bodyStart = i;
-		for (; i < code.length; i++) {
+		for (; i < code.length; ) {
 			const ch = code[i]!;
+			if (ch === '"' || ch === "'" || ch === "`") {
+				i = skipStringLiteral(code, i);
+				continue;
+			}
 			if (ch === "<") angle++;
 			else if (ch === ">") angle = Math.max(0, angle - 1);
 			else if (ch === "(") paren++;
@@ -395,29 +467,45 @@ function extractDeclaration(src: string, kind: "type" | "interface" | "function"
 			else if (ch === ";" && angle === 0 && paren === 0 && bracket === 0 && brace === 0) {
 				return code.slice(start, i + 1);
 			}
+			i++;
 		}
-		// Fallback: no semicolon (interface-style type) — return through next export/EOF
+		// Fallback: no semicolon — return through next export/EOF
 		return code.slice(start, bodyStart + 2_000);
 	}
 
-	// interface or function: find first `{` or `;` (overload) and balance braces
-	while (i < code.length && code[i] !== "{" && code[i] !== ";") i++;
+	// interface or function: find first `{` or `;` (string-aware) and balance braces
+	while (i < code.length) {
+		const ch = code[i]!;
+		if (ch === '"' || ch === "'" || ch === "`") {
+			i = skipStringLiteral(code, i);
+			continue;
+		}
+		if (ch === "{" || ch === ";") break;
+		i++;
+	}
 	if (code[i] === ";") return code.slice(start, i + 1);
 	if (code[i] !== "{") return null;
 	let depth = 0;
-	for (; i < code.length; i++) {
-		if (code[i] === "{") depth++;
-		else if (code[i] === "}") {
+	for (; i < code.length; ) {
+		const ch = code[i]!;
+		if (ch === '"' || ch === "'" || ch === "`") {
+			i = skipStringLiteral(code, i);
+			continue;
+		}
+		if (ch === "{") depth++;
+		else if (ch === "}") {
 			depth--;
 			if (depth === 0) return code.slice(start, i + 1);
 		}
+		i++;
 	}
 	return null;
 }
 
 /** Collect export type/interface names and type-only re-exports from index-like code. */
 function exportedTypeNames(code: string): Set<string> {
-	const stripped = stripCommentsAndStrings(code);
+	// Comments stripped; mask string contents so comment/doc false-positives in quotes are ignored.
+	const stripped = maskStringLiteralContents(stripComments(code));
 	const names = new Set<string>();
 	const declRe = /export\s+(?:type|interface)\s+([A-Za-z_][A-Za-z0-9_]*)/g;
 	let m: RegExpExecArray | null;
@@ -525,10 +613,12 @@ const WIDE_TYPE_ALIASES = new Set([
 ]);
 
 function hasForbiddenOpenTypeShapes(decl: string): boolean {
-	if (/\bany\b/.test(decl)) return true;
-	if (/(?<![A-Za-z_])unknown(?![A-Za-z0-9_])/.test(decl)) return true;
-	if (/Record\s*</.test(decl)) return true;
-	if (/\[\s*[A-Za-z_][A-Za-z0-9_]*\s*:\s*string\s*\]/.test(decl)) return true;
+	// Mask literal contents so "unknown" / 'unknown' string arms (UsageV1) are not open-unknown.
+	const code = maskStringLiteralContents(decl);
+	if (/\bany\b/.test(code)) return true;
+	if (/(?<![A-Za-z_])unknown(?![A-Za-z0-9_])/.test(code)) return true;
+	if (/Record\s*</.test(code)) return true;
+	if (/\[\s*[A-Za-z_][A-Za-z0-9_]*\s*:\s*string\s*\]/.test(code)) return true;
 	return false;
 }
 
@@ -1559,6 +1649,59 @@ describe("CON-01 review P1", () => {
 				sig(`ContractIssueCode analyzer must accept idiomatic ${s}`),
 			).toBe(true);
 		}
+
+		// CRITICAL: extractDeclaration must preserve quoted codes (not empty "" arms).
+		const sourceWithQuotedCodes = `
+			// noise: "unknown_field" in a comment must not confuse extraction
+			export type ContractIssueCode =
+				| "unknown_field"
+				| "bound_exceeded"
+				| "unsafe_path";
+			export type LaterType = "a" | "b";
+		`;
+		const extractedIssueCodes = extractDeclaration(
+			sourceWithQuotedCodes,
+			"type",
+			"ContractIssueCode",
+		);
+		expect(
+			extractedIssueCodes !== null,
+			sig("extractDeclaration must find ContractIssueCode in synthetic source"),
+		).toBe(true);
+		expect(
+			extractedIssueCodes!.includes('"unknown_field"') &&
+				extractedIssueCodes!.includes('"bound_exceeded"') &&
+				extractedIssueCodes!.includes('"unsafe_path"'),
+			sig(
+				`extractDeclaration must preserve quoted issue codes; got ${extractedIssueCodes}`,
+			),
+		).toBe(true);
+		expect(
+			!extractedIssueCodes!.includes("LaterType"),
+			sig("extractDeclaration must stay statement-local (no LaterType swallow)"),
+		).toBe(true);
+		expect(
+			analyzeContractIssueCode(extractedIssueCodes!).ok,
+			sig(
+				`analyzeContractIssueCode must pass on real extracted declaration with quotes; got ${JSON.stringify(analyzeContractIssueCode(extractedIssueCodes!))}`,
+			),
+		).toBe(true);
+
+		// UsageV1 literal "unknown" must NOT be treated as open TypeScript unknown.
+		const usageWithLit = `export type UsageV1 = "unknown" | { inputTokens: number; outputTokens: number; };`;
+		expect(
+			hasForbiddenOpenTypeShapes(usageWithLit),
+			sig('UsageV1 literal "unknown" must not trip open-unknown scan'),
+		).toBe(false);
+		expect(
+			supportingDeclProblems(usageWithLit, "UsageV1"),
+			sig('supporting oracle must accept UsageV1 = "unknown" | { tokens }'),
+		).toEqual([]);
+		// True open unknown still rejected.
+		expect(
+			hasForbiddenOpenTypeShapes(`export type UsageV1 = unknown;`),
+			sig("bare unknown type must still be forbidden"),
+		).toBe(true);
 		const syntheticBad = [
 			`export type ContractIssueCode = string;`,
 			`export type ContractIssueCode = "only_one";`,
