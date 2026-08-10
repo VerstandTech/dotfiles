@@ -116,3 +116,56 @@ Feature: SEC-00 minimum fleet containment
     Then those remain blocked until SEC-01
     And any non-secret fixture smoke after integration is advisory only
     And no live Grok fleet is part of deterministic green
+
+  # --- Review remediation regressions (accepted independent-review blockers) ---
+
+  Scenario: Pi-compatible path aliases and hardlink-to-secret are denied (review R4)
+    Given Pi 0.84 path semantics for trim, Unicode spaces, leading "@", file://, tilde, and realpath
+    When read-like targets are evaluated after normalization
+    Then "@src/example.ts", trimmed/Unicode-spaced in-cwd paths, repeated dot segments, and in-cwd file:// reads are allowed
+    And file:///etc/passwd, file:// auth.json, AUTH.JSON, and a hardlink to auth.json under a benign name are blocked
+    And the focused failure id is "SEC-00 review R4 > Pi-compatible path aliases and hardlink denial"
+
+  Scenario: Runtime extension harness acknowledges and deny-closes tools (review R10/R3/R4/R6)
+    Given a deterministic fixture harness for the child-policy default export
+    When the extension registers and tool_call events are invoked
+    Then it emits subagent:acknowledge-extension with id fleet-child-policy-v1
+    And inherited secrets are stripped before tool work
+    And pathless grep, find, and ls default to cwd while missing read is denied
+    And mutation, network, unknown tools, reviewer xAI, and outside/secret targets are blocked
+    And researcher xAI is allowed
+    And the focused failure id is "SEC-00 review R10/R3/R4/R6 > runtime extension harness acknowledges and deny-closes tools"
+
+  Scenario: Exact agent tools, extensions, and permission denies are locked (review R2/R3/R6/R7)
+    Given the three canonical fleet agent definitions
+    When tools, extensions, and permissions are inspected
+    Then each role has an exact tool allowlist with no ambient or mutation extras
+    And researcher loads exactly policy plus xAI; reviewer and UX load exactly policy
+    And permissions deny write, edit, apply_patch, subagent, notebook_edit, and bash even when those tools are absent
+    And extra tools or extensions fail assertCanonicalFleetAgentContract
+    And the focused failure id is "SEC-00 review R2/R3/R6/R7 > exact tools, extensions, and permission denies"
+
+  Scenario: Parent preflight rejects PI_SUBAGENT_PI_BINARY and missing installed policy (review R5/R9)
+    Given launch environment and installed-policy injection hooks
+    When assertSafeLaunchEnvironment and preflightFleetContainment run
+    Then PI_SUBAGENT_PI_BINARY, NODE_PATH, and BUN_OPTIONS fail closed
+    And secret-shaped PI_SUBAGENT_* keys are stripped while control keys remain
+    And installedPolicyExtensionExists false fails closed as missing-policy
+    And clean preflight with installedPolicyExtensionExists true is exactly {ok:true}
+    And the focused failure id is "SEC-00 review R5/R9 > dangerous PI_SUBAGENT_PI_BINARY/NODE_PATH/BUN_OPTIONS and installed policy"
+
+  Scenario: Every generated plan is contained at build time (review R2)
+    Given research count 12, custom fallback, and explicit agent overrides
+    When buildFleetPlan and persona expansion run
+    Then research local-scout uses fleet-researcher and all twelve members stay canonical
+    And custom fallback defaults to fleet-reviewer
+    And explicit worker or scout overrides are rejected at plan build so WorkflowScripts never embed them
+    And public payloads pin agentScope to "user"
+    And the focused failure ids include "SEC-00 review R2 > every generated plan is contained" and "SEC-00 review R2 > persona libraries and fallbacks are canonical"
+
+  Scenario: Bounded audit case-normalizes tool names (review R8)
+    Given a temporary audit sink
+    When a blocked attempt is recorded with tool WRITE
+    Then the JSONL tool and action fields are the lowercase write form
+    And secrets and topic text are absent and the record stays bounded
+    And the focused failure id is "SEC-00 review R8 > bounded audit case-normalizes tool names"

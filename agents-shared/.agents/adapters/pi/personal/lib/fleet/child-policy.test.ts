@@ -61,6 +61,11 @@ const SYNTHETIC_SECRET = "sec00-synthetic-secret-value-DO-NOT-LEAK";
 type PolicyModule = {
 	FLEET_CHILD_POLICY_ACK_ID?: string;
 	CHILD_POLICY_EXTENSION?: string;
+	XAI_WEB_SEARCH_EXTENSION?: string;
+	default?: (pi: {
+		on: (event: string, handler: (event: Record<string, unknown>) => unknown) => void;
+		events?: { emit?: (event: string, payload: unknown) => void };
+	}) => void;
 	assertCanonicalFleetAgentContract?: (input: {
 		name: string;
 		frontmatter: string;
@@ -93,6 +98,8 @@ type PolicyModule = {
 		agentScope?: unknown;
 		env?: Record<string, string | undefined>;
 		topic?: string;
+		/** Injected installed-extension existence for deterministic preflight. */
+		installedPolicyExtensionExists?: boolean;
 	}) =>
 		| { ok: true }
 		| {
@@ -652,5 +659,642 @@ describe("SEC-00 R2/R9 > rejects uncontained dispatch before RPC", () => {
 
 		// No live child: this test never calls callSubagentRpc or fleet_dispatch.
 		expect(typeof buildFleetPlan).toBe("function");
+	});
+});
+
+// ===========================================================================
+// SEC-00 review remediation regressions (accepted independent-review blockers)
+// ===========================================================================
+
+const EXACT_INSPECTION_TOOLS = ["read", "grep", "find", "ls"] as const;
+const EXACT_INTERNAL_TOOLS = ["contact_supervisor", "intercom"] as const;
+const EXACT_REVIEWER_TOOLS = [...EXACT_INSPECTION_TOOLS, ...EXACT_INTERNAL_TOOLS] as const;
+const EXACT_RESEARCHER_TOOLS = [...EXACT_REVIEWER_TOOLS, "xai_web_search"] as const;
+const PERMISSION_DENY_TOOLS = [
+	"write",
+	"edit",
+	"apply_patch",
+	"subagent",
+	"notebook_edit",
+	"bash",
+] as const;
+
+function sortedCopy(values: readonly string[]): string[] {
+	return [...values].map((v) => v.trim()).filter(Boolean).sort();
+}
+
+function parsePermissionDenies(fm: string): string[] {
+	const block = fm.match(/permissions:\s*\n([\s\S]*?)(?=\n[a-zA-Z_][^\n]*:|$)/)?.[1] ?? "";
+	const denies: string[] = [];
+	for (const line of block.split("\n")) {
+		const m = line.match(/^\s*([A-Za-z0-9_-]+)\s*:\s*deny\s*$/);
+		if (m?.[1]) denies.push(m[1]);
+	}
+	return denies.sort();
+}
+
+type ExtensionHarness = {
+	acks: Array<{ event: string; payload: unknown }>;
+	invokeTool: (
+		toolName: string,
+		input?: Record<string, unknown>,
+	) => Promise<unknown>;
+	restore: () => void;
+};
+
+/**
+ * Deterministic child-policy extension harness (fixtures/mocks only).
+ * Saves/restores process.env and process.cwd so registration sanitization
+ * cannot leak across tests.
+ */
+async function installExtensionHarness(options?: {
+	agent?: string;
+	cwd?: string;
+	env?: Record<string, string | undefined>;
+	auditPath?: string;
+}): Promise<ExtensionHarness> {
+	const loaded = await loadChildPolicy();
+	const mod = requirePolicy(loaded);
+	const factory = mod.default;
+	expect(
+		typeof factory,
+		"child-policy default export must be the runtime extension factory for harness tests",
+	).toBe("function");
+
+	const previousCwd = process.cwd();
+	const previousEnv = { ...process.env };
+	const acks: Array<{ event: string; payload: unknown }> = [];
+	let toolHandler:
+		| ((event: Record<string, unknown>) => unknown)
+		| undefined;
+
+	const restore = () => {
+		for (const key of Object.keys(process.env)) {
+			if (!(key in previousEnv)) delete process.env[key];
+		}
+		for (const [key, value] of Object.entries(previousEnv)) {
+			if (value === undefined) delete process.env[key];
+			else process.env[key] = value;
+		}
+		try {
+			process.chdir(previousCwd);
+		} catch {
+			// best-effort
+		}
+	};
+
+	try {
+		// Replace env with a controlled synthetic set before registration.
+		for (const key of Object.keys(process.env)) {
+			delete process.env[key];
+		}
+		const baseEnv: Record<string, string | undefined> = {
+			PATH: "/usr/bin:/bin",
+			HOME: previousEnv.HOME ?? "/tmp",
+			TMPDIR: previousEnv.TMPDIR ?? "/tmp",
+			LANG: "en_US.UTF-8",
+			PI_SUBAGENT_DEPTH: "0",
+			PI_SUBAGENT_CHILD_AGENT: options?.agent ?? "fleet-reviewer",
+			PI_SUBAGENT_RUN_ID: "harness-run-1",
+			GITHUB_TOKEN: SYNTHETIC_SECRET,
+			XAI_API_KEY: SYNTHETIC_SECRET,
+			...(options?.env ?? {}),
+		};
+		if (options?.auditPath) {
+			baseEnv.PI_SUBAGENT_PERMISSION_AUDIT_PATH = options.auditPath;
+		}
+		for (const [key, value] of Object.entries(baseEnv)) {
+			if (value === undefined) delete process.env[key];
+			else process.env[key] = value;
+		}
+		if (options?.cwd) process.chdir(options.cwd);
+
+		const pi = {
+			on(event: string, handler: (event: Record<string, unknown>) => unknown) {
+				if (event === "tool_call") toolHandler = handler;
+			},
+			events: {
+				emit(event: string, payload: unknown) {
+					acks.push({ event, payload });
+				},
+			},
+		};
+		factory!(pi);
+	} catch (error) {
+		restore();
+		throw error;
+	}
+
+	return {
+		acks,
+		invokeTool: async (toolName, input = {}) => {
+			expect(typeof toolHandler, "extension must register a tool_call handler").toBe(
+				"function",
+			);
+			return await toolHandler!({
+				type: "tool_call",
+				toolCallId: "tc-harness-1",
+				toolName,
+				input,
+			});
+		},
+		restore,
+	};
+}
+
+function expectBlocked(
+	result: unknown,
+	note: string,
+	reasonRe: RegExp,
+): asserts result is { block: true; reason: string } {
+	expect(result && typeof result === "object", note).toBe(true);
+	const row = result as { block?: unknown; reason?: unknown };
+	expect(row.block, `${note} must block`).toBe(true);
+	expect(String(row.reason ?? ""), `${note} reason`).toMatch(reasonRe);
+}
+
+// ---------------------------------------------------------------------------
+// Review finding 1 — Pi-compatible path normalization
+// ---------------------------------------------------------------------------
+describe("SEC-00 review R4 > Pi-compatible path aliases and hardlink denial", () => {
+	test("normalizes @, file://, trim/Unicode spaces; denies AUTH.JSON and hardlink-to-secret", async () => {
+		const loaded = await loadChildPolicy();
+		const mod = requirePolicy(loaded);
+		const evaluate = requireFn(
+			mod,
+			"evaluateInspectionPath",
+			"evaluateInspectionPath must apply Pi-compatible path normalization before allow/deny",
+		);
+
+		const root = tempDir("sec00-r4-review-");
+		const cwd = join(root, "repo");
+		const home = join(root, "home");
+		mkdirSync(join(cwd, "src"), { recursive: true });
+		mkdirSync(join(home, ".pi/agent"), { recursive: true });
+		writeFileSync(join(cwd, "src/example.ts"), "export const ok = 1;\n");
+		const authPath = join(home, ".pi/agent/auth.json");
+		writeFileSync(authPath, JSON.stringify({ token: SYNTHETIC_SECRET }));
+
+		// Hardlink-to-secret under a benign in-cwd name (inode alias bypass).
+		const hardlinkPath = join(cwd, "harmless-notes.txt");
+		let hardlinkCreated = false;
+		try {
+			const { linkSync } = await import("node:fs");
+			linkSync(authPath, hardlinkPath);
+			hardlinkCreated = true;
+		} catch {
+			hardlinkCreated = false;
+		}
+		expect(
+			hardlinkCreated,
+			"hardlink fixture must be creatable so hardlink-to-secret denial is assertion-based, not skipped",
+		).toBe(true);
+
+		// Case-variant secret basename (Darwin case-insensitive FS + defense-in-depth elsewhere).
+		const authCasePath = join(cwd, "AUTH.JSON");
+		writeFileSync(authCasePath, JSON.stringify({ token: SYNTHETIC_SECRET }));
+
+		const { pathToFileURL } = await import("node:url");
+		const fileUrlInCwd = pathToFileURL(join(cwd, "src/example.ts")).href;
+		const fileUrlAuth = pathToFileURL(authPath).href;
+		const fileUrlOutside = "file:///etc/passwd";
+
+		const nbsp = "\u00A0"; // real Unicode NBSP for Pi normalizeUnicodeSpaces parity
+		const allowedTargets = [
+			"src/example.ts",
+			"@src/example.ts",
+			"  src/example.ts  ",
+			`${nbsp}src/example.ts`,
+			"src/./example.ts",
+			"src//example.ts",
+			fileUrlInCwd,
+		];
+		for (const target of allowedTargets) {
+			const result = evaluate({ cwd, tool: "read", target, home });
+			expect(
+				result.allowed,
+				`Pi-normalized in-cwd read must allow after @/file:///trim/Unicode/dot-segment handling: ${JSON.stringify(target)}`,
+			).toBe(true);
+		}
+
+		const denied: Array<{ target: string; note: string }> = [
+			{ target: fileUrlOutside, note: "file:// outside cwd (/etc/passwd)" },
+			{ target: fileUrlAuth, note: "file:// auth.json" },
+			{ target: `@${authPath}`, note: "leading @ absolute auth" },
+			{ target: `  ${authPath}  `, note: "trimmed absolute auth" },
+			{ target: authCasePath, note: "AUTH.JSON case-insensitive secret name" },
+			{ target: hardlinkPath, note: "hardlink-to-secret denial" },
+			{ target: join(cwd, "src", "..", "..", "home", ".pi", "agent", "auth.json"), note: "repeated .. segments to auth" },
+		];
+
+		for (const d of denied) {
+			const result = evaluate({ cwd, tool: "read", target: d.target, home });
+			expect(
+				result.allowed,
+				`${d.note} must be blocked (file://, @, AUTH.JSON, hardlink, or path alias)`,
+			).toBe(false);
+			expect(
+				`${result.reason ?? ""}`,
+				`${d.note} denial must name auth/secret/outside/hardlink/alias`,
+			).toMatch(/auth|secret|outside child cwd|hardlink|denied|blocked|alias|escape/i);
+		}
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Review finding 2 — runtime extension harness
+// ---------------------------------------------------------------------------
+describe("SEC-00 review R10/R3/R4/R6 > runtime extension harness acknowledges and deny-closes tools", () => {
+	test("acks fleet-child-policy-v1, sanitizes env, pathless grep/find/ls, role xAI, mutation/network/unknown", async () => {
+		const root = tempDir("sec00-harness-");
+		const cwd = join(root, "repo");
+		const home = join(root, "home");
+		const auditPath = join(root, "blocked.jsonl");
+		mkdirSync(join(cwd, "src"), { recursive: true });
+		mkdirSync(join(home, ".pi/agent"), { recursive: true });
+		writeFileSync(join(cwd, "src/example.ts"), "export const ok = 1;\n");
+		writeFileSync(join(home, ".pi/agent/auth.json"), "{}\n");
+
+		// Reviewer harness
+		const reviewer = await installExtensionHarness({
+			agent: "fleet-reviewer",
+			cwd,
+			auditPath,
+			env: {
+				HOME: home,
+				GITHUB_TOKEN: SYNTHETIC_SECRET,
+				PI_SUBAGENT_API_TOKEN: SYNTHETIC_SECRET,
+			},
+		});
+		try {
+			// Exact acknowledgement for subagent:acknowledge-extension
+			expect(
+				reviewer.acks.some(
+					(a) =>
+						a.event === "subagent:acknowledge-extension" &&
+						(a.payload as { id?: string })?.id === "fleet-child-policy-v1",
+				),
+				"runtime ack must emit subagent:acknowledge-extension with id fleet-child-policy-v1",
+			).toBe(true);
+
+			// Env sanitization on register (before model/tool work)
+			expect(
+				process.env.GITHUB_TOKEN,
+				"extension registration must strip GITHUB_TOKEN before tool work",
+			).toBeUndefined();
+			expect(
+				process.env.PI_SUBAGENT_API_TOKEN,
+				"secret-shaped PI_SUBAGENT_* must be stripped at registration",
+			).toBeUndefined();
+			expect(process.env.PI_SUBAGENT_DEPTH, "control PI_SUBAGENT_DEPTH retained").toBe("0");
+			expect(
+				JSON.stringify(process.env),
+				"synthetic secret must not remain in process.env after sanitization",
+			).not.toContain(SYNTHETIC_SECRET);
+
+			// Pathless grep/find/ls default to cwd (allow); missing read denied
+			for (const tool of ["grep", "find", "ls"] as const) {
+				const result = await reviewer.invokeTool(tool, {});
+				expect(
+					result === undefined || (result as { block?: boolean }).block !== true,
+					`pathless ${tool} must default to cwd and be allowed`,
+				).toBe(true);
+			}
+			const missingRead = await reviewer.invokeTool("read", {});
+			expectBlocked(missingRead, "missing read path", /missing|path|read/i);
+
+			// Mutation / network / unknown
+			expectBlocked(
+				await reviewer.invokeTool("write", { path: "src/x.ts", content: "nope" }),
+				"mutation write",
+				/mutation-tool-denied|mutation|write/i,
+			);
+			expectBlocked(
+				await reviewer.invokeTool("bash", { command: "echo hi" }),
+				"mutation bash",
+				/mutation-tool-denied|mutation|bash/i,
+			);
+			expectBlocked(
+				await reviewer.invokeTool("curl", { url: "https://example.com" }),
+				"network curl",
+				/network|curl|denied/i,
+			);
+			expectBlocked(
+				await reviewer.invokeTool("totally_unknown_tool", {}),
+				"unknown tool",
+				/undeclared|unknown|denied/i,
+			);
+
+			// Reviewer xAI denied
+			expectBlocked(
+				await reviewer.invokeTool("xai_web_search", { query: "x" }),
+				"reviewer xAI",
+				/xai|network|researcher|denied/i,
+			);
+
+			// Outside / secret read-like targets denied
+			expectBlocked(
+				await reviewer.invokeTool("read", { path: join(home, ".pi/agent/auth.json") }),
+				"auth read",
+				/auth|secret|denied/i,
+			);
+			expectBlocked(
+				await reviewer.invokeTool("grep", { path: home, pattern: "todo" }),
+				"grep home",
+				/outside child cwd|denied|home/i,
+			);
+
+			// In-cwd read allowed
+			const okRead = await reviewer.invokeTool("read", { path: "src/example.ts" });
+			expect(
+				okRead === undefined || (okRead as { block?: boolean }).block !== true,
+				"in-cwd read must be allowed",
+			).toBe(true);
+
+			// Case-normalized mutation tool name still denied
+			expectBlocked(
+				await reviewer.invokeTool("WRITE", { path: "x.ts", content: "x" }),
+				"case-normalized WRITE",
+				/mutation|WRITE|write|denied/i,
+			);
+		} finally {
+			reviewer.restore();
+		}
+
+		// Researcher harness — xAI allowed
+		const researcher = await installExtensionHarness({
+			agent: "fleet-researcher",
+			cwd,
+			env: { HOME: home },
+		});
+		try {
+			const xai = await researcher.invokeTool("xai_web_search", { query: "pi-subagents 0.45.2" });
+			expect(
+				xai === undefined || (xai as { block?: boolean }).block !== true,
+				"researcher xai_web_search must be allowed",
+			).toBe(true);
+		} finally {
+			researcher.restore();
+		}
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Review finding 3 — exact agent contracts
+// ---------------------------------------------------------------------------
+describe("SEC-00 review R2/R3/R6/R7 > exact tools, extensions, and permission denies", () => {
+	test("locks exact tool/extension sets and permission denies even when tools omit mutation", async () => {
+		const loaded = await loadChildPolicy();
+		const mod = requirePolicy(loaded);
+		const assertContract = requireFn(
+			mod,
+			"assertCanonicalFleetAgentContract",
+			"assertCanonicalFleetAgentContract must enforce exact tools/extensions",
+		);
+		const policyExt =
+			typeof mod.CHILD_POLICY_EXTENSION === "string"
+				? mod.CHILD_POLICY_EXTENSION
+				: "~/.pi/agent/personal/lib/fleet/child-policy.ts";
+		const xaiExt =
+			typeof mod.XAI_WEB_SEARCH_EXTENSION === "string"
+				? mod.XAI_WEB_SEARCH_EXTENSION
+				: "~/.pi/agent/personal/extensions/xai-web-search.ts";
+
+		for (const name of CANONICAL_AGENTS) {
+			const raw = readAgent(name);
+			const fm = frontmatterBlock(raw);
+			const tools = parseTools(fm);
+			const extensions = parseListField(fm, "extensions");
+			const subOnly = parseListField(fm, "subagentOnlyExtensions");
+			const expectedTools =
+				name === "fleet-researcher" ? EXACT_RESEARCHER_TOOLS : EXACT_REVIEWER_TOOLS;
+
+			expect(
+				sortedCopy(tools),
+				`${name} must declare exact tools only (no ambient/network/mutation extras)`,
+			).toEqual(sortedCopy(expectedTools));
+
+			if (name === "fleet-researcher") {
+				const allExt = [...extensions, ...subOnly];
+				expect(allExt, "researcher must load exactly policy + xAI (2 entries)").toHaveLength(2);
+				expect(
+					allExt.some((e) => e.includes("child-policy") || e === policyExt),
+					"researcher policy extension required",
+				).toBe(true);
+				expect(
+					allExt.some((e) => e.includes("xai-web-search") || e === xaiExt),
+					"researcher xAI extension required",
+				).toBe(true);
+				expect(
+					allExt.every(
+						(e) =>
+							e.includes("child-policy") ||
+							e === policyExt ||
+							e.includes("xai-web-search") ||
+							e === xaiExt,
+					),
+					"researcher extensions must be exactly policy + xAI (no ambient extras)",
+				).toBe(true);
+			} else {
+				expect(extensions, `${name} must have exactly one extension`).toHaveLength(1);
+				expect(
+					extensions[0]?.includes("child-policy") || extensions[0] === policyExt,
+					`${name} extension must be exactly the child-policy entry`,
+				).toBe(true);
+				expect(subOnly, `${name} subagentOnlyExtensions must be empty`).toEqual([]);
+			}
+
+			// Permission denies asserted even when forbidden tools are absent from tools:
+			const denies = parsePermissionDenies(fm);
+			for (const tool of PERMISSION_DENY_TOOLS) {
+				expect(
+					denies,
+					`${name} permissions must deny ${tool} even when tools omit it`,
+				).toContain(tool);
+			}
+
+			// Contract helper accepts the live definition.
+			expect(() =>
+				assertContract({
+					name,
+					frontmatter: fm,
+					tools,
+					extensions,
+					subagentOnlyExtensions: subOnly,
+					raw,
+				}),
+			).not.toThrow();
+
+			// Extra extension / extra tool must fail the contract helper.
+			expect(() =>
+				assertContract({
+					name,
+					frontmatter: fm,
+					tools: [...tools, "bash"],
+					extensions,
+					subagentOnlyExtensions: subOnly,
+					raw,
+				}),
+				`${name} contract must reject extra bash tool`,
+			).toThrow(/bash|mutation|exact|tool/i);
+
+			expect(() =>
+				assertContract({
+					name,
+					frontmatter: fm,
+					tools,
+					extensions: [...extensions, "~/.pi/agent/evil-extra.ts"],
+					subagentOnlyExtensions: subOnly,
+					raw,
+				}),
+				`${name} contract must reject extra extension`,
+			).toThrow(/extension|exact|extra|policy/i);
+		}
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Review finding 4 — parent/preflight environment + installed policy injection
+// ---------------------------------------------------------------------------
+describe("SEC-00 review R5/R9 > dangerous PI_SUBAGENT_PI_BINARY/NODE_PATH/BUN_OPTIONS and installed policy", () => {
+	test("rejects PI_SUBAGENT_PI_BINARY, NODE_PATH, BUN_OPTIONS; strips secret-shaped PI_SUBAGENT_*; installed policy injection", async () => {
+		const loaded = await loadChildPolicy();
+		const mod = requirePolicy(loaded);
+		const sanitize = requireFn(
+			mod,
+			"sanitizeChildEnvironment",
+			"sanitizeChildEnvironment must strip secret-shaped PI_SUBAGENT_* keys",
+		);
+		const assertLaunch = requireFn(
+			mod,
+			"assertSafeLaunchEnvironment",
+			"assertSafeLaunchEnvironment must reject PI_SUBAGENT_PI_BINARY, NODE_PATH, BUN_OPTIONS",
+		);
+		const preflight = requireFn(
+			mod,
+			"preflightFleetContainment",
+			"preflightFleetContainment must honor installed-policy injection and fail closed when missing",
+		);
+
+		for (const key of ["PI_SUBAGENT_PI_BINARY", "NODE_PATH", "BUN_OPTIONS"] as const) {
+			const launch = assertLaunch({ PATH: "/usr/bin", [key]: "/evil/or/inject" });
+			expect(
+				launch.ok,
+				`pre-start ${key} must fail closed (dangerous fixed set includes PI_SUBAGENT_PI_BINARY/NODE_PATH/BUN_OPTIONS)`,
+			).toBe(false);
+			if (!launch.ok) {
+				expect(`${launch.code} ${(launch.keys ?? []).join(",")}`).toMatch(
+					new RegExp(`${key}|dangerous|pre-start|inject`, "i"),
+				);
+			}
+		}
+
+		const sanitized = sanitize({
+			PATH: "/usr/bin",
+			PI_SUBAGENT_DEPTH: "0",
+			PI_SUBAGENT_PERMISSION_POLICY: "{}",
+			PI_SUBAGENT_API_KEY: SYNTHETIC_SECRET,
+			PI_SUBAGENT_TOKEN: SYNTHETIC_SECRET,
+			PI_SUBAGENT_AUTH_PASSWORD: SYNTHETIC_SECRET,
+			PI_INTERCOM_SESSION: "sess",
+		});
+		for (const key of [
+			"PI_SUBAGENT_API_KEY",
+			"PI_SUBAGENT_TOKEN",
+			"PI_SUBAGENT_AUTH_PASSWORD",
+		]) {
+			expect(
+				sanitized.env[key],
+				`secret-shaped ${key} must be stripped (not blanket-allowed under PI_SUBAGENT_*)`,
+			).toBeUndefined();
+			expect(sanitized.removedKeys, `removedKeys must include ${key}`).toContain(key);
+		}
+		expect(sanitized.env.PI_SUBAGENT_DEPTH).toBe("0");
+		expect(sanitized.env.PI_INTERCOM_SESSION).toBe("sess");
+		expect(JSON.stringify(sanitized), "synthetic secret must not appear in sanitize output").not.toContain(
+			SYNTHETIC_SECRET,
+		);
+
+		const missingInstalled = preflight({
+			agents: ["fleet-reviewer"],
+			agentScope: "user",
+			env: { PATH: "/usr/bin" },
+			installedPolicyExtensionExists: false,
+		});
+		expect(
+			missingInstalled.ok,
+			"missing installed policy extension must fail closed",
+		).toBe(false);
+		if (!missingInstalled.ok) {
+			expect(`${missingInstalled.code} ${missingInstalled.reason ?? ""}`).toMatch(
+				/missing-policy|installed|policy extension|child-policy/i,
+			);
+			expect(missingInstalled.blocked ?? true).toBe(true);
+		}
+
+		const clean = preflight({
+			agents: ["fleet-reviewer"],
+			agentScope: "user",
+			env: { PATH: "/usr/bin", HOME: "/tmp", PI_SUBAGENT_DEPTH: "0" },
+			installedPolicyExtensionExists: true,
+		});
+		expect(
+			clean,
+			"clean preflight through injected installed-extension existence must be exactly {ok:true}",
+		).toEqual({ ok: true });
+
+		// Dangerous binary/env still blocks even when installed policy is present.
+		const dangerousBinary = preflight({
+			agents: ["fleet-reviewer"],
+			agentScope: "user",
+			env: { PATH: "/usr/bin", PI_SUBAGENT_PI_BINARY: "/tmp/evil-pi" },
+			installedPolicyExtensionExists: true,
+		});
+		expect(
+			dangerousBinary.ok,
+			"PI_SUBAGENT_PI_BINARY must block preflight even with installed policy present",
+		).toBe(false);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Review finding 6 — bounded audit + case-normalized tool names
+// ---------------------------------------------------------------------------
+describe("SEC-00 review R8 > bounded audit case-normalizes tool names", () => {
+	test("persists lowercase tool/action and never stores raw secrets or topic text", async () => {
+		const loaded = await loadChildPolicy();
+		const mod = requirePolicy(loaded);
+		const record = requireFn(
+			mod,
+			"recordBlockedAttempt",
+			"recordBlockedAttempt must case-normalize tool names in bounded audit records",
+		);
+
+		const dir = tempDir("sec00-r8-case-");
+		const auditPath = join(dir, "blocked.jsonl");
+		record(auditPath, {
+			agent: "fleet-reviewer",
+			runId: "run-case",
+			tool: "WRITE",
+			action: "WRITE",
+			reason: "mutation-tool-denied",
+			args: { path: "src/x.ts", token: SYNTHETIC_SECRET, topic: "TOPIC_MUST_NOT_PERSIST" },
+		});
+
+		const line = readFileSync(auditPath, "utf8").trim().split("\n").at(-1) ?? "";
+		const row = JSON.parse(line) as Record<string, unknown>;
+		expect(
+			String(row.tool),
+			"audit tool-name matching is case-normalized (WRITE → write)",
+		).toBe("write");
+		expect(String(row.action)).toBe("write");
+		const serialized = JSON.stringify(row);
+		expect(serialized, "bounded audit must not persist synthetic secret").not.toContain(
+			SYNTHETIC_SECRET,
+		);
+		expect(serialized, "bounded audit must not persist topic text").not.toContain(
+			"TOPIC_MUST_NOT_PERSIST",
+		);
+		expect(serialized.length, "audit record must stay bounded").toBeLessThan(4000);
 	});
 });

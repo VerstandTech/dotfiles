@@ -739,3 +739,130 @@ describe("buildFleetWorkflowScript partial child failures (R14)", () => {
 		}
 	});
 });
+
+// ---------------------------------------------------------------------------
+// SEC-00 review remediation — every generated plan is contained
+// ---------------------------------------------------------------------------
+describe("SEC-00 review R2 > every generated plan is contained (scout/worker override, agentScope)", () => {
+	test("research local-scout and count 12 stay canonical fleet-researcher; custom fallback canonical", () => {
+		const plan12 = buildFleetPlan({
+			kind: "research",
+			topic: "sec00-contained-research",
+			count: 12,
+		});
+		expect(plan12.tasks, "count 12 stays canonical").toHaveLength(12);
+		const localScout = plan12.tasks.find((t) => t.personaId === "local-scout");
+		expect(localScout, "research library includes local-scout at count 12").toBeDefined();
+		expect(
+			localScout!.agent,
+			"research local-scout must use fleet-researcher (not uncontained scout)",
+		).toBe("fleet-researcher");
+		for (const task of plan12.tasks) {
+			expect(
+				task.agent,
+				`research member ${task.personaId} must be canonical fleet-researcher`,
+			).toBe("fleet-researcher");
+		}
+
+		const custom = buildFleetPlan({
+			kind: "custom",
+			topic: "sec00-custom-fallback",
+			count: 3,
+		});
+		expect(custom.tasks).toHaveLength(3);
+		for (const task of custom.tasks) {
+			expect(
+				task.agent,
+				`custom fallback agent must be canonical (got ${task.agent}; reviewer/scout/worker are uncontained)`,
+			).toMatch(/^fleet-(researcher|reviewer|ux)$/);
+		}
+
+		// agentScope pinned on every public payload (including research/custom).
+		for (const plan of [plan12, custom]) {
+			const params = asPublicParams(plan);
+			expect(
+				params.agentScope,
+				'public execution binds agentScope to "user"',
+			).toBe("user");
+			assertNoLegacyPublicPayload(params);
+		}
+	});
+
+	test("explicit worker/scout override is rejected at plan build (no executable uncontained WorkflowScript)", () => {
+		for (const agent of ["worker", "scout"] as const) {
+			let threw = false;
+			let plan: ReturnType<typeof buildFleetPlan> | undefined;
+			try {
+				plan = buildFleetPlan({
+					kind: "research",
+					topic: `sec00-override-${agent}`,
+					count: 2,
+					agent,
+				});
+			} catch (error) {
+				threw = true;
+				expect(
+					`${error instanceof Error ? error.message : String(error)}`,
+					`${agent} override rejection must name uncontained-agent/scout/worker`,
+				).toMatch(/uncontained-agent|scout|worker|canonical/i);
+			}
+			if (!threw && plan) {
+				// If build does not throw, it must not emit executable uncontained agents.
+				for (const task of plan.tasks) {
+					expect(
+						task.agent,
+						`plan must not emit ${agent} after override (got ${task.agent})`,
+					).not.toBe(agent);
+					expect(task.agent).toMatch(/^fleet-(researcher|reviewer|ux)$/);
+				}
+				const script = String(plan.subagentParams.workflowScript);
+				expect(
+					script.includes(`"agent":"${agent}"`) || script.includes(`agent: "${agent}"`),
+					`WorkflowScript must not embed executable uncontained agent ${agent}`,
+				).toBe(false);
+				// Prefer hard rejection — soft rewrite alone is not enough for this oracle.
+				expect(
+					threw,
+					`explicit ${agent} override must be rejected at plan build so fleet_plan/RPC-failure payloads cannot emit uncontained WorkflowScripts`,
+				).toBe(true);
+			}
+			expect(threw, `explicit ${agent} override must throw at plan build`).toBe(true);
+		}
+
+		// Custom personas carrying scout/worker must also fail closed at plan build.
+		for (const agent of ["worker", "scout"] as const) {
+			let threw = false;
+			try {
+				buildFleetPlan({
+					kind: "custom",
+					topic: `sec00-custom-${agent}`,
+					count: 1,
+					personas: [{ id: "x", label: "X", angle: "a", agent }],
+				});
+			} catch (error) {
+				threw = true;
+				expect(
+					`${error instanceof Error ? error.message : String(error)}`,
+				).toMatch(/uncontained-agent|scout|worker|canonical/i);
+			}
+			expect(
+				threw,
+				`custom persona agent ${agent} must be rejected at plan build`,
+			).toBe(true);
+		}
+	});
+
+	test("public payload pins agentScope user for review fleet_plan shape", () => {
+		const plan = buildFleetPlan({
+			kind: "review",
+			topic: "sec00-agentscope-pin",
+			count: 3,
+		});
+		const params = asPublicParams(plan);
+		assertNoLegacyPublicPayload(params);
+		expect(params.agentScope, 'agentScope:"user" is pinned in the public payload').toBe("user");
+		for (const task of plan.tasks) {
+			expect(task.agent).toBe("fleet-reviewer");
+		}
+	});
+});
