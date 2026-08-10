@@ -1,0 +1,6 @@
+{
+  "protocol": 19,
+  "schema_version": 1,
+  "herdr_version": "0.8.0",
+  "note": "Normalized public meta from herdr api schema --json / --version. Not a live session dump."
+}

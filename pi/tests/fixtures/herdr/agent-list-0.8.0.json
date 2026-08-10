@@ -1,0 +1,77 @@
+{
+  "id": "cli:agent:list",
+  "result": {
+    "type": "agent_list",
+    "agents": [
+      {
+        "name": "web",
+        "agent": "pi",
+        "agent_status": "working",
+        "pane_id": "wS:p2",
+        "workspace_id": "wS",
+        "tab_id": "wS:t1",
+        "terminal_id": "term_synthetic_web",
+        "focused": false,
+        "revision": 11,
+        "state_change_seq": 21,
+        "cwd": "/tmp/herdr-fixtures/repo-web",
+        "foreground_cwd": "/tmp/herdr-fixtures/repo-web",
+        "terminal_title": "pi - repo-web",
+        "terminal_title_stripped": "pi - repo-web",
+        "interactive_ready": true,
+        "extra_0_8_field": "ignored-by-parser"
+      },
+      {
+        "name": "api",
+        "agent": "pi",
+        "agent_status": "blocked",
+        "pane_id": "wS:p3",
+        "workspace_id": "wS",
+        "tab_id": "wS:t1",
+        "terminal_id": "term_synthetic_api",
+        "focused": true,
+        "revision": 8,
+        "state_change_seq": 30,
+        "cwd": "/tmp/herdr-fixtures/repo-api",
+        "foreground_cwd": "/tmp/herdr-fixtures/repo-api",
+        "terminal_title": "pi - repo-api",
+        "terminal_title_stripped": "pi - repo-api",
+        "interactive_ready": true,
+        "launch_pending": false,
+        "state_labels": {
+          "reason": "awaiting-approval"
+        }
+      },
+      {
+        "name": "docs",
+        "agent": "claude",
+        "display_agent": "Claude",
+        "agent_status": "done",
+        "pane_id": "wS:p4",
+        "workspace_id": "wS",
+        "tab_id": "wS:t2",
+        "terminal_id": "term_synthetic_docs",
+        "focused": false,
+        "revision": 3,
+        "state_change_seq": 12,
+        "cwd": "/tmp/herdr-fixtures/repo-docs",
+        "foreground_cwd": "/tmp/herdr-fixtures/repo-docs"
+      },
+      {
+        "name": "db",
+        "agent": "pi",
+        "agent_status": "idle",
+        "pane_id": "wS:p5",
+        "workspace_id": "wS",
+        "tab_id": "wS:t3",
+        "terminal_id": "term_synthetic_db",
+        "focused": false,
+        "revision": 2,
+        "state_change_seq": 4,
+        "cwd": "/tmp/herdr-fixtures/repo-db",
+        "foreground_cwd": "/tmp/herdr-fixtures/repo-db",
+        "interactive_ready": true
+      }
+    ]
+  }
+}

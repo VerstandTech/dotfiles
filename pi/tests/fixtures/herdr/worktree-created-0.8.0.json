@@ -1,0 +1,40 @@
+{
+  "id": "cli:worktree:create",
+  "result": {
+    "type": "worktree_created",
+    "workspace": {
+      "id": "wS",
+      "label": "fixture-workspace",
+      "cwd": "/tmp/herdr-fixtures/repo-main"
+    },
+    "tab": {
+      "id": "wS:t9",
+      "workspace_id": "wS",
+      "title": "story-alpha"
+    },
+    "root_pane": {
+      "pane_id": "wS:p9",
+      "terminal_id": "term_synthetic_root",
+      "workspace_id": "wS",
+      "tab_id": "wS:t9",
+      "focused": false,
+      "agent_status": "unknown",
+      "revision": 1,
+      "cwd": "/tmp/herdr-fixtures/repo-story-alpha"
+    },
+    "worktree": {
+      "path": "/tmp/herdr-fixtures/repo-story-alpha",
+      "label": "story-alpha",
+      "branch": "story-alpha",
+      "is_bare": false,
+      "is_detached": false,
+      "is_prunable": false,
+      "is_linked_worktree": true,
+      "open_workspace_id": "wS"
+    },
+    "extra_0_8_metadata": {
+      "source": "normalized-fixture",
+      "note": "parsers must ignore unknown fields"
+    }
+  }
+}

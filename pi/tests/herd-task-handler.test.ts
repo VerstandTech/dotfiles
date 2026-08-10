@@ -4,7 +4,8 @@ import { describe, expect, test } from "bun:test";
 import { extractPaneId, runHerdTask } from "../.pi/agent/personal/extensions/herd/herd-task-handler";
 import type { ExecFn } from "../.pi/agent/personal/extensions/herd/herd-source";
 
-// Real herdr 0.7.5 `herdr worktree create` envelope (schema: worktree_created).
+// Synthetic herdr 0.8 `herdr worktree create` envelope (schema: worktree_created).
+// Public fields only; ids/paths are fixtures, not live session values.
 const CREATE_OK = JSON.stringify({
   id: "cli:worktree:create",
   result: {
@@ -12,7 +13,7 @@ const CREATE_OK = JSON.stringify({
     workspace: { id: "w2" },
     tab: { id: "w2:t1" },
     root_pane: { pane_id: "w1:p2" },
-    worktree: { path: "/x/repo-story-123", label: "story-123" },
+    worktree: { path: "/tmp/herdr-fixtures/repo-story-123", label: "story-123" },
   },
 });
 
@@ -69,6 +70,7 @@ describe("runHerdTask", () => {
       "--cwd", "/x/repo",
       "--branch", "story-123",
       "--label", "story-123",
+      "--no-focus",
     ]);
     expect(calls[1]).toEqual([
       "herdr", "agent", "start", "story-123", "--kind", "pi", "--pane", "w1:p2",

@@ -20,14 +20,15 @@ describe("isValidAgentName (R3-E2)", () => {
 describe("buildTaskLaunch", () => {
   test("R3-E1: wraps native `herdr worktree create` with branch, base, label", () => {
     const argv = buildTaskLaunch({ name: "story-123", cwd: "/x/repo", base: "develop" });
-    // herdr 0.7.5 surface: --workspace/--cwd/--branch/--base/--path/--label/--focus.
-    // No --no-focus (focus is opt-in), no --json (JSON envelope is the default output).
+    // herdr 0.8 surface: --workspace/--cwd/--branch/--base/--path/--label/--focus/--no-focus.
+    // Detach-safe launches emit --no-focus explicitly; JSON envelope remains the default output.
     expect(argv).toEqual([
       "herdr", "worktree", "create",
       "--cwd", "/x/repo",
       "--branch", "story-123",
       "--base", "develop",
       "--label", "story-123",
+      "--no-focus",
     ]);
   });
 
@@ -44,10 +45,10 @@ describe("buildTaskLaunch", () => {
     expect(argv[i + 1]).toBe("release/2.x");
   });
 
-  test("R7-E1: detach-safe — never passes --focus (herdr 0.7.5 create does not steal the pane by default); IDs parsed from the default JSON envelope, never derived", () => {
+  test("R7-E1: detach-safe — herdr 0.8 emits explicit --no-focus; never --focus/--json; IDs parsed from the default JSON envelope, never derived", () => {
     const argv = buildTaskLaunch({ name: "story-1", cwd: "/r" });
+    expect(argv).toContain("--no-focus");
     expect(argv).not.toContain("--focus");
-    expect(argv).not.toContain("--no-focus");
     expect(argv).not.toContain("--json");
   });
 
