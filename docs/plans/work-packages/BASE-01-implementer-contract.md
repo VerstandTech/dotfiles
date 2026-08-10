@@ -28,7 +28,7 @@ Run:
 cd agents-shared/.agents/adapters/pi/personal
 bun test lib/bdd/playbook.test.ts lib/bdd/assurance-agents.test.ts
 bun test lib
-cd ../../../../../..
+cd ../../../../..
 bash scripts/test-root.sh
 ```
 
