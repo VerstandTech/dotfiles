@@ -68,6 +68,11 @@ export interface FleetSubagentParams {
 	workflowScript: string;
 	context: "fresh" | "fork";
 	async: true;
+	/**
+	 * SEC-00: bind discovery to user/package agents so project checkouts cannot
+	 * shadow reviewed fleet-researcher / fleet-reviewer / fleet-ux definitions.
+	 */
+	agentScope: "user";
 }
 
 export interface FleetPlan {
@@ -429,6 +434,7 @@ export function buildFleetPlan(input: FleetPlanInput): FleetPlan {
 		workflowScript: buildFleetWorkflowScript(tasks, concurrency),
 		context,
 		async: true,
+		agentScope: "user",
 	};
 
 	return {
