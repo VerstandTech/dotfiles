@@ -171,3 +171,19 @@ Feature: SEC-00 minimum fleet containment
     Then the JSONL tool and action fields are the lowercase write form
     And secrets and topic text are absent and the record stays bounded
     And the focused failure id is "SEC-00 review R8 > bounded audit case-normalizes tool names"
+
+  # --- Final independent security P1 regressions (handoff lock) ---
+
+  Scenario: Benign hardlink to in-cwd .env.local is denied (final P1)
+    Given an in-cwd .env.local (and another known secret such as .npmrc) with no auth.json hardlink fixture
+    When a benign-name hardlink inside cwd shares the secret inode and read is evaluated
+    Then the benign hardlink is denied even though realpath and basename look non-secret
+    And denial must not rely only on the auth.json inode special case
+    And the focused failure id is "SEC-00 final > benign hardlink to .env.local"
+
+  Scenario: Preflight validates the installed policy path agents load (final P1)
+    Given deterministic installedPolicyExtensionPath injection (default remains expanded CHILD_POLICY_EXTENSION)
+    When preflightFleetContainment runs while module source exists
+    Then a missing injected installed path fails closed as missing-policy and is not satisfied by module source
+    And an existing injected policy path permits the otherwise-clean exact {ok:true} path
+    And the focused failure id is "SEC-00 final > installed policy path preflight"

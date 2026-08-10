@@ -9,6 +9,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import {
 	chmodSync,
 	existsSync,
+	linkSync,
 	mkdtempSync,
 	mkdirSync,
 	readFileSync,
@@ -100,6 +101,8 @@ type PolicyModule = {
 		topic?: string;
 		/** Injected installed-extension existence for deterministic preflight. */
 		installedPolicyExtensionExists?: boolean;
+		/** Injected installed-extension path agents actually load (preferred over boolean). */
+		installedPolicyExtensionPath?: string;
 	}) =>
 		| { ok: true }
 		| {
@@ -1309,3 +1312,155 @@ describe("SEC-00 review R8 > bounded audit case-normalizes tool names", () => {
 		expect(serialized.length, "audit record must stay bounded").toBeLessThan(4000);
 	});
 });
+
+// ---------------------------------------------------------------------------
+// Final security P1s — independent regressions before SEC-00 handoff
+// ---------------------------------------------------------------------------
+describe("SEC-00 final > benign hardlink to .env.local", () => {
+	test("denies benign-name hardlink to in-cwd .env.local (and another known secret) without auth.json inode special case", async () => {
+		const loaded = await loadChildPolicy();
+		const mod = requirePolicy(loaded);
+		const evaluate = requireFn(
+			mod,
+			"evaluateInspectionPath",
+			"evaluateInspectionPath must deny benign hardlinks to in-cwd secret files, not only auth.json",
+		);
+
+		const root = tempDir("sec00-final-hardlink-");
+		const cwd = join(root, "repo");
+		const home = join(root, "home");
+		mkdirSync(join(cwd, "src"), { recursive: true });
+		mkdirSync(join(home, ".pi/agent"), { recursive: true });
+		writeFileSync(join(cwd, "src/example.ts"), "export const ok = 1;\n");
+		// In-cwd secrets only — no auth.json hardlink path in this fixture.
+		const envLocalPath = join(cwd, ".env.local");
+		const npmrcPath = join(cwd, ".npmrc");
+		writeFileSync(envLocalPath, `SECRET=${SYNTHETIC_SECRET}\n`);
+		writeFileSync(npmrcPath, "//registry.npmjs.org/:_authToken=sec00-npm-token\n");
+		// Ensure home auth.json is absent so denial cannot piggyback on auth inode compare.
+		expect(
+			existsSync(join(home, ".pi/agent/auth.json")),
+			"fixture must not create auth.json so hardlink denial cannot rely only on auth.json inode special case",
+		).toBe(false);
+
+		const envHardlink = join(cwd, "harmless-notes.txt");
+		const npmrcHardlink = join(cwd, "project-readme.txt");
+		let hardlinksCreated = false;
+		try {
+			linkSync(envLocalPath, envHardlink);
+			linkSync(npmrcPath, npmrcHardlink);
+			hardlinksCreated = true;
+		} catch {
+			hardlinksCreated = false;
+		}
+		expect(
+			hardlinksCreated,
+			"hardlink fixtures to .env.local and .npmrc must be creatable so denial is assertion-based, not skipped",
+		).toBe(true);
+
+		// Control: ordinary in-cwd source still allowed; direct secret basenames still denied.
+		expect(
+			evaluate({ cwd, tool: "read", target: "src/example.ts", home }).allowed,
+			"in-cwd non-secret read must remain allowed",
+		).toBe(true);
+		expect(
+			evaluate({ cwd, tool: "read", target: envLocalPath, home }).allowed,
+			"direct .env.local basename must still be denied",
+		).toBe(false);
+
+		const envLinkResult = evaluate({
+			cwd,
+			tool: "read",
+			target: envHardlink,
+			home,
+		});
+		expect(
+			envLinkResult.allowed,
+			"benign hardlink to .env.local must be denied even though realpath/basename look benign",
+		).toBe(false);
+		expect(
+			`${envLinkResult.reason ?? ""}`,
+			"benign hardlink to .env.local denial must name hardlink/secret",
+		).toMatch(/hardlink|secret|\.env|denied|blocked/i);
+
+		const npmrcLinkResult = evaluate({
+			cwd,
+			tool: "read",
+			target: npmrcHardlink,
+			home,
+		});
+		expect(
+			npmrcLinkResult.allowed,
+			"benign hardlink to .npmrc must be denied without relying on auth.json inode special case",
+		).toBe(false);
+		expect(
+			`${npmrcLinkResult.reason ?? ""}`,
+			"benign hardlink to .npmrc denial must name hardlink/secret",
+		).toMatch(/hardlink|secret|npmrc|denied|blocked/i);
+	});
+});
+
+describe("SEC-00 final > installed policy path preflight", () => {
+	test("missing installed policy path must not be satisfied by module source", async () => {
+		const loaded = await loadChildPolicy();
+		const mod = requirePolicy(loaded);
+		const preflight = requireFn(
+			mod,
+			"preflightFleetContainment",
+			"preflightFleetContainment must validate the installed policy path agents actually load",
+		);
+
+		// Module source exists in this package — that must not satisfy a missing installed path.
+		expect(
+			existsSync(new URL("./child-policy.ts", import.meta.url).pathname),
+			"module source must exist so the red proves installed-path checks are independent of source presence",
+		).toBe(true);
+
+		const root = tempDir("sec00-final-policy-path-");
+		const missingInstalledPath = join(root, "missing-install", "extensions", "child-policy.ts");
+		expect(
+			existsSync(missingInstalledPath),
+			"injected installed path fixture must be absent",
+		).toBe(false);
+
+		const missing = preflight({
+			agents: ["fleet-reviewer"],
+			agentScope: "user",
+			env: { PATH: "/usr/bin", HOME: homeOrTmp(), PI_SUBAGENT_DEPTH: "0" },
+			installedPolicyExtensionPath: missingInstalledPath,
+		});
+		expect(
+			missing.ok,
+			"missing installed policy path must not be satisfied by module source",
+		).toBe(false);
+		if (!missing.ok) {
+			expect(
+				`${missing.code} ${missing.reason ?? ""}`,
+				"missing installed path must fail closed as missing-policy",
+			).toMatch(/missing-policy|installed|policy extension|child-policy/i);
+			expect(missing.blocked ?? true).toBe(true);
+		}
+
+		// Existing injected installed path permits the otherwise-clean exact {ok:true} path.
+		const installedDir = join(root, "installed", "extensions");
+		mkdirSync(installedDir, { recursive: true });
+		const existingInstalledPath = join(installedDir, "child-policy.ts");
+		writeFileSync(existingInstalledPath, "// installed policy fixture\n");
+		expect(existsSync(existingInstalledPath)).toBe(true);
+
+		const clean = preflight({
+			agents: ["fleet-reviewer"],
+			agentScope: "user",
+			env: { PATH: "/usr/bin", HOME: homeOrTmp(), PI_SUBAGENT_DEPTH: "0" },
+			installedPolicyExtensionPath: existingInstalledPath,
+		});
+		expect(
+			clean,
+			"existing injected installed policy path must permit otherwise-clean exact {ok:true}",
+		).toEqual({ ok: true });
+	});
+});
+
+function homeOrTmp(): string {
+	return process.env.HOME && process.env.HOME.length > 0 ? process.env.HOME : "/tmp";
+}
