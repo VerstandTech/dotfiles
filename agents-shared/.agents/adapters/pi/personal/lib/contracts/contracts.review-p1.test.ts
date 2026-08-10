@@ -2,11 +2,15 @@
  * CON-01 independent-review P1 regressions (test-only).
  * Locks the six accepted blockers from CON-01-review-test-designer-contract.md.
  * Must fail on production HEAD until Implementer remediates — no production edits here.
+ *
+ * Critic remediation: statement-local type oracles, descriptor subset parity,
+ * direct preflight maxObjectKeys floor/ceiling + plain-key cardinality.
  */
 import { describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
+	ASSURANCE_ROLES_V1,
 	CONTRACTS_DIR,
 	loadContractsModule,
 	minimalApprovalDecision,
@@ -28,6 +32,10 @@ export const CON01_REVIEW_P1_FAILURE_SIGNATURE =
 
 export const CON01_REVIEW_P1_PRIMARY_TEST_ID =
 	"CON-01 review P1 > separates concrete references from validation-only trailing globs" as const;
+
+/** Sane published range for maxObjectKeys (DoS bound, not tiny/unlimited). */
+const MAX_OBJECT_KEYS_FLOOR = 32;
+const MAX_OBJECT_KEYS_CEILING = 4_096;
 
 function sig(detail: string): string {
 	return `${CON01_REVIEW_P1_FAILURE_SIGNATURE}: ${detail}`;
@@ -74,21 +82,22 @@ function requireValidationGlobFn(mod: ContractsModule): (path: unknown) => boole
 	return fn as (path: unknown) => boolean;
 }
 
-/** Optional direct preflight export; otherwise exercise via parseContractV1. */
-function runPreflight(
-	mod: ContractsModule,
-	input: unknown,
-): ParseResult<unknown> {
+/** Require direct preflight export (cardinality oracle must not go only through parsers). */
+function requirePreflight(mod: ContractsModule): (input: unknown) => ParseResult<unknown> {
 	const record = mod as Record<string, unknown>;
 	const pre = record.preflightUntrustedGraph;
-	if (typeof pre === "function") {
-		return (pre as (v: unknown) => ParseResult<unknown>)(input);
-	}
-	const parse = requireFn(mod, "parseContractV1", "parseContractV1 for preflight surface");
-	return parse(input);
+	expect(
+		typeof pre === "function",
+		sig("missing exported preflightUntrustedGraph (maxObjectKeys must run before clone)"),
+	).toBe(true);
+	return pre as (input: unknown) => ParseResult<unknown>;
 }
 
 // ─── Test-only bounded JSON-Schema subset checker (descriptor parity) ───────
+//
+// Promised subset only: type, const, enum, required, properties,
+// additionalProperties (false | schema), items, minLength, oneOf, anyOf.
+// No $ref, if/then, patternProperties, unevaluated*, full draft semantics.
 
 type Schema = Record<string, unknown>;
 
@@ -109,6 +118,25 @@ function schemaIssues(
 	}
 	const s = schema as Schema;
 
+	// oneOf / anyOf — first matching branch wins for anyOf; exactly one for oneOf (soft).
+	if (Array.isArray(s.oneOf) || Array.isArray(s.anyOf)) {
+		const branches = (Array.isArray(s.oneOf) ? s.oneOf : s.anyOf) as unknown[];
+		const branchHits: number[] = [];
+		for (let i = 0; i < branches.length; i++) {
+			const branchAcc: string[] = [];
+			schemaIssues(branches[i], value, path, branchAcc, nodes);
+			if (branchAcc.length === 0) branchHits.push(i);
+		}
+		if (Array.isArray(s.oneOf)) {
+			if (branchHits.length !== 1) {
+				acc.push(`${path}: oneOf matched ${branchHits.length} branches`);
+			}
+		} else if (branchHits.length === 0) {
+			acc.push(`${path}: anyOf matched 0 branches`);
+		}
+		return;
+	}
+
 	if ("const" in s) {
 		if (value !== s.const) acc.push(`${path}: const mismatch`);
 		return;
@@ -119,6 +147,39 @@ function schemaIssues(
 	}
 
 	const t = s.type;
+	if (Array.isArray(t)) {
+		// Multi-type: accept if any listed primitive/object/array type matches.
+		const tryTypes = t as string[];
+		const ok = tryTypes.some((tt) => {
+			if (tt === "string") return typeof value === "string";
+			if (tt === "number") return typeof value === "number" && Number.isFinite(value);
+			if (tt === "boolean") return typeof value === "boolean";
+			if (tt === "null") return value === null;
+			if (tt === "array") return Array.isArray(value);
+			if (tt === "object") {
+				return value !== null && typeof value === "object" && !Array.isArray(value);
+			}
+			return false;
+		});
+		if (!ok) acc.push(`${path}: type union mismatch`);
+		// If object branch possible, still walk properties when present.
+		if (
+			value !== null &&
+			typeof value === "object" &&
+			!Array.isArray(value) &&
+			(s.properties || s.required || "additionalProperties" in s)
+		) {
+			// fall through to object handling below by not returning early only when object
+		} else if (Array.isArray(value) && s.items) {
+			for (let i = 0; i < value.length; i++) {
+				schemaIssues(s.items, value[i], `${path}[${i}]`, acc, nodes);
+			}
+			return;
+		} else {
+			return;
+		}
+	}
+
 	if (t === "string") {
 		if (typeof value !== "string") acc.push(`${path}: expected string`);
 		else if (typeof s.minLength === "number" && value.length < s.minLength) {
@@ -126,8 +187,9 @@ function schemaIssues(
 		}
 		return;
 	}
-	if (t === "number") {
+	if (t === "number" || t === "integer") {
 		if (typeof value !== "number" || !Number.isFinite(value)) acc.push(`${path}: expected number`);
+		else if (t === "integer" && !Number.isInteger(value)) acc.push(`${path}: expected integer`);
 		return;
 	}
 	if (t === "boolean") {
@@ -146,9 +208,18 @@ function schemaIssues(
 		}
 		return;
 	}
-	if (t === "object" || s.properties || s.required || "additionalProperties" in s) {
+	if (
+		t === "object" ||
+		s.properties ||
+		s.required ||
+		"additionalProperties" in s ||
+		Array.isArray(t)
+	) {
 		if (value === null || typeof value !== "object" || Array.isArray(value)) {
-			acc.push(`${path}: expected object`);
+			// Multi-type may already have accepted non-object; only error if object was required.
+			if (t === "object" || (!Array.isArray(t) && (s.properties || s.required))) {
+				acc.push(`${path}: expected object`);
+			}
 			return;
 		}
 		const obj = value as Record<string, unknown>;
@@ -172,9 +243,7 @@ function schemaIssues(
 				);
 			}
 		}
-		return;
 	}
-	// Empty schema {} accepts anything — parity tests forbid this on nested objects.
 }
 
 function validateAgainstDescriptor(schema: unknown, value: unknown): string[] {
@@ -183,11 +252,12 @@ function validateAgainstDescriptor(schema: unknown, value: unknown): string[] {
 	return acc;
 }
 
-/** Nested object schemas that validators close must be closed + property-complete in descriptors. */
+/** Nested object schemas that validators close must be closed + property-complete. */
 function assertDescriptorObjectClosed(
 	schema: unknown,
 	label: string,
 	requiredProps: readonly string[],
+	opts?: { allPropsRequired?: boolean },
 ): void {
 	expect(
 		schema !== null && typeof schema === "object" && !Array.isArray(schema),
@@ -209,7 +279,10 @@ function assertDescriptorObjectClosed(
 			sig(`descriptor ${label} missing property "${p}" (validator/descriptor drift)`),
 		).toBe(true);
 	}
-	if (Array.isArray(s.required)) {
+	if (opts?.allPropsRequired !== false) {
+		expect(Array.isArray(s.required), sig(`descriptor ${label} must list required[]`)).toBe(
+			true,
+		);
 		for (const r of requiredProps) {
 			expect(
 				(s.required as string[]).includes(r),
@@ -217,6 +290,155 @@ function assertDescriptorObjectClosed(
 			).toBe(true);
 		}
 	}
+}
+
+function assertEnumEquals(
+	schema: unknown,
+	label: string,
+	expected: readonly string[],
+): void {
+	expect(
+		schema !== null && typeof schema === "object",
+		sig(`descriptor ${label} missing`),
+	).toBe(true);
+	const s = schema as Schema;
+	expect(Array.isArray(s.enum), sig(`descriptor ${label} must be enum`)).toBe(true);
+	const got = [...(s.enum as string[])].sort();
+	const exp = [...expected].sort();
+	expect(got, sig(`descriptor ${label} enum drift: got ${JSON.stringify(got)}`)).toEqual(exp);
+}
+
+// ─── Bounded declaration-block extractor (typed public surface) ─────────────
+
+/** Strip // and /* *\/ comments and string/template literals so name hits are code-only. */
+function stripCommentsAndStrings(src: string): string {
+	let out = "";
+	let i = 0;
+	while (i < src.length) {
+		const c = src[i]!;
+		const n = src[i + 1];
+		// line comment
+		if (c === "/" && n === "/") {
+			i += 2;
+			while (i < src.length && src[i] !== "\n") i++;
+			out += " ";
+			continue;
+		}
+		// block comment
+		if (c === "/" && n === "*") {
+			i += 2;
+			while (i < src.length && !(src[i] === "*" && src[i + 1] === "/")) i++;
+			i = Math.min(src.length, i + 2);
+			out += " ";
+			continue;
+		}
+		// strings
+		if (c === '"' || c === "'" || c === "`") {
+			const quote = c;
+			i++;
+			while (i < src.length) {
+				if (src[i] === "\\") {
+					i += 2;
+					continue;
+				}
+				if (src[i] === quote) {
+					i++;
+					break;
+				}
+				i++;
+			}
+			out += '""';
+			continue;
+		}
+		out += c;
+		i++;
+	}
+	return out;
+}
+
+/**
+ * Extract a single top-level export type/interface/function declaration statement.
+ * Stops at the matching `;` for type aliases, or balanced `{...}` block for interfaces/functions.
+ * Does NOT greedily span later unions/types (statement-local).
+ */
+function extractDeclaration(src: string, kind: "type" | "interface" | "function", name: string): string | null {
+	const code = stripCommentsAndStrings(src);
+	const re =
+		kind === "function"
+			? new RegExp(String.raw`export\s+(?:async\s+)?function\s+${name}\b`)
+			: new RegExp(String.raw`export\s+${kind}\s+${name}\b`);
+	const m = re.exec(code);
+	if (!m || m.index === undefined) return null;
+	const start = m.index;
+	let i = start + m[0].length;
+
+	if (kind === "type") {
+		// Find '=' then consume until top-level ';' (track <> () [] depth, not braces from mapped types carefully).
+		while (i < code.length && code[i] !== "=") i++;
+		if (code[i] !== "=") return null;
+		i++;
+		let angle = 0;
+		let paren = 0;
+		let bracket = 0;
+		let brace = 0;
+		const bodyStart = i;
+		for (; i < code.length; i++) {
+			const ch = code[i]!;
+			if (ch === "<") angle++;
+			else if (ch === ">") angle = Math.max(0, angle - 1);
+			else if (ch === "(") paren++;
+			else if (ch === ")") paren = Math.max(0, paren - 1);
+			else if (ch === "[") bracket++;
+			else if (ch === "]") bracket = Math.max(0, bracket - 1);
+			else if (ch === "{") brace++;
+			else if (ch === "}") brace = Math.max(0, brace - 1);
+			else if (ch === ";" && angle === 0 && paren === 0 && bracket === 0 && brace === 0) {
+				return code.slice(start, i + 1);
+			}
+		}
+		// Fallback: no semicolon (interface-style type) — return through next export/EOF
+		return code.slice(start, bodyStart + 2_000);
+	}
+
+	// interface or function: find first `{` or `;` (overload) and balance braces
+	while (i < code.length && code[i] !== "{" && code[i] !== ";") i++;
+	if (code[i] === ";") return code.slice(start, i + 1);
+	if (code[i] !== "{") return null;
+	let depth = 0;
+	for (; i < code.length; i++) {
+		if (code[i] === "{") depth++;
+		else if (code[i] === "}") {
+			depth--;
+			if (depth === 0) return code.slice(start, i + 1);
+		}
+	}
+	return null;
+}
+
+/** Collect export type/interface names and type-only re-exports from index-like code. */
+function exportedTypeNames(code: string): Set<string> {
+	const stripped = stripCommentsAndStrings(code);
+	const names = new Set<string>();
+	const declRe = /export\s+(?:type|interface)\s+([A-Za-z_][A-Za-z0-9_]*)/g;
+	let m: RegExpExecArray | null;
+	while ((m = declRe.exec(stripped))) names.add(m[1]!);
+	// export { type Foo, Bar } from "..."
+	const groupRe = /export\s*\{([^}]+)\}/g;
+	while ((m = groupRe.exec(stripped))) {
+		const body = m[1]!;
+		for (const part of body.split(",")) {
+			const bit = part.trim();
+			if (!bit) continue;
+			const typePref = /^type\s+([A-Za-z_][A-Za-z0-9_]*)/.exec(bit);
+			if (typePref) {
+				names.add(typePref[1]!);
+				continue;
+			}
+			const plain = /^([A-Za-z_][A-Za-z0-9_]*)/.exec(bit);
+			if (plain) names.add(plain[1]!);
+		}
+	}
+	return names;
 }
 
 function readProductionSources(): { name: string; src: string }[] {
@@ -233,6 +455,45 @@ function combinedProductionSource(): string {
 	return readProductionSources()
 		.map((f) => `// ---- ${f.name} ----\n${f.src}`)
 		.join("\n");
+}
+
+function findDeclAcrossSources(
+	kind: "type" | "interface" | "function",
+	name: string,
+): string | null {
+	for (const f of readProductionSources()) {
+		const d = extractDeclaration(f.src, kind, name);
+		if (d) return d;
+	}
+	// Also try combined (re-exports won't define bodies).
+	return extractDeclaration(combinedProductionSource(), kind, name);
+}
+
+/** Reject open/escape hatches on authoritative envelope type bodies. */
+function assertClosedEnvelopeDecl(decl: string, name: string): void {
+	expect(decl.length > 0, sig(`${name} declaration empty`)).toBe(true);
+	// No any / unknown value fields, no index signatures, no Record escape.
+	expect(
+		!/\bany\b/.test(decl),
+		sig(`${name} must not use any`),
+	).toBe(true);
+	// Allow `input: unknown` only on parsers — envelope types must not.
+	expect(
+		!/(?<![A-Za-z_])unknown(?![A-Za-z0-9_])/.test(decl),
+		sig(`${name} must not use unknown in envelope declaration`),
+	).toBe(true);
+	expect(
+		!/Record\s*</.test(decl),
+		sig(`${name} must not use Record<...> escape`),
+	).toBe(true);
+	expect(
+		!/\[\s*(?:key|k|index|prop|p)\s*:\s*string\s*\]/.test(decl),
+		sig(`${name} must not use string index signature`),
+	).toBe(true);
+	expect(
+		!/\[\s*[A-Za-z_][A-Za-z0-9_]*\s*:\s*string\s*\]\s*:/.test(decl),
+		sig(`${name} must not use open index signature`),
+	).toBe(true);
 }
 
 // ─── 1. Concrete path vs validation-only trailing glob ──────────────────────
@@ -265,10 +526,8 @@ describe("CON-01 review P1", () => {
 			"docs/**/**",
 		] as const;
 
-		// Concrete path helper rejects every glob form.
 		const concreteGlobLeaks = concreteGlobs.filter((g) => isSafe(g));
 
-		// Envelope field probes (artifact/owned/forbidden/changed/evidence/scoped).
 		const fieldProbes: Array<{ label: string; result: ParseResult<unknown> }> = [
 			{
 				label: "artifact",
@@ -341,10 +600,8 @@ describe("CON-01 review P1", () => {
 			globExportPresent: true,
 		});
 
-		// Separate validation-only glob export (required after concrete denial is locked).
 		const isGlob = requireValidationGlobFn(mod);
 
-		// Validation-only glob helper: exactly one non-bare trailing /**
 		expect(
 			isGlob("agents-shared/.agents/adapters/pi/personal/lib/contracts/**"),
 			sig("validation glob must allow single non-bare trailing /**"),
@@ -352,7 +609,6 @@ describe("CON-01 review P1", () => {
 		expect(isGlob("docs/**"), sig("validation glob allows docs/**")).toBe(true);
 		expect(isGlob("lib/bdd/**"), sig("validation glob allows lib/bdd/**")).toBe(true);
 
-		// Bare ** and non-trailing / multi / wildcard forms stay denied on glob helper.
 		for (const bad of [
 			"**",
 			"**/x",
@@ -372,7 +628,6 @@ describe("CON-01 review P1", () => {
 			).toBe(false);
 		}
 
-		// ValidationContractV1.forbiddenProductionPathsBeforeRed uses validation-only globs.
 		const vc = minimalValidationContract({
 			forbiddenProductionPathsBeforeRed: [
 				"agents-shared/.agents/adapters/pi/personal/lib/contracts/**",
@@ -385,7 +640,6 @@ describe("CON-01 review P1", () => {
 		);
 		expectAccept(parse(vc), "parseContractV1 validation-contract trailing globs");
 
-		// Still reject bare ** and mid-path globs on the validation contract field.
 		expectReject(
 			parseValidation(
 				minimalValidationContract({
@@ -486,7 +740,6 @@ describe("CON-01 review P1", () => {
 		const parseDec = requireFn(mod, "parseApprovalDecisionV1", "parseApprovalDecisionV1");
 		const checkPair = requireFn(mod, "checkApprovalPairV1", "checkApprovalPairV1");
 
-		// Positive control — deterministic Z with millisecond precision.
 		expectAccept(
 			parseReq(
 				minimalApprovalRequest({
@@ -507,14 +760,14 @@ describe("CON-01 review P1", () => {
 		);
 
 		const permissive = [
-			"2099-01-01", // date-only
-			"2099-01-01T12:00:00+00:00", // offset
+			"2099-01-01",
+			"2099-01-01T12:00:00+00:00",
 			"2099-01-01T12:00:00-05:00",
-			"2099-01-01T12:00:00.123456789Z", // excessive fractional precision
-			"Jan 1, 2099", // locale
+			"2099-01-01T12:00:00.123456789Z",
+			"Jan 1, 2099",
 			"01/01/2099",
-			"2099-01-01 12:00:00Z", // space separator
-			"2099-02-30T12:00:00.000Z", // invalid calendar (Date.parse rolls over)
+			"2099-01-01 12:00:00Z",
+			"2099-02-30T12:00:00.000Z",
 			"2099-13-01T12:00:00.000Z",
 			"not-a-timestamp",
 			"",
@@ -536,13 +789,12 @@ describe("CON-01 review P1", () => {
 			);
 			if (decR.ok) acceptedPermissive.push(`decidedAt=${JSON.stringify(bad)}`);
 		}
-		// Pair ordering: requestedAt <= decidedAt < expiresAt
+
 		const req = minimalApprovalRequest({
 			requestedAt: "2099-01-01T12:00:00.000Z",
 			expiresAt: "2099-01-01T18:00:00.000Z",
 		});
 		const pairLeaks: string[] = [];
-		// decidedAt before requestedAt must fail even if decidedAt < expiresAt.
 		if (
 			checkPair(
 				req,
@@ -575,7 +827,6 @@ describe("CON-01 review P1", () => {
 			),
 		).toEqual({ acceptedPermissive: [], pairLeaks: [] });
 
-		// Spot-check issue class on one representative permissive form.
 		expectReject(
 			parseReq(
 				minimalApprovalRequest({
@@ -587,12 +838,11 @@ describe("CON-01 review P1", () => {
 			/invalid_time|timestamp|time|rfc|format/i,
 		);
 
-		// Happy path ordering (only reached when strict stamps + pair gates hold).
 		expectAccept(
 			checkPair(
 				req,
 				minimalApprovalDecision({
-					decidedAt: "2099-01-01T12:00:00.000Z", // equal requestedAt OK
+					decidedAt: "2099-01-01T12:00:00.000Z",
 				}),
 			),
 			"requestedAt == decidedAt < expiresAt accept",
@@ -616,8 +866,29 @@ describe("CON-01 review P1", () => {
 			string,
 			number
 		>;
+		const parseRole = requireFn(mod, "parseRoleRequestV1", "parseRoleRequestV1");
 
-		// Proxy ownKeys throw must become a validation issue, not an escaped exception.
+		// Direct preflight export required for cardinality oracle.
+		const preflightPresent =
+			typeof (mod as Record<string, unknown>).preflightUntrustedGraph === "function";
+
+		const maxRaw = limits.maxObjectKeys;
+		const maxKeysPublished =
+			typeof maxRaw === "number" && Number.isInteger(maxRaw) && maxRaw > 0;
+		const maxKeysInRange =
+			maxKeysPublished &&
+			maxRaw >= MAX_OBJECT_KEYS_FLOOR &&
+			maxRaw <= MAX_OBJECT_KEYS_CEILING;
+
+		// ownKeys proxy (via preflight when present, else parse surface).
+		const run =
+			preflightPresent
+				? requirePreflight(mod)
+				: (input: unknown) => {
+						const parse = requireFn(mod, "parseContractV1", "parseContractV1");
+						return parse(input);
+					};
+
 		const ownKeysProxy = new Proxy(
 			{},
 			{
@@ -635,43 +906,45 @@ describe("CON-01 review P1", () => {
 		let ownKeysThrew: unknown = undefined;
 		let proxyResult: ParseResult<unknown> | undefined;
 		try {
-			proxyResult = runPreflight(mod, ownKeysProxy);
+			proxyResult = run(ownKeysProxy);
 		} catch (e) {
 			ownKeysThrew = e;
 		}
 
-		const maxKeysPublished =
-			typeof limits.maxObjectKeys === "number" &&
-			Number.isInteger(limits.maxObjectKeys) &&
-			limits.maxObjectKeys > 0;
+		let plainAtLimitAccepted = false;
+		let plainPlusOneBound = false;
+		if (maxKeysPublished && preflightPresent) {
+			const preflight = requirePreflight(mod);
+			const maxKeys = maxRaw;
 
-		let maxKeysPlusOneBound = false;
-		let atLimitOkRegardingKeys = true;
-		if (maxKeysPublished) {
-			const maxKeys = limits.maxObjectKeys;
-			const atLimit: Record<string, unknown> = {
-				schemaVersion: 1,
-				kind: "role-request",
-			};
-			let i = 0;
-			while (Object.keys(atLimit).length < maxKeys) {
-				atLimit[`pad_${i++}`] = true;
+			// Exactly maxObjectKeys plain data keys — preflight must accept (ok:true).
+			const atLimit: Record<string, unknown> = {};
+			for (let i = 0; i < maxKeys; i++) {
+				atLimit[`k${i}`] = i;
 			}
-			const atResult = runPreflight(mod, atLimit);
-			if (!atResult.ok && /maxObjectKeys/i.test(issueBlob(atResult))) {
-				atLimitOkRegardingKeys = false;
-			}
-			const over: Record<string, unknown> = { ...atLimit, extra_over_key: true };
-			const overResult = runPreflight(mod, over);
-			maxKeysPlusOneBound =
-				!overResult.ok && /bound_exceeded/i.test(issueBlob(overResult));
+			expect(Object.keys(atLimit).length).toBe(maxKeys);
+			const atResult = preflight(atLimit);
+			plainAtLimitAccepted = atResult.ok === true;
+
+			// +1 keys → bound_exceeded, not throw.
+			const over: Record<string, unknown> = { ...atLimit, extra: true };
+			expect(Object.keys(over).length).toBe(maxKeys + 1);
+			const overResult = preflight(over);
+			plainPlusOneBound =
+				overResult.ok === false && /bound_exceeded/i.test(issueBlob(overResult));
 		}
+
+		// Minimal valid role request must remain accepted (cardinality must not break envelopes).
+		const minimalOk = parseRole(minimalRoleRequest()).ok === true;
 
 		expect(
 			{
+				preflightPresent,
 				maxKeysPublished,
-				maxKeysPlusOneBound,
-				atLimitOkRegardingKeys,
+				maxKeysInRange,
+				plainAtLimitAccepted,
+				plainPlusOneBound,
+				minimalOk,
 				ownKeysThrew: ownKeysThrew !== undefined,
 				ownKeysIssue:
 					proxyResult !== undefined &&
@@ -679,26 +952,26 @@ describe("CON-01 review P1", () => {
 					proxyResult.issues.length > 0,
 			},
 			sig(
-				`maxObjectKeys before clone + ownKeys proxy must return issues; maxKeysPublished=${maxKeysPublished} maxKeysPlusOneBound=${maxKeysPlusOneBound} ownKeysThrew=${ownKeysThrew !== undefined} ownKeysIssue=${proxyResult !== undefined && !proxyResult.ok}`,
+				`maxObjectKeys floor/ceiling + direct preflight plain keys + ownKeys; preflightPresent=${preflightPresent} maxKeysPublished=${maxKeysPublished} maxKeysInRange=${maxKeysInRange} plainAtLimitAccepted=${plainAtLimitAccepted} plainPlusOneBound=${plainPlusOneBound} ownKeysThrew=${ownKeysThrew !== undefined}`,
 			),
 		).toEqual({
+			preflightPresent: true,
 			maxKeysPublished: true,
-			maxKeysPlusOneBound: true,
-			atLimitOkRegardingKeys: true,
+			maxKeysInRange: true,
+			plainAtLimitAccepted: true,
+			plainPlusOneBound: true,
+			minimalOk: true,
 			ownKeysThrew: false,
 			ownKeysIssue: true,
 		});
 
-		// Detailed issue-class locks once the bound exists.
-		if (maxKeysPublished) {
-			const maxKeys = limits.maxObjectKeys;
-			const over: Record<string, unknown> = { schemaVersion: 1, kind: "role-request" };
-			for (let i = 0; Object.keys(over).length < maxKeys + 1; i++) {
-				over[`pad_${i}`] = true;
-			}
+		if (maxKeysPublished && preflightPresent) {
+			const preflight = requirePreflight(mod);
+			const over: Record<string, unknown> = {};
+			for (let i = 0; i < maxRaw + 1; i++) over[`k${i}`] = true;
 			expectReject(
-				runPreflight(mod, over),
-				"maxObjectKeys+1 must fail closed",
+				preflight(over),
+				"maxObjectKeys+1 plain object bound_exceeded",
 				/bound_exceeded|maxObjectKeys|object keys/i,
 			);
 		}
@@ -730,25 +1003,25 @@ describe("CON-01 review P1", () => {
 			"validation-contract",
 		] as const;
 
+		// Root closed + required present for every kind.
+		const rootGaps: string[] = [];
 		for (const kind of kinds) {
-			expect(
-				kind in descriptors,
-				sig(`missing descriptor for ${kind}`),
-			).toBe(true);
+			if (!(kind in descriptors)) {
+				rootGaps.push(`${kind}:missing`);
+				continue;
+			}
 			const d = descriptors[kind] as Schema;
-			expect(
-				d.additionalProperties === false,
-				sig(`root descriptor ${kind} must be closed`),
-			).toBe(true);
-			expect(
-				Array.isArray(d.required) && d.required.length > 0,
-				sig(`root descriptor ${kind} must list required`),
-			).toBe(true);
+			if (d.additionalProperties !== false) rootGaps.push(`${kind}:open`);
+			if (!Array.isArray(d.required) || d.required.length === 0) {
+				rootGaps.push(`${kind}:no-required`);
+			}
 		}
+		expect(rootGaps, sig(`root descriptor gaps: ${rootGaps.join(",")}`)).toEqual([]);
 
-		// Nested closed objects — field-for-field alignment with validators.
+		// ── role-request nested ──
 		const roleReq = descriptors["role-request"] as Schema;
-		const roleReqProps = roleReq.properties as Record<string, Schema>;
+		const roleReqProps = (roleReq.properties ?? {}) as Record<string, Schema>;
+		assertEnumEquals(roleReqProps.role, "role-request.role", ASSURANCE_ROLES_V1);
 		assertDescriptorObjectClosed(roleReqProps.budget, "role-request.budget", [
 			"maxTokens",
 			"maxCostUsd",
@@ -756,40 +1029,108 @@ describe("CON-01 review P1", () => {
 		]);
 		const artifactsSchema = roleReqProps.artifacts as Schema;
 		expect(artifactsSchema?.type === "array", sig("artifacts must be array schema")).toBe(true);
-		assertDescriptorObjectClosed(artifactsSchema.items, "role-request.artifacts.items", [
+		assertDescriptorObjectClosed(artifactsSchema?.items, "role-request.artifacts.items", [
 			"path",
 			"mediaType",
 		]);
 
+		// ── role-result: role enum, closed commands items, redCause, usage union ──
 		const roleRes = descriptors["role-result"] as Schema;
-		const roleResProps = roleRes.properties as Record<string, Schema>;
-		// role enum closed on result
-		expect(
-			Array.isArray((roleResProps.role as Schema | undefined)?.enum) ||
-				(roleResProps.role as Schema | undefined)?.type === "string",
-			sig("role-result.role must be typed"),
-		).toBe(true);
-		assertDescriptorObjectClosed(roleResProps.redCause, "role-result.redCause", [
+		const roleResProps = (roleRes.properties ?? {}) as Record<string, Schema>;
+		assertEnumEquals(roleResProps.role, "role-result.role", ASSURANCE_ROLES_V1);
+		assertEnumEquals(roleResProps.status, "role-result.status", [
+			"completed",
+			"blocked",
+			"failed",
+			"unknown",
+		]);
+
+		const commandsSchema = roleResProps.commands as Schema;
+		expect(commandsSchema?.type === "array", sig("role-result.commands must be array")).toBe(
+			true,
+		);
+		assertDescriptorObjectClosed(commandsSchema?.items, "role-result.commands.items", [
+			"command",
+			"exitCode",
+			"summary",
+		]);
+
+		// redCause: closed with declared properties (expectedTestId required at minimum).
+		assertDescriptorObjectClosed(
+			roleResProps.redCause,
+			"role-result.redCause",
+			["expectedTestId", "matchMode"],
+			{ allPropsRequired: false },
+		);
+		const redCauseProps = ((roleResProps.redCause as Schema)?.properties ?? {}) as Record<
+			string,
+			Schema
+		>;
+		for (const p of [
 			"expectedTestId",
 			"expectedFailureSignature",
 			"matchMode",
 			"reasonCode",
 			"cause",
-		]);
+		] as const) {
+			expect(
+				p in redCauseProps,
+				sig(`role-result.redCause.properties missing "${p}"`),
+			).toBe(true);
+		}
 
-		const approvalDec = descriptors["approval-decision"] as Schema;
-		const approvalDecProps = approvalDec.properties as Record<string, Schema>;
-		assertDescriptorObjectClosed(approvalDecProps.humanProvenance, "approval-decision.humanProvenance", [
-			"actorId",
-			"method",
-		]);
+		// usage: union of const "unknown" | closed {inputTokens,outputTokens} via oneOf/anyOf
+		// (promised subset). Empty {} is forbidden drift.
+		const usageSchema = roleResProps.usage as Schema | undefined;
 		expect(
-			Array.isArray((approvalDecProps.decision as Schema | undefined)?.enum),
-			sig("approval-decision.decision must be enum"),
+			usageSchema !== undefined &&
+				usageSchema !== null &&
+				typeof usageSchema === "object" &&
+				Object.keys(usageSchema).length > 0,
+			sig("role-result.usage must not be empty schema {}"),
+		).toBe(true);
+		const usageBranches = (usageSchema?.oneOf ?? usageSchema?.anyOf) as unknown[] | undefined;
+		expect(
+			Array.isArray(usageBranches) && usageBranches.length >= 2,
+			sig("role-result.usage must be oneOf/anyOf union (unknown | token object)"),
+		).toBe(true);
+		const usageHasUnknown = (usageBranches ?? []).some((b) => {
+			const s = b as Schema;
+			return s.const === "unknown" || (Array.isArray(s.enum) && s.enum.includes("unknown"));
+		});
+		const usageHasObject = (usageBranches ?? []).some((b) => {
+			const s = b as Schema;
+			const props = s.properties as Record<string, unknown> | undefined;
+			return (
+				(s.type === "object" || props !== undefined) &&
+				s.additionalProperties === false &&
+				props !== undefined &&
+				"inputTokens" in props &&
+				"outputTokens" in props
+			);
+		});
+		expect(
+			usageHasUnknown && usageHasObject,
+			sig("usage union must cover const unknown and closed token object"),
 		).toBe(true);
 
+		// ── approval-decision humanProvenance closed ──
+		const approvalDec = descriptors["approval-decision"] as Schema;
+		const approvalDecProps = (approvalDec.properties ?? {}) as Record<string, Schema>;
+		assertDescriptorObjectClosed(
+			approvalDecProps.humanProvenance,
+			"approval-decision.humanProvenance",
+			["actorId", "method"],
+			{ allPropsRequired: false },
+		);
+		assertEnumEquals(approvalDecProps.decision, "approval-decision.decision", [
+			"approved",
+			"rejected",
+		]);
+
+		// ── validation-contract nested closed ──
 		const vc = descriptors["validation-contract"] as Schema;
-		const vcProps = vc.properties as Record<string, Schema>;
+		const vcProps = (vc.properties ?? {}) as Record<string, Schema>;
 		assertDescriptorObjectClosed(vcProps.coveringGreen, "validation-contract.coveringGreen", [
 			"relation",
 			"command",
@@ -797,17 +1138,45 @@ describe("CON-01 review P1", () => {
 		assertDescriptorObjectClosed(vcProps.sensitivity, "validation-contract.sensitivity", [
 			"description",
 		]);
-		expect(
-			Array.isArray((vcProps.matchMode as Schema | undefined)?.enum),
-			sig("matchMode enum required on descriptor"),
-		).toBe(true);
-		const matchEnum = (vcProps.matchMode as Schema).enum as string[];
-		expect(matchEnum.includes("legacy"), sig("legacy must not be in matchMode enum")).toBe(
-			false,
-		);
+		assertEnumEquals(vcProps.matchMode, "validation-contract.matchMode", [
+			"identity",
+			"signature",
+		]);
 
-		// Every minimal valid fixture must satisfy its descriptor (parity with validator accept).
+		// Required-field parity: every key on minimal fixtures that validators require
+		// must appear in descriptor.required (root).
 		const fixtures = allMinimalFixtures();
+		const requiredParityGaps: string[] = [];
+		for (const kind of kinds) {
+			const d = descriptors[kind] as Schema;
+			const req = new Set(Array.isArray(d.required) ? (d.required as string[]) : []);
+			// Core identity fields always required on V1 envelopes.
+			for (const core of ["schemaVersion", "kind"] as const) {
+				if (!req.has(core)) requiredParityGaps.push(`${kind}.required missing ${core}`);
+			}
+			// Fixture keys that are always present in minimal valid forms should be required
+			// unless optional by design (usage default, redCause optional, humanProvenance optional on reject,
+			// expectedFailureSignature optional on identity mode).
+			const optionalByDesign = new Set([
+				"usage",
+				"redCause",
+				"humanProvenance",
+				"expectedFailureSignature",
+			]);
+			const fixture = fixtures[kind]!;
+			for (const key of Object.keys(fixture)) {
+				if (optionalByDesign.has(key)) continue;
+				if (!req.has(key)) {
+					requiredParityGaps.push(`${kind}.required missing fixture key ${key}`);
+				}
+			}
+		}
+		expect(
+			requiredParityGaps,
+			sig(`required-field parity gaps: ${requiredParityGaps.join("; ")}`),
+		).toEqual([]);
+
+		// Minimal fixtures: validator accept + descriptor accept (subset checker).
 		for (const kind of kinds) {
 			const fixture = fixtures[kind]!;
 			const parsed = parse(fixture);
@@ -821,7 +1190,7 @@ describe("CON-01 review P1", () => {
 			).toEqual([]);
 		}
 
-		// Representative unknown / nested-invalid fixtures fail both validator and descriptor.
+		// Representative unknown / nested-invalid fixtures fail validator AND descriptor.
 		const unknownRoot = { ...minimalRoleRequest(), unexpectedSmuggle: true };
 		expectReject(parse(unknownRoot), "unknown root field", /unknown_field/i);
 		const unknownDesc = validateAgainstDescriptor(descriptors["role-request"], unknownRoot);
@@ -830,89 +1199,145 @@ describe("CON-01 review P1", () => {
 			sig(`descriptor must reject unknown field, got ${unknownDesc.join("; ")}`),
 		).toBe(true);
 
-		const nestedInvalid = {
+		const nestedBudget = {
 			...minimalRoleRequest(),
 			budget: { maxTokens: 1, maxCostUsd: 1, maxDurationMs: 1, extraBudget: 9 },
 		};
-		expectReject(parse(nestedInvalid), "unknown nested budget field", /unknown_field|budget/i);
-		const nestedDesc = validateAgainstDescriptor(descriptors["role-request"], nestedInvalid);
+		expectReject(parse(nestedBudget), "unknown nested budget field", /unknown_field|budget/i);
+		const nestedBudgetDesc = validateAgainstDescriptor(
+			descriptors["role-request"],
+			nestedBudget,
+		);
 		expect(
-			nestedDesc.some((x) => /budget|additionalProperties|extraBudget/i.test(x)),
-			sig(`descriptor must reject nested unknown, got ${nestedDesc.join("; ")}`),
+			nestedBudgetDesc.some((x) => /budget|additionalProperties|extraBudget/i.test(x)),
+			sig(`descriptor must reject nested budget unknown, got ${nestedBudgetDesc.join("; ")}`),
+		).toBe(true);
+
+		// Nested-invalid command item.
+		const badCommand = minimalRoleResult({
+			commands: [{ command: "x", exitCode: 0, summary: "ok", extra: true }],
+		});
+		expectReject(parse(badCommand), "unknown command item field", /unknown_field|command/i);
+		const badCmdDesc = validateAgainstDescriptor(descriptors["role-result"], badCommand);
+		expect(
+			badCmdDesc.some((x) => /command|additionalProperties|extra/i.test(x)),
+			sig(`descriptor must reject command item unknown, got ${badCmdDesc.join("; ")}`),
+		).toBe(true);
+
+		// Nested-invalid coveringGreen.
+		const badGreen = minimalValidationContract({
+			coveringGreen: {
+				relation: "exact-focused",
+				command: "bun test",
+				extraGreen: true,
+			},
+		});
+		expectReject(parse(badGreen), "unknown coveringGreen field", /unknown_field|coveringGreen/i);
+		const badGreenDesc = validateAgainstDescriptor(
+			descriptors["validation-contract"],
+			badGreen,
+		);
+		expect(
+			badGreenDesc.some((x) => /coveringGreen|additionalProperties|extraGreen/i.test(x)),
+			sig(`descriptor must reject coveringGreen unknown, got ${badGreenDesc.join("; ")}`),
 		).toBe(true);
 	});
 
-	// ─── 6. Typed public surface via narrow source declaration assertions ──
+	// ─── 6. Typed public surface via statement-local declaration extractor ─
 
 	test("exports closed V1 interfaces, ContractIssueCode, and typed parser signatures", async () => {
-		// Runtime module load proves the package still evaluates; types are declaration-locked.
 		requireContracts(await loadContractsModule());
 
-		const src = combinedProductionSource();
 		const indexSrc = readFileSync(join(CONTRACTS_DIR, "index.ts"), "utf8");
+		const indexExports = exportedTypeNames(indexSrc);
+		const allSrc = combinedProductionSource();
 
-		const requiredTypes = [
+		const envelopes = [
 			"RoleRequestV1",
 			"RoleResultV1",
 			"ApprovalRequestV1",
 			"ApprovalDecisionV1",
 			"ValidationContractV1",
-			"ContractIssueCode",
 		] as const;
 
-		for (const name of requiredTypes) {
-			const decl = new RegExp(
-				String.raw`export\s+(?:type|interface)\s+${name}\b`,
-			);
-			expect(
-				decl.test(src),
-				sig(`missing exported type/interface declaration ${name}`),
-			).toBe(true);
-			// Public surface re-export from index (type-only export counts).
-			const reExport = new RegExp(
-				String.raw`\b${name}\b`,
-			);
-			expect(
-				reExport.test(indexSrc),
-				sig(`index.ts must re-export ${name} on the public surface`),
-			).toBe(true);
-		}
-
-		// Nested supporting types used by the closed envelopes.
 		const supporting = [
 			"ArtifactRefV1",
 			"BudgetV1",
+			"CommandClaimV1",
+			"RedCauseV1",
+			"UsageV1",
 			"HumanProvenanceV1",
 			"CoveringGreenV1",
 			"SensitivityV1",
-			"RedCauseV1",
-			"CommandClaimV1",
 		] as const;
-		for (const name of supporting) {
-			expect(
-				new RegExp(String.raw`export\s+(?:type|interface)\s+${name}\b`).test(src),
-				sig(`missing nested supporting type ${name}`),
-			).toBe(true);
+
+		const missingEnvelopes: string[] = [];
+		const openEnvelopes: string[] = [];
+		for (const name of envelopes) {
+			const decl =
+				findDeclAcrossSources("type", name) ?? findDeclAcrossSources("interface", name);
+			if (!decl) {
+				missingEnvelopes.push(name);
+				continue;
+			}
+			try {
+				assertClosedEnvelopeDecl(decl, name);
+			} catch {
+				openEnvelopes.push(name);
+			}
+			// Re-check open patterns into list without throwing mid-loop for batch report.
+			if (
+				/\bany\b/.test(decl) ||
+				/(?<![A-Za-z_])unknown(?![A-Za-z0-9_])/.test(decl) ||
+				/Record\s*</.test(decl) ||
+				/\[\s*[A-Za-z_][A-Za-z0-9_]*\s*:\s*string\s*\]/.test(decl)
+			) {
+				if (!openEnvelopes.includes(name)) openEnvelopes.push(name);
+			}
 		}
 
-		// ContractIssueCode must be a closed string-union style declaration (not bare string alias only).
-		expect(
-			/export\s+type\s+ContractIssueCode\s*=/.test(src),
-			sig("ContractIssueCode must be an exported type alias"),
-		).toBe(true);
-		expect(
-			/ContractIssueCode\s*=\s*[\s\S]*?\|/.test(src) ||
-				/ContractIssueCode\s*=\s*[^;]*"unknown_field"/.test(src),
-			sig("ContractIssueCode must be a closed union of issue code literals"),
-		).toBe(true);
+		const missingSupporting = supporting.filter((name) => {
+			const decl =
+				findDeclAcrossSources("type", name) ?? findDeclAcrossSources("interface", name);
+			return !decl;
+		});
 
-		// ContractIssue.code should be typed as ContractIssueCode.
-		expect(
-			/code\s*:\s*ContractIssueCode/.test(src),
-			sig("ContractIssue.code must be typed as ContractIssueCode"),
-		).toBe(true);
+		// ContractIssueCode — statement-local closed string-literal union only.
+		const issueCodeDecl = findDeclAcrossSources("type", "ContractIssueCode");
+		let issueCodeOk = false;
+		if (issueCodeDecl) {
+			// Must be `export type ContractIssueCode = "a" | "b" | ...;`
+			// Statement-local: no trailing consumption of later types.
+			const bodyMatch = /^export\s+type\s+ContractIssueCode\s*=\s*([\s\S]*);$/.exec(
+				issueCodeDecl.trim(),
+			);
+			if (bodyMatch) {
+				const body = bodyMatch[1]!.trim();
+				// Only string literal unions (and whitespace/|).
+				const onlyLits = /^"([A-Za-z0-9_]+)"(\s*\|\s*"([A-Za-z0-9_]+)")*$/.test(
+					body.replace(/\s+/g, " ").trim(),
+				);
+				// Must include at least one known stable code and a union bar.
+				const hasUnion = body.includes("|");
+				const hasKnown =
+					body.includes('"unknown_field"') ||
+					body.includes('"bound_exceeded"') ||
+					body.includes('"unsafe_path"');
+				// Reject string / any / wide aliases.
+				const notWide =
+					!/\bstring\b/.test(body) && !/\bany\b/.test(body) && !/\bunknown\b/.test(body);
+				issueCodeOk = onlyLits && hasUnion && hasKnown && notWide;
+			}
+		}
 
-		// Typed parser signatures: ParseResult<T> for each closed envelope.
+		// ContractIssue.code: ContractIssueCode inside ContractIssue decl.
+		const contractIssueDecl =
+			findDeclAcrossSources("type", "ContractIssue") ??
+			findDeclAcrossSources("interface", "ContractIssue");
+		const issueCodeFieldOk =
+			!!contractIssueDecl && /code\s*:\s*ContractIssueCode\b/.test(contractIssueDecl);
+
+		// Parser signatures — exact ParseResult<EnvelopeV1>, statement-local.
 		const parsers: Array<[string, string]> = [
 			["parseRoleRequestV1", "RoleRequestV1"],
 			["parseRoleResultV1", "RoleResultV1"],
@@ -920,23 +1345,72 @@ describe("CON-01 review P1", () => {
 			["parseApprovalDecisionV1", "ApprovalDecisionV1"],
 			["parseValidationContractV1", "ValidationContractV1"],
 		];
+		const badParsers: string[] = [];
 		for (const [fn, t] of parsers) {
-			const typed = new RegExp(
-				String.raw`export\s+function\s+${fn}\s*\(\s*input:\s*unknown\s*\)\s*:\s*ParseResult<\s*${t}\s*>`,
-			);
-			expect(
-				typed.test(src),
-				sig(
-					`${fn} must be declared as (input: unknown) => ParseResult<${t}> (not ParseResult<unknown>)`,
-				),
-			).toBe(true);
+			const decl = findDeclAcrossSources("function", fn);
+			if (!decl) {
+				badParsers.push(`${fn}:missing`);
+				continue;
+			}
+			// Allow single-line or multi-line param/return.
+			const ok =
+				new RegExp(
+					String.raw`export\s+function\s+${fn}\s*\(\s*input\s*:\s*unknown\s*\)\s*:\s*ParseResult\s*<\s*${t}\s*>`,
+				).test(decl.replace(/\s+/g, " ")) && !/ParseResult\s*<\s*unknown\s*>/.test(decl);
+			if (!ok) badParsers.push(`${fn}:not ParseResult<${t}>`);
 		}
 
-		// ParseResult / ParseOk / ParseErr remain exported generics.
+		// index.ts re-exports — via declaration/export extractor (not comment/string hits).
+		const missingIndex = [...envelopes, "ContractIssueCode", ...supporting].filter(
+			(n) => !indexExports.has(n),
+		);
+
+		// ParseResult generic still exported.
+		const parseResultDecl = findDeclAcrossSources("type", "ParseResult");
+		const parseResultOk =
+			!!parseResultDecl &&
+			/export\s+type\s+ParseResult\s*<\s*T\s*>/.test(parseResultDecl.replace(/\s+/g, " "));
+
 		expect(
-			/export\s+type\s+ParseResult\s*<\s*T\s*>/.test(src),
-			sig("ParseResult<T> generic must remain exported"),
-		).toBe(true);
+			{
+				missingEnvelopes,
+				openEnvelopes,
+				missingSupporting,
+				issueCodeOk,
+				issueCodeFieldOk,
+				badParsers,
+				missingIndex,
+				parseResultOk,
+			},
+			sig(
+				`typed public surface; missingEnvelopes=${JSON.stringify(missingEnvelopes)} openEnvelopes=${JSON.stringify(openEnvelopes)} missingSupporting=${JSON.stringify(missingSupporting)} issueCodeOk=${issueCodeOk} badParsers=${JSON.stringify(badParsers)} missingIndex=${JSON.stringify(missingIndex)}`,
+			),
+		).toEqual({
+			missingEnvelopes: [],
+			openEnvelopes: [],
+			missingSupporting: [],
+			issueCodeOk: true,
+			issueCodeFieldOk: true,
+			badParsers: [],
+			missingIndex: [],
+			parseResultOk: true,
+		});
+
+		// Spot-check: greedy union must not falsely pass if someone writes
+		// `type ContractIssueCode = string; type Other = "a" | "b"` later — already
+		// statement-local via extractDeclaration stop at `;`.
+		if (issueCodeDecl) {
+			expect(
+				issueCodeDecl.includes("export type ContractIssueCode"),
+				sig("ContractIssueCode decl must be statement-local export"),
+			).toBe(true);
+			// Declaration must not contain a second export type (greed guard).
+			const exportTypeCount = (issueCodeDecl.match(/export\s+type\s+/g) ?? []).length;
+			expect(
+				exportTypeCount,
+				sig("ContractIssueCode extractor must not swallow later export type decls"),
+			).toBe(1);
+		}
 	});
 });
 
