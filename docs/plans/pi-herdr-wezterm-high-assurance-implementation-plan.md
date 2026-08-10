@@ -194,7 +194,7 @@ Estimates are engineering ranges for one focused writer plus an independent Test
 ### CMP-01 — Version policy and Herdr 0.8 contract rebaseline
 
 - **Objective:** pin or constrain tested versions and update stale 0.7.5 assumptions.
-- **Owned paths:** `pi/docs/pi-herdr-*`, `pi/tests/herd-*.test.ts`, personal `skills/herdr/SKILL.md`, compatibility fixtures/docs; package pins only after reconciling the user’s current `pi/.pi/agent/settings.json` edits.
+- **Owned paths:** `pi/docs/pi-herdr-*`, `pi/tests/herd-*.test.ts`, `pi/tests/fixtures/herdr/**`, `pi/.pi/agent/personal/extensions/herd/{herd-compat,herd-task}.ts`, personal `skills/herdr/SKILL.md`; package pins only after reconciling the user’s current `pi/.pi/agent/settings.json` edits.
 - **Dependencies:** none; must precede new Herdr client work.
 - **Deliverables:** supported Pi/Herdr/pi-subagents/context-mode matrix; live Herdr 0.8 JSON fixtures; updated `--no-focus`, command, and lifecycle expectations; pinned package policy.
 - **Acceptance:** old and current compatible fixtures parse; incompatible protocol fails with an actionable message; `session_shutdown` remains the cleanup event; no dependency is silently upgraded.
