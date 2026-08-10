@@ -116,7 +116,9 @@ export function buildFleetWorkflowScript(
 	tasks: FleetTask[],
 	concurrency: number,
 ): string {
-	const batchSize = Math.max(1, concurrency);
+	// Finite positive integer only — NaN/±Infinity/0/negative/fractional must not serialize as null
+	// or drive a non-advancing `for` loop step.
+	const batchSize = normalizeConcurrency(concurrency, 1);
 	const children: WorkflowChild[] = tasks.map((t, index) => {
 		const child: WorkflowChild = {
 			key: fleetChildKey(index),
@@ -290,8 +292,74 @@ function buildTaskPrompt(options: {
 
 function normalizeConcurrency(value: unknown, fallback: number): number {
 	const n = typeof value === "number" ? value : Number(value);
-	if (!Number.isInteger(n) || n < 1) return fallback;
+	if (!Number.isFinite(n) || !Number.isInteger(n) || n < 1) return fallback;
 	return n;
+}
+
+/**
+ * Repository-relative outputDir contract (enforced before task build).
+ * Rejects empty, absolute POSIX/Windows, NUL, `.`/`..`, and traversal segments.
+ */
+export function assertSafeOutputDir(raw: string | undefined): string {
+	const fallback = ".pi/fleet-runs";
+	if (raw === undefined) return fallback;
+	if (typeof raw !== "string") {
+		throw new Error("outputDir must be a repository-relative path string");
+	}
+	if (raw.includes("\0")) {
+		throw new Error("outputDir must not contain NUL bytes");
+	}
+	const trimmed = raw.trim();
+	if (!trimmed) {
+		throw new Error("outputDir must not be empty");
+	}
+	const noTrail = trimmed.replace(/[/\\]+$/, "");
+	if (!noTrail || noTrail === "." || noTrail === "..") {
+		throw new Error(`outputDir is not a safe repository-relative path: ${JSON.stringify(raw)}`);
+	}
+	// Absolute POSIX or root-ish backslash
+	if (noTrail.startsWith("/") || noTrail.startsWith("\\")) {
+		throw new Error(`outputDir must be repository-relative (got absolute): ${JSON.stringify(raw)}`);
+	}
+	// Absolute Windows drive (C:\... or C:/...)
+	if (/^[A-Za-z]:([/\\]|$)/.test(noTrail)) {
+		throw new Error(`outputDir must be repository-relative (got Windows absolute): ${JSON.stringify(raw)}`);
+	}
+	const segments = noTrail.split(/[/\\]+/);
+	for (const seg of segments) {
+		if (!seg || seg === "." || seg === "..") {
+			throw new Error(
+				`outputDir must not contain empty or traversal segments: ${JSON.stringify(raw)}`,
+			);
+		}
+		if (seg.includes("\0")) {
+			throw new Error("outputDir must not contain NUL bytes");
+		}
+	}
+	return segments.join("/");
+}
+
+/**
+ * Deterministic single filename segment from a persona id.
+ * Preserves enough identity for humans; index already supplies uniqueness.
+ * Never emits separators, NUL, or `.` / `..` traversal.
+ */
+export function safeOutputFilenameSegment(raw: string): string {
+	const cleaned = String(raw ?? "")
+		.replace(/\0/g, "")
+		.replace(/[/\\]+/g, "-")
+		.replace(/[\p{Cc}\p{Cf}]+/gu, "")
+		.replace(/[^\p{L}\p{N}._-]+/gu, "-")
+		.replace(/-+/g, "-")
+		.replace(/^[.-]+/, "")
+		.replace(/[.-]+$/, "")
+		.slice(0, 80);
+	if (!cleaned || cleaned === "." || cleaned === "..") {
+		return "persona";
+	}
+	// Guard residual dot-only / traversal after slice
+	if (/^\.+$/.test(cleaned)) return "persona";
+	return cleaned;
 }
 
 export function buildFleetPlan(input: FleetPlanInput): FleetPlan {
@@ -324,7 +392,8 @@ export function buildFleetPlan(input: FleetPlanInput): FleetPlan {
 	if (input.async === false) {
 		warnings.push("async:false is not supported by pi-subagents RPC spawn; forcing async:true.");
 	}
-	const outputDir = (input.outputDir ?? ".pi/fleet-runs").replace(/\/+$/, "");
+	// Enforce outputDir contract before building tasks / public spawn payload.
+	const outputDir = assertSafeOutputDir(input.outputDir);
 
 	const modelOpts = {
 		preferNativeProviders: input.preferNativeProviders !== false,
@@ -343,8 +412,9 @@ export function buildFleetPlan(input: FleetPlanInput): FleetPlan {
 			index,
 			total: personas.length,
 		});
-		// Unique path even if persona ids collide
-		const output = `${outputDir}/${input.kind}-${String(index + 1).padStart(2, "0")}-${persona.id}.md`;
+		// Unique path even if persona ids collide; filename segment is sanitized (identity kept on personaId).
+		const fileSeg = safeOutputFilenameSegment(persona.id);
+		const output = `${outputDir}/${input.kind}-${String(index + 1).padStart(2, "0")}-${fileSeg}.md`;
 		return {
 			agent,
 			task,

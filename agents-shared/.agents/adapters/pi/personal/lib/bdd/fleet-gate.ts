@@ -96,15 +96,19 @@ export function assertFleetAllowed(input: FleetGateInput): FleetGateResult {
 	return { allowed: true };
 }
 
+/** Canonical multi-child WorkflowScript fanout (`runs.all(...)`). Static text only — never eval. */
+const WORKFLOW_RUNS_ALL = /\bruns\.all\s*\(/;
+
 /**
- * Detect multi-agent fanout on the raw `subagent` tool (parallel tasks / counts / chain parallel).
- * Single-agent launches are allowed during gated phases.
+ * Detect multi-agent fanout on the raw `subagent` tool (parallel tasks / counts / chain parallel /
+ * WorkflowScript `runs.all`). Single-agent launches (including true one-child `runs.run`) are allowed
+ * during gated phases. Management actions are never treated as launches.
  */
 export function isMultiAgentSubagentLaunch(params: unknown): boolean {
 	if (!params || typeof params !== "object") return false;
 	const p = params as Record<string, unknown>;
 
-	// Management actions are not launches
+	// Management actions are not launches (even if they carry a workflowScript field).
 	if (typeof p.action === "string" && p.action.length > 0) return false;
 
 	if (Array.isArray(p.tasks)) {
@@ -129,6 +133,12 @@ export function isMultiAgentSubagentLaunch(params: unknown): boolean {
 				}
 			}
 		}
+	}
+
+	// WorkflowScript multi-child fanout (fleet dispatch / handcrafted runs.all).
+	// Do not treat runs.run as multi; do not evaluate the script.
+	if (typeof p.workflowScript === "string" && WORKFLOW_RUNS_ALL.test(p.workflowScript)) {
+		return true;
 	}
 
 	return false;
