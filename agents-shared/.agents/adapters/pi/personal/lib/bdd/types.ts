@@ -33,6 +33,72 @@ export const QUALITY_GATE_KINDS = [
 
 export type QualityGateKind = (typeof QUALITY_GATE_KINDS)[number];
 
+/** Trust profile controlling shell vs argv gate policy. Default: interactive. */
+export type TrustProfile = "interactive" | "strict" | "overnight";
+
+/** Machine-visible trust tier on evidence and gate results. */
+export type TrustTier =
+	| "trusted"
+	| "interactive_untrusted"
+	| "legacy"
+	| "policy_rejected";
+
+export type ExecutorKind = "shell" | "argv" | "internal";
+
+/** Expected-red match mode for causal red classification. */
+export type RedMatchMode = "identity" | "signature" | "legacy";
+
+/** Deterministic reason codes for red classification (R2). */
+export type RedReasonCode =
+	| "timeout"
+	| "spawn"
+	| "infra_126"
+	| "infra_127"
+	| "pass"
+	| "setup_import"
+	| "missing_identity"
+	| "unrelated_identity"
+	| "signature_mismatch"
+	| "expected_assertion"
+	| "legacy_interactive"
+	| "contract_required"
+	| "unknown";
+
+/** Additive expected-red contract supplied to validateRedResult / bdd_assert_red. */
+export interface ExpectedRedContract {
+	expectedTestId?: string;
+	expectedFailureSignature?: string;
+	matchMode?: RedMatchMode;
+	assuranceEnabled?: boolean;
+	trustProfile?: TrustProfile;
+}
+
+/** Trusted argv command (shell:false). */
+export interface ArgvCommandSpec {
+	kind?: "argv";
+	version: 1;
+	file: string;
+	args: string[];
+	cwd?: string;
+	timeoutMs?: number;
+	maxOutputBytes?: number;
+}
+
+/** Explicit shell command spec (interactive-untrusted). */
+export interface ShellCommandSpec {
+	kind: "shell";
+	command: string;
+	trustTier?: TrustTier;
+}
+
+/** Internal check id — unknown ids fail closed until FIT-01 adapters exist. */
+export interface InternalCommandSpec {
+	kind: "internal";
+	id: string;
+}
+
+export type GateExecutorSpec = ArgvCommandSpec | ShellCommandSpec | InternalCommandSpec;
+
 export interface BddCommands {
 	/** Focused/unit test runner, e.g. `bun test` or `npm test --` */
 	unitTest: string;
@@ -56,10 +122,16 @@ export interface BddCommands {
 export interface AssuranceConfig {
 	/** Require a current passing assurance run before BDD handoff. */
 	enabled?: boolean;
+	/** Trust profile: interactive (default), strict, overnight. */
+	trustProfile?: TrustProfile;
 	requiredGateKinds?: QualityGateKind[];
 	advisoryGateKinds?: QualityGateKind[];
-	/** Exact command overrides keyed by gate kind. */
+	/** Exact command overrides keyed by gate kind (legacy shell strings). */
 	commands?: Partial<Record<QualityGateKind, string>>;
+	/** Canonical executors (shell / argv / internal) keyed by gate kind. */
+	executors?: Partial<Record<QualityGateKind, GateExecutorSpec>>;
+	/** Machine-visible trust labels for legacy shell command strings. */
+	commandTrust?: Partial<Record<QualityGateKind, TrustTier>>;
 	coverageThreshold?: number;
 	mutationThreshold?: number;
 	doctorThreshold?: number;
@@ -77,11 +149,19 @@ export interface AssuranceGateResult {
 	summary: string;
 	startedAt?: string;
 	completedAt?: string;
+	/** shell | argv | internal */
+	executorKind?: ExecutorKind;
+	/** trusted | interactive_untrusted | … */
+	trustTier?: TrustTier | string;
+	/** True when policy rejected before spawn. */
+	policyRejected?: boolean;
 }
 
 export interface AssuranceEvidence {
 	profileFingerprint: string;
 	planFingerprint: string;
+	/** Binds assurance evidence to the BDD config fingerprint (R8). */
+	configFingerprint?: string;
 	startedAt: string;
 	completedAt: string;
 	ok: boolean;
@@ -129,6 +209,15 @@ export interface CommandEvidence {
 	at: string;
 	/** Best-effort failed test names/hints parsed from output */
 	failedTestHints?: string[];
+	/** Expected-red contract fields (BDD-01). */
+	expectedTestId?: string;
+	expectedFailureSignature?: string;
+	matchMode?: RedMatchMode | string;
+	assuranceEligible?: boolean;
+	trustTier?: TrustTier | string;
+	cause?: string;
+	reasonCode?: RedReasonCode | string;
+	configFingerprint?: string;
 }
 
 export interface BddEvidence {
@@ -151,6 +240,13 @@ export interface BddEvidence {
 		passCommand?: string;
 		failSummary?: string;
 		passSummary?: string;
+		/** Expected-red contract reused on the fail leg (BDD-01). */
+		expectedTestId?: string;
+		expectedFailureSignature?: string;
+		matchMode?: RedMatchMode | string;
+		matched?: boolean;
+		cause?: string;
+		reasonCode?: RedReasonCode | string;
 	};
 	acceptance?: {
 		/** Feature path(s) or explicit N/A */

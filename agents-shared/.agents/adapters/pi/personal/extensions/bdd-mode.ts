@@ -18,7 +18,7 @@ import { dirname, join } from "node:path";
 import { StringEnum, Type } from "@earendil-works/pi-ai";
 import { defineTool, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
-import { configTemplate, loadConfigFromCwd } from "../lib/bdd/config.ts";
+import { configTemplate, fingerprintConfig, loadConfigFromCwd } from "../lib/bdd/config.ts";
 import {
 	HIGH_ASSURANCE_PLAYBOOK,
 	formatHighAssurancePlaybookReference,
@@ -188,10 +188,13 @@ export default function bddModeExtension(pi: ExtensionAPI): void {
 		return {
 			assuranceEnabled: highAssurance,
 			expectedPlanFingerprint: highAssurance ? plan.fingerprint : undefined,
+			expectedConfigFingerprint: highAssurance ? fingerprintConfig(config) : undefined,
 			expectedRequiredGateKinds: highAssurance
 				? plan.gates.filter((gate) => gate.required).map((gate) => gate.kind)
 				: undefined,
+			requireCausalRed: highAssurance,
 			requireCommandBackedMutation: highAssurance,
+			requireCommandBackedMatchedMutation: highAssurance,
 			requireFleetDisposition: highAssurance,
 			synthesisExists: highAssurance
 				? (path: string, runId: string) => synthesisExists(cwd, path, runId)
@@ -300,7 +303,9 @@ export default function bddModeExtension(pi: ExtensionAPI): void {
 			setEnabled(ctx, false);
 			return { ok: true, message: "BDD mode disabled." };
 		}
-		const gate = canTransition(state.enabled ? state.phase : "off", phase, state.evidence);
+		const gate = canTransition(state.enabled ? state.phase : "off", phase, state.evidence, {
+			assuranceEnabled: config.assurance?.enabled === true,
+		});
 		if (!gate.ok) {
 			return { ok: false, message: gate.reason ?? "Transition blocked" };
 		}
@@ -410,6 +415,16 @@ export default function bddModeExtension(pi: ExtensionAPI): void {
 					description: "Extra args appended to the default unitTest command (e.g. a file path)",
 				}),
 			),
+			expectedTestId: Type.Optional(Type.String({
+				description:
+					"Expected failing test id for causal/assurance red (identity or signature match)",
+			})),
+			expectedFailureSignature: Type.Optional(Type.String({
+				description: "Optional failure signature required when matchMode is signature",
+			})),
+			matchMode: Type.Optional(Type.String({
+				description: 'Red match mode: "identity" | "signature" | "legacy"',
+			})),
 		}),
 		async execute(_id, params, _signal, _onUpdate, ctx) {
 			const extCtx = ctx as ExtensionContext;
@@ -417,11 +432,40 @@ export default function bddModeExtension(pi: ExtensionAPI): void {
 			const base = String(params.command ?? config.commands.unitTest);
 			const command = params.append ? `${base} ${params.append}` : base;
 			const result = await runCommand({ cwd: cwdOf(extCtx), command });
-			const check = validateRedResult(result);
+			const expectedTestId =
+				typeof params.expectedTestId === "string" && params.expectedTestId.trim()
+					? String(params.expectedTestId).trim()
+					: undefined;
+			const expectedFailureSignature =
+				typeof params.expectedFailureSignature === "string" && params.expectedFailureSignature.trim()
+					? String(params.expectedFailureSignature).trim()
+					: undefined;
+			const matchModeRaw =
+				typeof params.matchMode === "string" && params.matchMode.trim()
+					? String(params.matchMode).trim()
+					: undefined;
+			const matchMode =
+				matchModeRaw === "identity" || matchModeRaw === "signature" || matchModeRaw === "legacy"
+					? matchModeRaw
+					: undefined;
+			const redContract = {
+				expectedTestId,
+				expectedFailureSignature,
+				matchMode,
+				assuranceEnabled: config.assurance?.enabled === true,
+				trustProfile: config.assurance?.trustProfile,
+			};
+			const check = validateRedResult(result, redContract);
 			if (!check.ok) {
 				return {
 					content: [{ type: "text", text: check.reason }],
-					details: { ok: false, exitCode: result.exitCode, command },
+					details: {
+						ok: false,
+						exitCode: result.exitCode,
+						command,
+						reasonCode: check.reasonCode,
+						cause: check.cause,
+					},
 				};
 			}
 			// Only advance phase after successful red
@@ -429,24 +473,40 @@ export default function bddModeExtension(pi: ExtensionAPI): void {
 			state.phase = "red";
 			// New red invalidates prior green
 			delete state.evidence.green;
+			const configFp = fingerprintConfig(config);
 			state.evidence.red = {
 				command,
 				exitCode: result.exitCode,
 				summary: result.summary,
 				at: nowIso(),
 				failedTestHints: result.failedTestHints,
+				expectedTestId,
+				expectedFailureSignature,
+				matchMode: check.matchMode ?? matchMode,
+				assuranceEligible: check.assuranceEligible === true,
+				trustTier: check.trustTier,
+				cause: check.cause,
+				reasonCode: check.reasonCode,
+				configFingerprint: configFp,
 			};
 			const hints =
 				result.failedTestHints?.length
 					? `\nHints: ${result.failedTestHints.slice(0, 5).join(" | ")}`
 					: "";
+			const eligibility =
+				check.assuranceEligible === true
+					? "assurance-eligible"
+					: "legacy/non-assurance";
 			persist();
 			updateStatus(extCtx);
 			return {
 				content: [
 					{
 						type: "text",
-						text: `Red evidence recorded.\nCommand: ${command}\n${result.summary}${hints}\nYou may /bdd green and implement the minimum fix.`,
+						text:
+							`Red evidence recorded (${eligibility}).\nCommand: ${command}\n${result.summary}${hints}\n` +
+							`cause=${check.cause ?? "n/a"} matchMode=${check.matchMode ?? "n/a"} configFingerprint=${configFp.slice(0, 12)}…\n` +
+							`You may /bdd green and implement the minimum fix.`,
 					},
 				],
 				details: {
@@ -455,6 +515,14 @@ export default function bddModeExtension(pi: ExtensionAPI): void {
 					command,
 					summary: result.summary,
 					failedTestHints: result.failedTestHints,
+					expectedTestId,
+					expectedFailureSignature,
+					matchMode: check.matchMode,
+					assuranceEligible: check.assuranceEligible,
+					trustTier: check.trustTier,
+					cause: check.cause,
+					reasonCode: check.reasonCode,
+					configFingerprint: configFp,
 				},
 			};
 		},
@@ -732,6 +800,15 @@ export default function bddModeExtension(pi: ExtensionAPI): void {
 				}),
 			),
 			note: Type.Optional(Type.String({ description: "What was broken and restored" })),
+			expectedTestId: Type.Optional(Type.String({
+				description: "Expected-red test id reused for the mutation fail leg",
+			})),
+			expectedFailureSignature: Type.Optional(Type.String({
+				description: "Optional failure signature for the mutation fail leg",
+			})),
+			matchMode: Type.Optional(Type.String({
+				description: 'Fail-leg match mode: "identity" | "signature" | "legacy"',
+			})),
 		}),
 		async execute(_id, params, _signal, _onUpdate, ctx) {
 			const extCtx = ctx as ExtensionContext;
@@ -743,8 +820,31 @@ export default function bddModeExtension(pi: ExtensionAPI): void {
 					state.evidence.red?.command ??
 					config.commands.unitTest,
 			);
+			const expectedTestId =
+				typeof params.expectedTestId === "string" && params.expectedTestId.trim()
+					? String(params.expectedTestId).trim()
+					: state.evidence.red?.expectedTestId;
+			const expectedFailureSignature =
+				typeof params.expectedFailureSignature === "string" && params.expectedFailureSignature.trim()
+					? String(params.expectedFailureSignature).trim()
+					: state.evidence.red?.expectedFailureSignature;
+			const matchModeRaw =
+				typeof params.matchMode === "string" && params.matchMode.trim()
+					? String(params.matchMode).trim()
+					: state.evidence.red?.matchMode;
+			const matchMode =
+				matchModeRaw === "identity" || matchModeRaw === "signature" || matchModeRaw === "legacy"
+					? matchModeRaw
+					: undefined;
+			const redContract = {
+				expectedTestId,
+				expectedFailureSignature,
+				matchMode,
+				assuranceEnabled: config.assurance?.enabled === true,
+				trustProfile: config.assurance?.trustProfile,
+			};
 			const failRun = await runCommand({ cwd: cwdOf(extCtx), command: failCommand });
-			const failCheck = validateRedResult(failRun);
+			const failCheck = validateRedResult(failRun, redContract);
 			if (!failCheck.ok) {
 				return {
 					content: [
@@ -753,7 +853,12 @@ export default function bddModeExtension(pi: ExtensionAPI): void {
 							text: `Mutation fail-step did not fail as required.\n${failCheck.reason}`,
 						},
 					],
-					details: { ok: false, step: "fail" },
+					details: {
+						ok: false,
+						step: "fail",
+						reasonCode: failCheck.reasonCode,
+						cause: failCheck.cause,
+					},
 				};
 			}
 			const passRun = await runCommand({ cwd: cwdOf(extCtx), command: passCommand });
@@ -778,6 +883,12 @@ export default function bddModeExtension(pi: ExtensionAPI): void {
 				passCommand,
 				failSummary: failRun.summary,
 				passSummary: passRun.summary,
+				expectedTestId,
+				expectedFailureSignature,
+				matchMode: failCheck.matchMode ?? matchMode,
+				matched: failCheck.assuranceEligible === true || failCheck.ok,
+				cause: failCheck.cause,
+				reasonCode: failCheck.reasonCode,
 			};
 			persist();
 			updateStatus(extCtx);
@@ -911,6 +1022,7 @@ export default function bddModeExtension(pi: ExtensionAPI): void {
 				};
 			}
 			const run = await runQualityGatePlan({ cwd, plan });
+			run.configFingerprint = fingerprintConfig(config);
 			state.evidence.assurance = run;
 			persist();
 			updateStatus(extCtx);
@@ -919,6 +1031,7 @@ export default function bddModeExtension(pi: ExtensionAPI): void {
 				at: nowIso(),
 				profileFingerprint: profile.fingerprint,
 				planFingerprint: plan.fingerprint,
+				configFingerprint: run.configFingerprint,
 				ok: run.ok,
 			});
 			return {

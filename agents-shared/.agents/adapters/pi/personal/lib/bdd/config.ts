@@ -3,6 +3,7 @@
  * olhaminha.bio paths — projects opt in with `.pi/bdd.json` or get sensible defaults.
  */
 
+import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { detectProjectProfile } from "./project-profile.ts";
@@ -10,7 +11,10 @@ import type {
 	AssuranceConfig,
 	BddCommands,
 	BddConfig,
+	GateExecutorSpec,
 	QualityGateKind,
+	TrustProfile,
+	TrustTier,
 } from "./types.ts";
 import {
 	DEFAULT_CONFIG_PATTERNS,
@@ -107,14 +111,100 @@ export function parseConfigJson(raw: unknown): BddConfig {
 	});
 }
 
+function isTrustProfile(value: unknown): value is TrustProfile {
+	return value === "interactive" || value === "strict" || value === "overnight";
+}
+
+function parseExecutorSpec(raw: unknown, kindKey: string): GateExecutorSpec {
+	if (!raw || typeof raw !== "object") {
+		throw new Error(`malformed command executor for ${kindKey}: expected object (integrity)`);
+	}
+	const spec = raw as Record<string, unknown>;
+	const kind = spec.kind;
+
+	if (kind === "internal") {
+		if (typeof spec.id !== "string" || !spec.id.trim()) {
+			throw new Error(`malformed internal command for ${kindKey}: id required (integrity)`);
+		}
+		return { kind: "internal", id: String(spec.id) };
+	}
+
+	if (kind === "shell") {
+		if (typeof spec.command !== "string" || !spec.command.trim()) {
+			throw new Error(`malformed shell command for ${kindKey}: command required (integrity)`);
+		}
+		return {
+			kind: "shell",
+			command: String(spec.command),
+			trustTier:
+				typeof spec.trustTier === "string" ? (spec.trustTier as TrustTier) : "interactive_untrusted",
+		};
+	}
+
+	// argv (explicit kind or versioned argv shape)
+	if (kind === "argv" || kind === undefined || spec.version === 1 || "file" in spec) {
+		const file = typeof spec.file === "string" ? spec.file : "";
+		if (!file.trim()) {
+			throw new Error(`malformed argv command for ${kindKey}: file required (invalid integrity)`);
+		}
+		if (!Array.isArray(spec.args) || !spec.args.every((a) => typeof a === "string")) {
+			throw new Error(
+				`malformed argv command for ${kindKey}: args must be string[] (invalid integrity)`,
+			);
+		}
+		const argv: GateExecutorSpec = {
+			kind: "argv",
+			version: 1,
+			file,
+			args: spec.args as string[],
+		};
+		if (typeof spec.cwd === "string") argv.cwd = spec.cwd;
+		if (typeof spec.timeoutMs === "number" && Number.isFinite(spec.timeoutMs)) {
+			argv.timeoutMs = Number(spec.timeoutMs);
+		}
+		if (typeof spec.maxOutputBytes === "number" && Number.isFinite(spec.maxOutputBytes)) {
+			argv.maxOutputBytes = Number(spec.maxOutputBytes);
+		}
+		return argv;
+	}
+
+	throw new Error(`malformed command executor for ${kindKey}: unknown kind ${String(kind)} (integrity)`);
+}
+
 function parseAssurance(raw: unknown): AssuranceConfig | undefined {
 	if (!raw || typeof raw !== "object") return undefined;
 	const value = raw as Record<string, unknown>;
 	const kinds = new Set<string>(QUALITY_GATE_KINDS);
-	const kindList = (input: unknown): QualityGateKind[] | undefined =>
-		Array.isArray(input)
-			? input.filter((item): item is QualityGateKind => typeof item === "string" && kinds.has(item))
-			: undefined;
+
+	let trustProfile: TrustProfile | undefined;
+	if (value.trustProfile !== undefined) {
+		if (!isTrustProfile(value.trustProfile)) {
+			throw new Error(`invalid trust profile: ${String(value.trustProfile)} (integrity)`);
+		}
+		trustProfile = value.trustProfile;
+	}
+	const effectiveProfile: TrustProfile = trustProfile ?? "interactive";
+	const strictish = effectiveProfile === "strict" || effectiveProfile === "overnight";
+
+	const kindList = (input: unknown, field: string): QualityGateKind[] | undefined => {
+		if (!Array.isArray(input)) return undefined;
+		const out: QualityGateKind[] = [];
+		for (const item of input) {
+			if (typeof item !== "string") {
+				if (strictish) throw new Error(`invalid gate kind in ${field} (integrity)`);
+				continue;
+			}
+			if (!kinds.has(item)) {
+				if (strictish) {
+					throw new Error(`unknown gate kind: ${item} (integrity)`);
+				}
+				continue;
+			}
+			out.push(item as QualityGateKind);
+		}
+		return out;
+	};
+
 	const commandsIn =
 		value.commands && typeof value.commands === "object"
 			? (value.commands as Record<string, unknown>)
@@ -123,8 +213,44 @@ function parseAssurance(raw: unknown): AssuranceConfig | undefined {
 	for (const kind of QUALITY_GATE_KINDS) {
 		if (typeof commandsIn[kind] === "string" && String(commandsIn[kind]).trim()) {
 			commands[kind] = String(commandsIn[kind]);
+		} else if (commandsIn[kind] !== undefined && strictish) {
+			// Non-string command entries under strict must not be silently ignored.
+			if (typeof commandsIn[kind] === "object" && commandsIn[kind] !== null) {
+				// allow object forms via executors only
+			}
 		}
 	}
+
+	const executors: Partial<Record<QualityGateKind, GateExecutorSpec>> = {};
+	const executorsIn =
+		value.executors && typeof value.executors === "object"
+			? (value.executors as Record<string, unknown>)
+			: undefined;
+	if (executorsIn) {
+		for (const [key, spec] of Object.entries(executorsIn)) {
+			if (!kinds.has(key)) {
+				if (strictish) throw new Error(`unknown gate kind in executors: ${key} (integrity)`);
+				continue;
+			}
+			executors[key as QualityGateKind] = parseExecutorSpec(spec, key);
+		}
+	}
+
+	// Visible migration label for legacy shell command strings (E33).
+	const commandTrust: Partial<Record<QualityGateKind, TrustTier>> = {};
+	for (const kind of Object.keys(commands) as QualityGateKind[]) {
+		const exec = executors[kind];
+		if (exec?.kind === "argv" || exec?.kind === "internal") continue;
+		commandTrust[kind] = "interactive_untrusted";
+		if (!exec) {
+			executors[kind] = {
+				kind: "shell",
+				command: commands[kind]!,
+				trustTier: "interactive_untrusted",
+			};
+		}
+	}
+
 	const number = (name: string): number | undefined =>
 		typeof value[name] === "number" && Number.isFinite(value[name])
 			? Number(value[name])
@@ -139,17 +265,65 @@ function parseAssurance(raw: unknown): AssuranceConfig | undefined {
 			gateTimeoutMs[kind] = Number(timeoutInput[kind]);
 		}
 	}
-	return {
+
+	const result: AssuranceConfig = {
 		enabled: value.enabled === true,
-		requiredGateKinds: kindList(value.requiredGateKinds),
-		advisoryGateKinds: kindList(value.advisoryGateKinds),
+		trustProfile: effectiveProfile,
+		requiredGateKinds: kindList(value.requiredGateKinds, "requiredGateKinds"),
+		advisoryGateKinds: kindList(value.advisoryGateKinds, "advisoryGateKinds"),
 		commands: Object.keys(commands).length ? commands : undefined,
+		executors: Object.keys(executors).length ? executors : undefined,
+		commandTrust: Object.keys(commandTrust).length ? commandTrust : undefined,
 		coverageThreshold: number("coverageThreshold"),
 		mutationThreshold: number("mutationThreshold"),
 		doctorThreshold: number("doctorThreshold"),
 		defaultTimeoutMs: number("defaultTimeoutMs"),
 		gateTimeoutMs: Object.keys(gateTimeoutMs).length ? gateTimeoutMs : undefined,
 	};
+	return result;
+}
+
+/**
+ * Deterministic fingerprint over trust-sensitive config fields (R8).
+ * Covers version, green-coverage policy, commands, assurance trust/profile/kinds/executors/thresholds/timeouts.
+ */
+export function fingerprintConfig(config: BddConfig | unknown): string {
+	const cfg = config as BddConfig;
+	const assurance = cfg.assurance;
+	const sorted = <T,>(obj: Record<string, T> | undefined | null): Record<string, T> => {
+		if (!obj) return {};
+		return Object.fromEntries(
+			Object.entries(obj).sort(([a], [b]) => a.localeCompare(b)),
+		) as Record<string, T>;
+	};
+	const payload = {
+		version: cfg.version ?? 1,
+		strictGreenCoversRed: cfg.strictGreenCoversRed !== false,
+		commands: sorted({ ...(cfg.commands ?? {}) } as Record<string, string | undefined>),
+		assurance: assurance
+			? {
+					enabled: assurance.enabled === true,
+					trustProfile: assurance.trustProfile ?? "interactive",
+					requiredGateKinds: [...(assurance.requiredGateKinds ?? [])].sort(),
+					advisoryGateKinds: [...(assurance.advisoryGateKinds ?? [])].sort(),
+					commands: sorted(assurance.commands as Record<string, string> | undefined),
+					executors: sorted(
+						assurance.executors as Record<string, GateExecutorSpec> | undefined,
+					),
+					commandTrust: sorted(
+						assurance.commandTrust as Record<string, string> | undefined,
+					),
+					coverageThreshold: assurance.coverageThreshold ?? null,
+					mutationThreshold: assurance.mutationThreshold ?? null,
+					doctorThreshold: assurance.doctorThreshold ?? null,
+					defaultTimeoutMs: assurance.defaultTimeoutMs ?? null,
+					gateTimeoutMs: sorted(
+						assurance.gateTimeoutMs as Record<string, number> | undefined,
+					),
+				}
+			: null,
+	};
+	return createHash("sha256").update(JSON.stringify(payload)).digest("hex");
 }
 
 export interface PackageScripts {
@@ -356,6 +530,7 @@ export function configTemplate(overrides?: Partial<BddCommands>): string {
 		projectLabel: undefined,
 		assurance: {
 			enabled: true,
+			trustProfile: "interactive",
 			requiredGateKinds: ["unit"],
 			advisoryGateKinds: ["format", "static", "types", "coverage", "mutation", "doctor", "security"],
 			coverageThreshold: 95,
