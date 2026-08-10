@@ -13,6 +13,10 @@ import { Type } from "@earendil-works/pi-ai";
 import { defineTool, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import {
+	preflightFleetContainment,
+	recordBlockedAttempt,
+} from "../lib/fleet/child-policy.ts";
+import {
 	ensureSubagentCaps,
 	loadFleetUserConfig,
 	loadFleetUserConfigDetailed,
@@ -202,6 +206,40 @@ async function dispatchPlan(
 			details: { ok: false, blocked: true, reason: blocked, plan },
 		};
 	}
+	const containment = preflightFleetContainment({
+		agents: plan.tasks.map((task) => task.agent),
+		agentScope: plan.subagentParams.agentScope,
+		env: process.env,
+	});
+	if (!containment.ok) {
+		const cwd = ctx?.cwd ?? process.cwd();
+		try {
+			recordBlockedAttempt(join(cwd, ".pi", "fleet-runs", "blocked-attempts.jsonl"), {
+				agent: "agentic-fleet",
+				tool: "dispatch",
+				action: "dispatch",
+				reason: containment.code,
+				args: {
+					agents: plan.tasks.map((task) => task.agent),
+					agentScope: plan.subagentParams.agentScope,
+				},
+			});
+		} catch {
+			// Audit failure never turns a denied launch into an allowed launch.
+		}
+		return {
+			ok: false,
+			text: `## Fleet dispatch blocked by SEC-00 containment\n\n${containment.reason ?? containment.code}`,
+			details: {
+				ok: false,
+				blocked: true,
+				containment: true,
+				code: containment.code,
+				reason: containment.reason,
+			},
+		};
+	}
+
 	const reply = await callSubagentRpc(pi.events, "spawn", plan.subagentParams, {
 		timeoutMs: 60_000,
 		source: "agentic-fleet",
