@@ -151,7 +151,9 @@ describe("handoff", () => {
 						required: true,
 						status: "passed",
 						summary: "PASS",
-					},
+						// R11 — required passing unit must be explicit trusted argv
+						...( { trustTier: "trusted", executorKind: "argv" } as object),
+					} as never,
 				],
 			},
 		};
