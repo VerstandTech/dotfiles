@@ -10,6 +10,7 @@ import {
 	UNSAFE_PATHS,
 	accessorTrapFromValid,
 	bigintFieldFromValid,
+	countDistinctInvalidPathsInOverProduction,
 	cyclicGraphFromValid,
 	depthExactLimitGraph,
 	depthExceedingGraph,
@@ -21,10 +22,12 @@ import {
 	minimalRoleRequest,
 	minimalRoleResult,
 	nonFiniteFromValid,
+	overProductionInvalidFixture,
 	protoPollutionFromValid,
 	requireContracts,
 	requireExport,
 	requireFn,
+	roleResultParseOkRenderOversize,
 	roleResultWithExactSerializedSize,
 	sparseArrayFromValid,
 	symbolFieldFromValid,
@@ -46,28 +49,52 @@ describe("CON-01 hostile object safety", () => {
 			`${CON01_P0_FAILURE_SIGNATURE}: getter must never be invoked`,
 		).toBe(false);
 
-		// Prototype pollution shaped input from complete fixture base
+		// P0-R1: real own enumerable __proto__ data property on complete fixture
 		const polluted = protoPollutionFromValid();
+		expect(
+			Object.prototype.hasOwnProperty.call(polluted, "__proto__"),
+			`${CON01_P0_FAILURE_SIGNATURE}: __proto__ must be own key`,
+		).toBe(true);
+		const ownProto = Object.getOwnPropertyDescriptor(polluted, "__proto__");
+		expect(ownProto?.enumerable, "__proto__ enumerable data").toBe(true);
+		expect(ownProto && "value" in ownProto, "__proto__ data property").toBe(true);
+		expect(ownProto?.value).toEqual({ polluted: true });
+		expect(Object.getPrototypeOf(polluted)).toBe(Object.prototype);
+		expect(Object.getOwnPropertyDescriptor(Object.prototype, "polluted")).toBeUndefined();
+
 		expectRejected(
 			parse(polluted),
-			"E5 proto pollution shaped input",
+			"E5 proto pollution shaped input with own __proto__",
 			/proto|prototype|unsafe|unknown|dangerous|key/i,
 		);
+
+		// After parse: prototype chain and Object.prototype remain clean
+		expect(Object.getPrototypeOf(polluted)).toBe(Object.prototype);
+		expect(Object.getOwnPropertyDescriptor(Object.prototype, "polluted")).toBeUndefined();
 		expect(
 			Object.prototype,
-			`${CON01_P0_FAILURE_SIGNATURE}: Object.prototype must remain unchanged`,
+			`${CON01_P0_FAILURE_SIGNATURE}: Object.prototype must remain unchanged after parse`,
 		).not.toHaveProperty("polluted");
 		// @ts-expect-error intentional probe
 		expect(({} as { polluted?: boolean }).polluted).toBeUndefined();
 
-		// Dangerous own keys on complete fixtures
-		for (const key of ["__proto__", "prototype", "constructor"]) {
-			const o = { ...minimalRoleRequest(), [key]: { evil: true } };
+		// Dangerous own keys on complete fixtures (defineProperty for __proto__)
+		for (const key of ["__proto__", "prototype", "constructor"] as const) {
+			const o = minimalRoleRequest();
+			Object.defineProperty(o, key, {
+				value: { evil: true },
+				enumerable: true,
+				configurable: true,
+				writable: true,
+			});
+			expect(Object.prototype.hasOwnProperty.call(o, key), `own key ${key}`).toBe(true);
 			expectRejected(
 				parse(o),
 				`dangerous own key ${key}`,
 				/proto|prototype|constructor|unsafe|key|unknown/i,
 			);
+			expect(Object.getPrototypeOf(o)).toBe(Object.prototype);
+			expect(Object.getOwnPropertyDescriptor(Object.prototype, "evil")).toBeUndefined();
 		}
 	});
 
@@ -295,81 +322,86 @@ describe("CON-01 published bounds", () => {
 		expectRejected(parse(depthExceedingGraph(1)), "maxNestingDepth+1 bound", /bound/i);
 		expectAccepted(parse(minimalRoleRequest()), "nesting under limit accept");
 
-		// ── maxIssues: highly invalid input yields capped non-empty issues ─
-		const manyBad: Record<string, unknown> = {
-			schemaVersion: "nope",
-			kind: 123,
-			taskId: null,
-			role: "nope",
-			phase: "nope",
-			goal: 1,
-			writeScope: "nope",
-			ownedPaths: "nope",
-			forbiddenPaths: 1,
-			tools: null,
-			extra1: true,
-			extra2: true,
-			extra3: true,
-		};
+		// ── maxIssues: over-production (> maxIssues distinct invalid paths) ─
+		const potentialIssues = countDistinctInvalidPathsInOverProduction();
+		expect(potentialIssues).toBeGreaterThan(EXPECTED_LIMITS_V1.maxIssues);
+		const manyBad = overProductionInvalidFixture();
+		// Prove fixture carries more than maxIssues distinct unknown keys alone.
+		const extraKeys = Object.keys(manyBad).filter((k) => k.startsWith("extraField_"));
+		expect(extraKeys.length).toBeGreaterThan(EXPECTED_LIMITS_V1.maxIssues);
 		const manyResult = parse(manyBad);
-		expectRejected(manyResult, "maxIssues produces capped issues");
+		expectRejected(
+			manyResult,
+			"maxIssues over-production capped with bound/cap issue",
+			/bound|cap|issues|maxIssues|too many/i,
+		);
 		expect(manyResult.issues.length).toBeGreaterThan(0);
-		expect(manyResult.issues.length).toBeLessThanOrEqual(EXPECTED_LIMITS_V1.maxIssues);
-		// Over-production of issues must not exceed cap (exact-limit accept = at most maxIssues).
-		// limit+1 would be issues.length > maxIssues — forbidden.
 		expect(
-			manyResult.issues.length <= EXPECTED_LIMITS_V1.maxIssues,
-			"issues must never exceed maxIssues",
+			manyResult.issues.length,
+			`${CON01_P0_FAILURE_SIGNATURE}: issues must never exceed maxIssues (no unbounded dump)`,
+		).toBeLessThanOrEqual(EXPECTED_LIMITS_V1.maxIssues);
+		// Stable bound/cap signal required — silent truncation without bound issue is forbidden.
+		const issueBlob = manyResult.issues.map((i) => `${i.code} ${i.message}`).join(" | ");
+		expect(
+			/bound|cap|issues|maxIssues|too many/i.test(issueBlob),
+			`${CON01_P0_FAILURE_SIGNATURE}: over-production must report bound/cap issue, got ${issueBlob}`,
 		).toBe(true);
 
 		// ── maxRenderedMarkdownBytes ────────────────────────────────────
 		// Accept: normal validated render under limit.
 		const okParsed = parse(minimalRoleResult({ status: "blocked", blockers: ["x"] }));
-		expectAccepted(okParsed, "render bound fixture");
+		expectAccepted(okParsed, "render bound under-limit fixture");
 		const mdOk = render(okParsed.value);
 		expect(typeof mdOk).toBe("string");
 		expect(mdOk.length).toBeGreaterThan(0);
 		expect(mdOk.length).toBeLessThanOrEqual(EXPECTED_LIMITS_V1.maxRenderedMarkdownBytes);
 
-		// Reject: validated value whose render would exceed — pad residualRisks near string bound.
-		const fatRisks = Array.from({ length: 16 }, (_, i) =>
-			`risk-${i}: ${"R".repeat(Math.min(EXPECTED_LIMITS_V1.maxStringLength, 4_000))}`,
+		// P1-R1: dedicated parse-accepted fixture; render must refuse oversize (not parse-time).
+		const renderOverFixture = roleResultParseOkRenderOversize();
+		const contentLen = (renderOverFixture.residualRisks as string[]).join("").length;
+		const serLen = JSON.stringify(renderOverFixture).length;
+		expect(contentLen).toBeGreaterThan(EXPECTED_LIMITS_V1.maxRenderedMarkdownBytes);
+		expect(serLen).toBeLessThanOrEqual(EXPECTED_LIMITS_V1.maxSerializedBytes);
+
+		const overParsed = parse(renderOverFixture);
+		expectAccepted(
+			overParsed,
+			`${CON01_P0_FAILURE_SIGNATURE}: P1-R1 fixture must parse (render-bound oracle; parse reject does not count)`,
 		);
-		const fat = minimalRoleResult({
-			status: "blocked",
-			blockers: ["large"],
-			residualRisks: fatRisks,
-		});
-		// If parse rejects for serialized/array bounds first, that still fails closed.
-		const fatParsed = parse(fat);
-		if (fatParsed.ok) {
-			let rendered: string | undefined;
-			let threw = false;
-			try {
-				const out = render(fatParsed.value);
-				if (typeof out === "string") rendered = out;
-			} catch {
-				threw = true;
-			}
-			if (!threw && rendered !== undefined) {
+
+		let renderRefused = false;
+		let emitted: string | undefined;
+		try {
+			const out = render(overParsed.value);
+			if (
+				out !== null &&
+				typeof out === "object" &&
+				"ok" in (out as object) &&
+				(out as { ok: boolean }).ok === false
+			) {
+				renderRefused = true;
+				const issues = (out as { issues?: Array<{ code: string; message: string }> }).issues ?? [];
+				const blob = issues.map((i) => `${i.code} ${i.message}`).join(" | ");
 				expect(
-					rendered.length <= EXPECTED_LIMITS_V1.maxRenderedMarkdownBytes,
-					`${CON01_P0_FAILURE_SIGNATURE}: render must stay within maxRenderedMarkdownBytes`,
+					/bound|render|markdown|size|bytes/i.test(blob),
+					`${CON01_P0_FAILURE_SIGNATURE}: render Result refuse must carry bound issue, got ${blob}`,
 				).toBe(true);
-				// If implementation allows render but truncates — forbidden (no silent truncation).
-				// So either refuse or fit. Fitting huge content under 32k implies refusal required:
-				const joined = fatRisks.join("");
-				if (joined.length > EXPECTED_LIMITS_V1.maxRenderedMarkdownBytes) {
-					expect(
-						false,
-						`${CON01_P0_FAILURE_SIGNATURE}: maxRenderedMarkdownBytes+ content must refuse render, not emit`,
-					).toBe(true);
-				}
+			} else if (typeof out === "string") {
+				emitted = out;
 			}
-			// throw or err-shaped refuse is success for over-limit render
-		} else {
-			expectRejected(fatParsed, "fat fixture rejected before render (fail closed)", /bound/i);
+		} catch {
+			renderRefused = true; // throw at render = refuse
 		}
+		if (emitted !== undefined) {
+			expect(
+				false,
+				`${CON01_P0_FAILURE_SIGNATURE}: P1-R1 render must refuse oversize markdown, emitted len=${emitted.length}`,
+			).toBe(true);
+		}
+		expect(
+			renderRefused,
+			`${CON01_P0_FAILURE_SIGNATURE}: P1-R1 validated render over maxRenderedMarkdownBytes must fail at render`,
+		).toBe(true);
 	});
 });
 

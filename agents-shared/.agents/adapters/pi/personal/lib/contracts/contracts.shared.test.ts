@@ -534,15 +534,102 @@ export function accessorTrapFromValid(): {
 	return { obj, wasGetterInvoked: () => invoked };
 }
 
+/**
+ * Complete valid RoleRequest plus a real own enumerable data property named `__proto__`.
+ * Must NOT use JSON.stringify/parse (that drops the key) and must NOT mutate Object.prototype.
+ */
 export function protoPollutionFromValid(): Record<string, unknown> {
-	// JSON proto-key shape while retaining otherwise-complete fields where possible.
-	const base = minimalRoleRequest();
-	return JSON.parse(
-		JSON.stringify({
-			...base,
-			__proto__: { polluted: true },
-		}),
-	);
+	const obj = minimalRoleRequest();
+	Object.defineProperty(obj, "__proto__", {
+		value: { polluted: true },
+		enumerable: true,
+		configurable: true,
+		writable: true,
+	});
+	return obj;
+}
+
+/**
+ * Structurally valid blocked RoleResult that MUST parse (serialized size ≤ maxSerializedBytes)
+ * but whose residualRisks content alone exceeds maxRenderedMarkdownBytes so render fails closed.
+ * Parse-time rejection does NOT satisfy the render-bound oracle.
+ */
+export function roleResultParseOkRenderOversize(): Record<string, unknown> {
+	const maxRender = EXPECTED_LIMITS_V1.maxRenderedMarkdownBytes;
+	const maxSer = EXPECTED_LIMITS_V1.maxSerializedBytes;
+	const maxStr = EXPECTED_LIMITS_V1.maxStringLength;
+	// Content strictly above render bound; keep JSON under serialized bound.
+	const need = maxRender + 1;
+	const chunk = Math.min(maxStr, 2_048);
+	const risks: string[] = [];
+	let filled = 0;
+	while (filled < need && risks.length < EXPECTED_LIMITS_V1.maxArrayLength) {
+		const n = Math.min(chunk, need - filled);
+		risks.push("R".repeat(n));
+		filled += n;
+	}
+	const fixture = minimalRoleResult({
+		status: "blocked",
+		blockers: ["render-bound"],
+		residualRisks: risks,
+		commands: [{ command: "t", exitCode: 1, summary: "t" }],
+		changedPaths: [],
+		evidenceRefs: [],
+		artifactRefs: [],
+		usage: "unknown",
+	});
+	delete fixture.redCause;
+	const ser = JSON.stringify(fixture).length;
+	if (ser > maxSer) {
+		// Trim last risk until under serialized bound while keeping content > render bound.
+		while (risks.length > 0 && JSON.stringify({ ...fixture, residualRisks: risks }).length > maxSer) {
+			const last = risks[risks.length - 1]!;
+			if (last.length <= 1) {
+				risks.pop();
+			} else {
+				risks[risks.length - 1] = last.slice(0, Math.floor(last.length / 2));
+			}
+			fixture.residualRisks = [...risks];
+		}
+	}
+	const contentLen = risks.join("").length;
+	const finalSer = JSON.stringify(fixture).length;
+	if (contentLen <= maxRender || finalSer > maxSer) {
+		throw new Error(
+			`roleResultParseOkRenderOversize unreachable: content=${contentLen} ser=${finalSer} renderMax=${maxRender} serMax=${maxSer}`,
+		);
+	}
+	return fixture;
+}
+
+/** More than maxIssues distinct unknown keys + bad required fields for issue-cap oracle. */
+export function overProductionInvalidFixture(): Record<string, unknown> {
+	const bad: Record<string, unknown> = {
+		schemaVersion: "nope",
+		kind: 123,
+		taskId: null,
+		role: false,
+		phase: 9,
+		goal: 1,
+		writeScope: {},
+		ownedPaths: "nope",
+		forbiddenPaths: 1,
+		tools: null,
+		model: 1,
+		thinking: false,
+		budget: "nope",
+		artifacts: "nope",
+	};
+	const extras = EXPECTED_LIMITS_V1.maxIssues + 32;
+	for (let i = 0; i < extras; i++) {
+		bad[`extraField_${i}`] = `smuggle-${i}`;
+	}
+	return bad;
+}
+
+export function countDistinctInvalidPathsInOverProduction(): number {
+	// Known-bad required/typed fields (14) + extras beyond maxIssues.
+	return 14 + EXPECTED_LIMITS_V1.maxIssues + 32;
 }
 
 export function cyclicGraphFromValid(): Record<string, unknown> {
@@ -742,4 +829,25 @@ test("CON-01 harness > exports locked oracle identity constants", () => {
 	if (over) {
 		expect(JSON.stringify(over).length).toBe(EXPECTED_LIMITS_V1.maxSerializedBytes + 1);
 	}
+
+	// P0-R1: __proto__ must be a real own enumerable data property (not lost to JSON).
+	const protoFix = protoPollutionFromValid();
+	expect(Object.prototype.hasOwnProperty.call(protoFix, "__proto__")).toBe(true);
+	const protoDesc = Object.getOwnPropertyDescriptor(protoFix, "__proto__");
+	expect(protoDesc?.enumerable).toBe(true);
+	expect(protoDesc && "get" in protoDesc ? protoDesc.get : undefined).toBeUndefined();
+	expect(protoDesc?.value).toEqual({ polluted: true });
+	expect(Object.getPrototypeOf(protoFix)).toBe(Object.prototype);
+	expect(Object.getOwnPropertyDescriptor(Object.prototype, "polluted")).toBeUndefined();
+
+	// P1-R1: parse-ok / render-oversize fixture invariants (builder-only).
+	const renderOver = roleResultParseOkRenderOversize();
+	const renderContent = (renderOver.residualRisks as string[]).join("").length;
+	expect(renderContent).toBeGreaterThan(EXPECTED_LIMITS_V1.maxRenderedMarkdownBytes);
+	expect(JSON.stringify(renderOver).length).toBeLessThanOrEqual(
+		EXPECTED_LIMITS_V1.maxSerializedBytes,
+	);
+	expect(countDistinctInvalidPathsInOverProduction()).toBeGreaterThan(
+		EXPECTED_LIMITS_V1.maxIssues,
+	);
 });
