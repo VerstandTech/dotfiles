@@ -1,0 +1,5 @@
+{
+  "commands": {
+    "unitTest": "bash scripts/test-root.sh"
+  }
+}
