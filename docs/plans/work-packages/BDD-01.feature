@@ -268,3 +268,13 @@ Feature: BDD-01 machine-checkable red cause and trusted gate execution
     When validateRedResult runs
     Then ok is false with a policy-rejection reason
     And the result is neither red nor green
+
+  # --- Final hardening lock (E48 / R9, R11) ---
+
+  Scenario: Missing executor kind cannot be trusted by forged tier string (E48, R9, R11)
+    Given otherwise-current passing assurance evidence
+    And a required unit result that omits executorKind
+    And the result sets trustTier "trusted"
+    When assuranceHandoffGaps runs
+    Then an executor or trust gap is reported
+    And a forged tier string alone cannot satisfy required assurance

@@ -273,4 +273,28 @@ describe("assuranceHandoffGaps", () => {
 		const gaps = assuranceHandoffGaps(value, policy as never);
 		expect(gaps.join(" ")).toMatch(/untrusted|executor|shell|kind/i);
 	});
+
+	// E48 — missing executor kind cannot be trusted by forged tier string alone
+	test("rejects a required passing result with missing executor kind even when tier says trusted", () => {
+		const value = evidence();
+		value.assurance = {
+			profileFingerprint: "profile-1",
+			planFingerprint: "plan-1",
+			startedAt: "2026-07-26T10:01:00.000Z",
+			completedAt: "2026-07-26T10:02:00.000Z",
+			ok: true,
+			results: [
+				{
+					...passedUnit,
+					// executorKind deliberately omitted
+					...( {
+						trustTier: "trusted",
+					} as object),
+				} as typeof passedUnit,
+			],
+		};
+		const gaps = assuranceHandoffGaps(value, policy as never);
+		expect(gaps.join(" ")).toMatch(/executor|trust|kind/i);
+		expect(gaps.length).toBeGreaterThan(0);
+	});
 });
