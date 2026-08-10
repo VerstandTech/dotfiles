@@ -55,7 +55,7 @@ BDD-01 owns red/trust fields and pure runners/config/gate model plus minimal `bd
 
 ### R11 — Executor shapes are internally consistent and cannot be forged
 
-A gate claiming argv trust must contain a valid argv executor; missing/mismatched executor shapes reject before spawn under every trust profile and especially strict/overnight. Required handoff evidence with `executorKind:shell` is untrusted even when a forged tier says `trusted`.
+A gate claiming argv trust must contain a valid argv executor; missing/mismatched executor shapes reject before spawn under every trust profile and especially strict/overnight. Required passing handoff evidence must explicitly use `executorKind:argv|internal`; shell, missing, or unknown kinds are untrusted even when a forged tier says `trusted`.
 
 ### R12 — Policy rejection is neither red nor green
 
@@ -112,6 +112,7 @@ A gate claiming argv trust must contain a valid argv executor; missing/mismatche
 | E45 | trusted `runCommand` call omits argv | runner runs | policy rejects without shell fallback |
 | E46 | in-project cwd is a symlink to outside project | argv runner validates | realpath escape is rejected without spawn |
 | E47 | result sets `policyRejected:true` with non-126 exit and matching hint | red classifier runs | policy rejection is rejected as red |
+| E48 | required passing gate omits executor kind but says trusted | handoff runs | missing-executor trust gap is reported |
 
 ## Questions and resolutions
 
@@ -134,4 +135,4 @@ A gate claiming argv trust must contain a valid argv executor; missing/mismatche
 - **Broader green:** `bun test lib/bdd` followed by root `scripts/test-root.sh`
 - **Forbidden production paths before red SHA:** `lib/bdd/{run-command,config,types,quality-gates,phases}.ts`, `extensions/bdd-mode.ts`
 - **Covering green:** exact focused command passes and includes the causal-red classifier plus trusted-gate runner tests
-- **Sensitivity:** deliberately re-enable reverse-substring identity matching, let direct green accept legacy red, allow strict shell/malformed argv fallback, and trust shell-labeled handoff results; each mutation must fail its focused oracle and each restore must pass
+- **Sensitivity:** deliberately re-enable reverse-substring identity matching, let direct green accept legacy red, allow strict shell/malformed argv fallback, and trust shell/missing-executor handoff results; each mutation must fail its focused oracle and each restore must pass
