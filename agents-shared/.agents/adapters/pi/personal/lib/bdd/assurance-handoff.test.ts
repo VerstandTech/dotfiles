@@ -10,6 +10,16 @@ const passedUnit = {
 	command: "bun test",
 	exitCode: 0,
 	summary: "PASS",
+	// R11 — required passing results must declare a trusted executor kind explicitly
+	executorKind: "argv" as const,
+	trustTier: "trusted" as const,
+};
+
+const passedUnitInternal = {
+	...passedUnit,
+	id: "quality:unit:internal",
+	executorKind: "internal" as const,
+	trustTier: "trusted" as const,
 };
 
 const policy = {
@@ -64,7 +74,7 @@ describe("assuranceHandoffGaps", () => {
 		).toMatch(/fingerprint/i);
 	});
 
-	// R7-E2
+	// R7-E2 / R11 — valid argv and internal required results remain green
 	test("accepts current passing gate evidence", () => {
 		const value = evidence();
 		value.assurance = {
@@ -74,6 +84,19 @@ describe("assuranceHandoffGaps", () => {
 			completedAt: "2026-07-26T10:02:00.000Z",
 			ok: true,
 			results: [passedUnit],
+		};
+		expect(assuranceHandoffGaps(value, policy)).toEqual([]);
+	});
+
+	test("accepts current passing internal executor evidence", () => {
+		const value = evidence();
+		value.assurance = {
+			profileFingerprint: "profile-1",
+			planFingerprint: "plan-1",
+			startedAt: "2026-07-26T10:01:00.000Z",
+			completedAt: "2026-07-26T10:02:00.000Z",
+			ok: true,
+			results: [passedUnitInternal],
 		};
 		expect(assuranceHandoffGaps(value, policy)).toEqual([]);
 	});
@@ -274,27 +297,41 @@ describe("assuranceHandoffGaps", () => {
 		expect(gaps.join(" ")).toMatch(/untrusted|executor|shell|kind/i);
 	});
 
-	// E48 — missing executor kind cannot be trusted by forged tier string alone
+	// E48 / R11 — missing executorKind is never trusted (no tier, or forged trusted tier)
 	test("rejects a required passing result with missing executor kind even when tier says trusted", () => {
-		const value = evidence();
-		value.assurance = {
+		const baseAssurance = {
 			profileFingerprint: "profile-1",
 			planFingerprint: "plan-1",
 			startedAt: "2026-07-26T10:01:00.000Z",
 			completedAt: "2026-07-26T10:02:00.000Z",
-			ok: true,
+			ok: true as const,
+		};
+
+		// Case A: executorKind omitted and no trustTier claimed
+		const missingKindNoTier = evidence();
+		const { executorKind: _omitKindA, trustTier: _omitTierA, ...unitNoKindNoTier } = passedUnit;
+		missingKindNoTier.assurance = {
+			...baseAssurance,
+			results: [unitNoKindNoTier as typeof passedUnit],
+		};
+		const gapsNoTier = assuranceHandoffGaps(missingKindNoTier, policy as never);
+		expect(gapsNoTier.join(" ")).toMatch(/executor|trust|kind/i);
+		expect(gapsNoTier.length).toBeGreaterThan(0);
+
+		// Case B: executorKind omitted while trustTier is forged as trusted
+		const missingKindForgedTier = evidence();
+		const { executorKind: _omitKindB, ...unitNoKindTrusted } = passedUnit;
+		missingKindForgedTier.assurance = {
+			...baseAssurance,
 			results: [
 				{
-					...passedUnit,
-					// executorKind deliberately omitted
-					...( {
-						trustTier: "trusted",
-					} as object),
+					...unitNoKindTrusted,
+					trustTier: "trusted",
 				} as typeof passedUnit,
 			],
 		};
-		const gaps = assuranceHandoffGaps(value, policy as never);
-		expect(gaps.join(" ")).toMatch(/executor|trust|kind/i);
-		expect(gaps.length).toBeGreaterThan(0);
+		const gapsForged = assuranceHandoffGaps(missingKindForgedTier, policy as never);
+		expect(gapsForged.join(" ")).toMatch(/executor|trust|kind/i);
+		expect(gapsForged.length).toBeGreaterThan(0);
 	});
 });

@@ -273,8 +273,12 @@ Feature: BDD-01 machine-checkable red cause and trusted gate execution
 
   Scenario: Missing executor kind cannot be trusted by forged tier string (E48, R9, R11)
     Given otherwise-current passing assurance evidence
-    And a required unit result that omits executorKind
-    And the result sets trustTier "trusted"
+    And required passing fixtures declare executorKind argv or internal with trustTier trusted
+    And a required unit result that omits executorKind with no trustTier
+    When assuranceHandoffGaps runs
+    Then an executor or trust gap is reported
+    Given a required unit result that omits executorKind and sets trustTier "trusted"
     When assuranceHandoffGaps runs
     Then an executor or trust gap is reported
     And a forged tier string alone cannot satisfy required assurance
+    And valid argv and internal required passing results remain gap-free
