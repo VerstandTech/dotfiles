@@ -15,6 +15,7 @@ import {
 	mkdirSync,
 	readFileSync,
 	realpathSync,
+	statSync,
 } from "node:fs";
 import { homedir } from "node:os";
 import {
@@ -27,6 +28,7 @@ import {
 	resolve,
 	sep,
 } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 /** Runtime acknowledgement id for pi-subagents `subagent:acknowledge-extension`. */
@@ -57,7 +59,7 @@ const MUTATION_TOOLS = new Set([
 	"exec",
 	"terminal",
 	"notebook_edit",
-	"NotebookEdit",
+	"notebookedit",
 ]);
 
 const NETWORK_TOOLS = new Set([
@@ -79,6 +81,20 @@ const INTERNAL_TOOLS = new Set([
 	"structured_output",
 ]);
 
+/** Exact canonical tool sets (pi-subagents child frontmatter lock). */
+const EXACT_REVIEWER_TOOLS = [
+	"read",
+	"grep",
+	"find",
+	"ls",
+	"contact_supervisor",
+	"intercom",
+] as const;
+const EXACT_RESEARCHER_TOOLS = [
+	...EXACT_REVIEWER_TOOLS,
+	"xai_web_search",
+] as const;
+
 /** Pre-start injection / loader keys — parent preflight must reject these. */
 export const FORBIDDEN_PRESTART_ENV_KEYS = [
 	"NODE_OPTIONS",
@@ -92,6 +108,9 @@ export const FORBIDDEN_PRESTART_ENV_KEYS = [
 	"JAVA_TOOL_OPTIONS",
 	"DOTNET_STARTUP_HOOKS",
 	"SSLKEYLOGFILE",
+	"PI_SUBAGENT_PI_BINARY",
+	"NODE_PATH",
+	"BUN_OPTIONS",
 ] as const;
 
 const FORBIDDEN_PRESTART = new Set<string>(FORBIDDEN_PRESTART_ENV_KEYS);
@@ -211,11 +230,12 @@ function isAllowedEnvKey(key: string): boolean {
 	if (!key || key.includes("\0")) return false;
 	if (FORBIDDEN_PRESTART.has(key)) return false;
 	if (key === "PI_AUTH_PATH") return false;
+	// Secret-shaped names (incl. PI_SUBAGENT_API_TOKEN) before broad control-prefix allow.
+	if (SECRET_ENV_NAME.test(key)) return false;
+	if (/proxy/i.test(key)) return false;
 	if (key.startsWith("PI_SUBAGENT_") || key.startsWith("PI_INTERCOM_")) return true;
 	if (EXACT_ENV_ALLOW.has(key)) return true;
 	if (key.startsWith("LC_")) return true;
-	if (SECRET_ENV_NAME.test(key)) return false;
-	if (/proxy/i.test(key)) return false;
 	return false;
 }
 
@@ -292,11 +312,64 @@ function expandHome(raw: string, home: string): string {
 	return raw;
 }
 
+/** Pi 0.84-compatible Unicode space fold + trim. */
+function normalizeUnicodeSpaces(raw: string): string {
+	return raw
+		.replace(/[\u00A0\u1680\u2000-\u200A\u202F\u205F\u3000\uFEFF]/g, " ")
+		.replace(/[ \t\f\v]+/g, " ")
+		.trim();
+}
+
+function stripLeadingAt(raw: string): string {
+	return raw.startsWith("@") ? raw.slice(1) : raw;
+}
+
+/** Decode local file:// URLs; non-file schemes return undefined. */
+function decodeLocalFileUrl(raw: string): string | undefined {
+	if (!/^file:/i.test(raw)) return undefined;
+	try {
+		return fileURLToPath(raw);
+	} catch {
+		try {
+			return fileURLToPath(new URL(raw));
+		} catch {
+			// file:///etc/passwd style fallback
+			const m = raw.match(/^file:\/\/(\/.*)$/i);
+			if (m?.[1]) {
+				try {
+					return decodeURIComponent(m[1]);
+				} catch {
+					return m[1];
+				}
+			}
+			return undefined;
+		}
+	}
+}
+
+/**
+ * Pi 0.84 path alias order before policy resolution:
+ * trim/Unicode spaces → strip leading @ → decode local file:// → expand tilde.
+ */
+function normalizePiPathInput(raw: string, home: string): string {
+	let s = normalizeUnicodeSpaces(raw);
+	s = stripLeadingAt(s);
+	const decoded = decodeLocalFileUrl(s);
+	if (decoded !== undefined) s = decoded;
+	s = normalizeUnicodeSpaces(s);
+	return expandHome(s, home);
+}
+
+function normalizeToolName(raw: string): string {
+	return raw.trim().toLowerCase();
+}
+
 function tryRealpath(path: string): string {
 	try {
 		return realpathSync(path);
 	} catch {
 		// Resolve the longest existing prefix so symlink escapes still surface.
+		// Use index-based remainder (not indexOf) so repeated segments stay correct.
 		const abs = normalize(path);
 		const parts = abs.split(sep).filter((p, i) => p.length > 0 || i === 0);
 		// Rebuild from root
@@ -305,7 +378,8 @@ function tryRealpath(path: string): string {
 			cur = `${parts.shift()}${sep}`;
 		}
 		let lastExisting = cur || ".";
-		for (const part of parts) {
+		for (let i = 0; i < parts.length; i++) {
+			const part = parts[i]!;
 			const next = cur ? join(cur, part) : part;
 			try {
 				if (existsSync(next)) {
@@ -316,12 +390,10 @@ function tryRealpath(path: string): string {
 			} catch {
 				// fall through
 			}
-			// Append remaining lexical segments onto last real prefix.
-			const restIdx = parts.indexOf(part);
-			const rest = parts.slice(restIdx);
+			const rest = parts.slice(i);
 			return normalize(join(lastExisting, ...rest));
 		}
-		return normalize(abs);
+		return normalize(lastExisting || abs);
 	}
 }
 
@@ -336,18 +408,32 @@ function isInsideDir(root: string, candidate: string): boolean {
 
 function isSecretPath(candidate: string, home: string): string | undefined {
 	const base = basename(candidate);
-	if (SECRET_BASENAMES.has(base) || SECRET_BASENAME_RE.test(base)) {
+	const baseLower = base.toLowerCase();
+	// Case-insensitive secret basename + auth path checks (Darwin + defense-in-depth).
+	if (
+		SECRET_BASENAMES.has(base) ||
+		SECRET_BASENAMES.has(baseLower) ||
+		SECRET_BASENAME_RE.test(base) ||
+		SECRET_BASENAME_RE.test(baseLower)
+	) {
 		return "secret path denied";
 	}
-	if (base === "auth.json" || candidate.includes(`${sep}.pi${sep}agent${sep}auth`)) {
+	const lowered = candidate.toLowerCase();
+	const authNeedle = `${sep}.pi${sep}agent${sep}auth`;
+	if (baseLower === "auth.json" || lowered.includes(authNeedle)) {
 		return "auth path denied";
 	}
 	const homeAuth = join(home, ".pi", "agent", "auth.json");
-	if (candidate === homeAuth || candidate.startsWith(`${homeAuth}${sep}`)) {
+	const homeAuthLower = homeAuth.toLowerCase();
+	if (
+		candidate === homeAuth ||
+		candidate.startsWith(`${homeAuth}${sep}`) ||
+		lowered === homeAuthLower ||
+		lowered.startsWith(`${homeAuthLower}${sep}`)
+	) {
 		return "auth path denied";
 	}
 	// Credential-ish directories under home
-	const lowered = candidate.toLowerCase();
 	if (
 		lowered.includes(`${sep}.ssh${sep}`) ||
 		lowered.includes(`${sep}.aws${sep}`) ||
@@ -361,6 +447,33 @@ function isSecretPath(candidate: string, home: string): string | undefined {
 	return undefined;
 }
 
+/** Deny hardlinks that share an inode with a known secret file (auth.json). */
+function isHardlinkToSecret(candidate: string, home: string): string | undefined {
+	let candStat: ReturnType<typeof statSync>;
+	try {
+		candStat = statSync(candidate);
+	} catch {
+		return undefined;
+	}
+	if (!candStat.isFile()) return undefined;
+	const secretPaths = [join(home, ".pi", "agent", "auth.json")];
+	for (const secretPath of secretPaths) {
+		try {
+			const st = statSync(secretPath);
+			if (
+				st.isFile() &&
+				st.dev === candStat.dev &&
+				st.ino === candStat.ino
+			) {
+				return "hardlink to secret path denied";
+			}
+		} catch {
+			// secret missing — nothing to compare
+		}
+	}
+	return undefined;
+}
+
 /**
  * Repository-confined, secret-aware inspection after lexical + realpath checks.
  */
@@ -370,14 +483,15 @@ export function evaluateInspectionPath(input: {
 	target: string;
 	home?: string;
 }): InspectionDecision {
-	const { tool, target } = input;
+	const { tool } = input;
 	const home = input.home ?? process.env.HOME ?? homedir();
 	const cwdRaw = input.cwd;
+	const targetRaw = input.target;
 
-	if (typeof target !== "string" || target.length === 0) {
+	if (typeof targetRaw !== "string" || targetRaw.length === 0) {
 		return { allowed: false, reason: "missing inspection target denied" };
 	}
-	if (target.includes("\0")) {
+	if (targetRaw.includes("\0")) {
 		return { allowed: false, reason: "NUL in path denied" };
 	}
 	if (cwdRaw.includes("\0")) {
@@ -385,24 +499,28 @@ export function evaluateInspectionPath(input: {
 	}
 
 	const cwdReal = tryRealpath(resolve(cwdRaw));
-	const expanded = expandHome(target, home);
+	const expanded = normalizePiPathInput(targetRaw, home);
+	if (!expanded || expanded.length === 0) {
+		return { allowed: false, reason: "missing inspection target denied" };
+	}
+	if (expanded.includes("\0")) {
+		return { allowed: false, reason: "NUL in path denied" };
+	}
+
 	const absolute = isAbsolute(expanded)
 		? normalize(expanded)
 		: resolve(cwdReal, expanded);
 
 	// Fast pseudo check before realpath (broken /proc links etc.)
-	if (PSEUDO_PATH_RE.test(absolute)) {
+	if (PSEUDO_PATH_RE.test(absolute) || PSEUDO_PATH_RE.test(expanded)) {
 		return { allowed: false, reason: "pseudo-filesystem path denied" };
 	}
 
-	// Symlink / canonical resolution
+	// Symlink / canonical resolution (lexical + realpath containment)
 	let canonical = absolute;
 	try {
 		if (existsSync(absolute)) {
-			const st = lstatSync(absolute);
-			canonical = st.isSymbolicLink() || st.isDirectory() || st.isFile()
-				? tryRealpath(absolute)
-				: tryRealpath(absolute);
+			canonical = tryRealpath(absolute);
 		} else {
 			canonical = tryRealpath(absolute);
 		}
@@ -413,9 +531,18 @@ export function evaluateInspectionPath(input: {
 	const secretHit =
 		isSecretPath(canonical, home) ??
 		isSecretPath(absolute, home) ??
-		isSecretPath(expanded, home);
+		isSecretPath(expanded, home) ??
+		isSecretPath(targetRaw, home);
 	if (secretHit) {
 		return { allowed: false, reason: secretHit };
+	}
+
+	// Hardlink-to-secret inode denial (benign in-cwd name → auth.json inode)
+	const hardlinkHit =
+		isHardlinkToSecret(canonical, home) ??
+		isHardlinkToSecret(absolute, home);
+	if (hardlinkHit) {
+		return { allowed: false, reason: hardlinkHit };
 	}
 
 	if (!isInsideDir(cwdReal, canonical)) {
@@ -430,6 +557,10 @@ export function evaluateInspectionPath(input: {
 	const postSecret = isSecretPath(canonical, home);
 	if (postSecret) {
 		return { allowed: false, reason: postSecret };
+	}
+	const postHardlink = isHardlinkToSecret(canonical, home);
+	if (postHardlink) {
+		return { allowed: false, reason: postHardlink };
 	}
 
 	return { allowed: true };
@@ -487,21 +618,23 @@ export function recordBlockedAttempt(
 	if (!auditPath || auditPath.includes("\0")) {
 		throw new Error("audit path invalid");
 	}
+	const rawTool =
+		typeof record.tool === "string"
+			? record.tool
+			: typeof record.action === "string"
+				? record.action
+				: "unknown";
+	const rawAction =
+		typeof record.action === "string"
+			? record.action
+			: typeof record.tool === "string"
+				? record.tool
+				: "unknown";
 	const row: Record<string, unknown> = {
 		timestamp: new Date().toISOString(),
 		agent: typeof record.agent === "string" ? record.agent : "unknown",
-		tool:
-			typeof record.tool === "string"
-				? record.tool
-				: typeof record.action === "string"
-					? record.action
-					: "unknown",
-		action:
-			typeof record.action === "string"
-				? record.action
-				: typeof record.tool === "string"
-					? record.tool
-					: "unknown",
+		tool: normalizeToolName(rawTool),
+		action: normalizeToolName(rawAction),
 		reason:
 			typeof record.reason === "string"
 				? record.reason
@@ -586,6 +719,18 @@ function isCanonicalAgent(name: string): name is CanonicalFleetAgent {
 	return (CANONICAL_FLEET_AGENTS as readonly string[]).includes(name);
 }
 
+function sortedExact(values: readonly string[]): string {
+	return [...values].map((v) => v.trim()).filter(Boolean).sort().join("\0");
+}
+
+function isPolicyExtensionEntry(entry: string): boolean {
+	return entry.includes("child-policy") || entry === CHILD_POLICY_EXTENSION;
+}
+
+function isXaiExtensionEntry(entry: string): boolean {
+	return entry.includes("xai-web-search") || entry === XAI_WEB_SEARCH_EXTENSION;
+}
+
 /**
  * Static mechanical contract for canonical fleet agent definitions.
  * Throws on drift (mutation tools, missing policy extension, etc.).
@@ -601,32 +746,62 @@ export function assertCanonicalFleetAgentContract(
 		throw new Error(`uncontained-agent: ${name}`);
 	}
 
-	for (const banned of MUTATION_TOOLS) {
-		if (tools.includes(banned)) {
-			throw new Error(`${name} declares mutation/shell tool ${banned}`);
-		}
+	const expectedTools =
+		name === "fleet-researcher"
+			? EXACT_RESEARCHER_TOOLS
+			: EXACT_REVIEWER_TOOLS;
+	if (sortedExact(tools) !== sortedExact(expectedTools)) {
+		throw new Error(
+			`${name} must declare exact tools only (got ${tools.join(",")}; expected ${expectedTools.join(",")})`,
+		);
 	}
-	for (const banned of NETWORK_TOOLS) {
-		if (tools.includes(banned)) {
-			throw new Error(`${name} declares generic network tool ${banned}`);
+
+	for (const tool of tools) {
+		const normalized = normalizeToolName(tool);
+		if (MUTATION_TOOLS.has(normalized) || MUTATION_TOOLS.has(tool)) {
+			throw new Error(`${name} declares mutation/shell tool ${tool}`);
+		}
+		if (NETWORK_TOOLS.has(normalized) || NETWORK_TOOLS.has(tool)) {
+			throw new Error(`${name} declares generic network tool ${tool}`);
 		}
 	}
 
 	if (name === "fleet-researcher") {
-		if (!tools.includes("xai_web_search")) {
-			throw new Error("fleet-researcher must expose xai_web_search");
+		if (allExt.length !== 2) {
+			throw new Error(
+				"fleet-researcher must load exactly policy + xAI extensions (no extras)",
+			);
 		}
-		if (!hasXaiExtension(allExt)) {
-			throw new Error("fleet-researcher missing xAI web search extension");
+		if (!hasPolicyExtension(allExt) || !hasXaiExtension(allExt)) {
+			throw new Error(
+				"fleet-researcher missing required policy or xAI web search extension",
+			);
 		}
-	} else if (tools.includes("xai_web_search")) {
-		throw new Error(`${name} must not expose xai_web_search`);
-	} else if (hasXaiExtension(allExt)) {
-		throw new Error(`${name} must not load xAI web search extension`);
-	} else if (subagentOnlyExtensions.length > 0) {
-		throw new Error(`${name} must not declare subagentOnlyExtensions extras`);
-	} else if (!allExt.every((e) => e.includes("child-policy") || e === CHILD_POLICY_EXTENSION)) {
-		throw new Error(`${name} must load exactly the policy extension (no extras)`);
+		if (!allExt.every((e) => isPolicyExtensionEntry(e) || isXaiExtensionEntry(e))) {
+			throw new Error(
+				"fleet-researcher extensions must be exactly policy + xAI (extra extension rejected)",
+			);
+		}
+	} else {
+		if (tools.includes("xai_web_search")) {
+			throw new Error(`${name} must not expose xai_web_search`);
+		}
+		if (hasXaiExtension(allExt)) {
+			throw new Error(`${name} must not load xAI web search extension`);
+		}
+		if (subagentOnlyExtensions.length > 0) {
+			throw new Error(`${name} must not declare subagentOnlyExtensions extras`);
+		}
+		if (extensions.length !== 1 || allExt.length !== 1) {
+			throw new Error(
+				`${name} must load exactly the policy extension (no extras)`,
+			);
+		}
+		if (!allExt.every((e) => isPolicyExtensionEntry(e))) {
+			throw new Error(
+				`${name} must load exactly the policy extension (extra extension rejected)`,
+			);
+		}
 	}
 
 	if (!hasPolicyExtension(allExt)) {
@@ -681,21 +856,29 @@ function childPolicyFilePresent(): boolean {
 /**
  * Fail-closed dispatch preflight before any pi-subagents RPC spawn.
  * Never echoes topic/task text into the blocked result.
+ *
+ * `installedPolicyExtensionExists` is a deterministic injection point for tests
+ * and parent callers that already resolved the installed extension path.
  */
 export function preflightFleetContainment(input: {
 	agents: string[];
 	agentScope?: unknown;
 	env?: Record<string, string | undefined>;
 	topic?: string;
+	installedPolicyExtensionExists?: boolean;
 }): PreflightResult {
 	// topic intentionally unused — must never appear in results/audits.
 	void input.topic;
 
-	if (!childPolicyFilePresent()) {
+	const installedPresent =
+		typeof input.installedPolicyExtensionExists === "boolean"
+			? input.installedPolicyExtensionExists
+			: childPolicyFilePresent();
+	if (!installedPresent) {
 		return {
 			ok: false,
 			code: "missing-policy",
-			reason: "child-policy module missing; disable live fleets",
+			reason: "installed policy extension missing; disable live fleets",
 			blocked: true,
 		};
 	}
@@ -730,6 +913,8 @@ export function preflightFleetContainment(input: {
 		};
 	}
 
+	// When callers inject installed-policy existence, skip on-disk agent file I/O
+	// only for the policy path check — agent contract still validates when files exist.
 	for (const agent of agents) {
 		if (!isCanonicalAgent(agent)) {
 			return {
@@ -739,16 +924,22 @@ export function preflightFleetContainment(input: {
 				blocked: true,
 			};
 		}
-		try {
-			validateCanonicalAgentFile(agent);
-		} catch (error) {
-			const message = error instanceof Error ? error.message : "agent-contract drift";
-			return {
-				ok: false,
-				code: "agent-contract",
-				reason: message,
-				blocked: true,
-			};
+		// Prefer live agent definitions when present; injection-only paths still
+		// require canonical names + safe env (covered above).
+		const agentPath = join(AGENTS_DIR, `${agent}.md`);
+		if (existsSync(agentPath)) {
+			try {
+				validateCanonicalAgentFile(agent);
+			} catch (error) {
+				const message =
+					error instanceof Error ? error.message : "agent-contract drift";
+				return {
+					ok: false,
+					code: "agent-contract",
+					reason: message,
+					blocked: true,
+				};
+			}
 		}
 	}
 
@@ -780,17 +971,12 @@ function extractInspectionTarget(input: unknown): string | undefined {
 }
 
 function roleAllowsTool(agent: string, toolName: string): boolean {
-	if (INTERNAL_TOOLS.has(toolName)) return true;
-	if (MUTATION_TOOLS.has(toolName)) return false;
-	if (NETWORK_TOOLS.has(toolName)) return false;
-	if (toolName === "xai_web_search") return agent === "fleet-researcher";
-	if (INSPECTION_TOOLS.has(toolName)) {
-		if (agent === "fleet-researcher") {
-			// Researcher may read; grep/find/ls are also safe inspection primitives.
-			return true;
-		}
-		return true;
-	}
+	const tool = normalizeToolName(toolName);
+	if (INTERNAL_TOOLS.has(tool)) return true;
+	if (MUTATION_TOOLS.has(tool)) return false;
+	if (NETWORK_TOOLS.has(tool)) return false;
+	if (tool === "xai_web_search") return agent === "fleet-researcher";
+	if (INSPECTION_TOOLS.has(tool)) return true;
 	// Undeclared / unknown tools — fail closed.
 	return false;
 }
@@ -813,27 +999,32 @@ function auditBlocked(
  * and enforces tool_call containment.
  */
 export default function fleetChildPolicyExtension(pi: ExtensionAPI): void {
-	// 1) Sanitize inherited environment immediately on registration.
+	// 1) Sanitize inherited environment immediately on registration (before tool work).
 	applySanitizedEnvironment(process.env);
 
-	// 2) Observable policy presence for pi-subagents runtime acknowledgement.
+	// 2) Observable policy presence — acknowledge exactly once per registration.
+	let acknowledged = false;
 	try {
 		const events = (
 			pi as {
 				events?: { emit?: (event: string, payload: unknown) => void };
 			}
 		).events;
-		events?.emit?.(RUNTIME_ACK_EVENT, { id: FLEET_CHILD_POLICY_ACK_ID });
+		if (!acknowledged) {
+			events?.emit?.(RUNTIME_ACK_EVENT, { id: FLEET_CHILD_POLICY_ACK_ID });
+			acknowledged = true;
+		}
 	} catch {
 		// Acknowledgement is best-effort observability.
 	}
 
 	// 3) tool_call gate
 	pi.on("tool_call", (event) => {
-		const toolName =
+		const rawToolName =
 			typeof event.toolName === "string" && event.toolName.length > 0
 				? event.toolName
 				: "tool";
+		const toolName = normalizeToolName(rawToolName);
 		const agent =
 			process.env[CHILD_AGENT_ENV]?.trim() ||
 			process.env.PI_SUBAGENT_CHILD_AGENT?.trim() ||
@@ -853,7 +1044,7 @@ export default function fleetChildPolicyExtension(pi: ExtensionAPI): void {
 			});
 			return {
 				block: true,
-				reason: `Blocked by fleet child policy: '${toolName}' is a mutation/shell tool (mutation-tool-denied).`,
+				reason: `Blocked by fleet child policy: '${rawToolName}' is a mutation/shell tool (mutation-tool-denied).`,
 			};
 		}
 
@@ -868,7 +1059,7 @@ export default function fleetChildPolicyExtension(pi: ExtensionAPI): void {
 			});
 			return {
 				block: true,
-				reason: `Blocked by fleet child policy: '${toolName}' network egress is denied.`,
+				reason: `Blocked by fleet child policy: '${rawToolName}' network egress is denied.`,
 			};
 		}
 
@@ -898,27 +1089,29 @@ export default function fleetChildPolicyExtension(pi: ExtensionAPI): void {
 			});
 			return {
 				block: true,
-				reason: `Blocked by fleet child policy: undeclared tool '${toolName}'.`,
+				reason: `Blocked by fleet child policy: undeclared tool '${rawToolName}'.`,
 			};
 		}
 
 		if (INSPECTION_TOOLS.has(toolName)) {
-			const target = extractInspectionTarget(event.input);
-			if (target === undefined) {
-				// ls with no path defaults to cwd — allow.
-				if (toolName === "ls") return undefined;
-				auditBlocked({
-					agent,
-					runId,
-					tool: toolName,
-					action: toolName,
-					reason: "inspection-target-missing",
-					args: event.input ?? {},
-				});
-				return {
-					block: true,
-					reason: `Blocked by fleet child policy: ${toolName} missing path.`,
-				};
+			let target = extractInspectionTarget(event.input);
+			// Missing/empty path: grep/find/ls default to "."; read stays denied.
+			if (target === undefined || target.trim() === "") {
+				if (toolName === "read") {
+					auditBlocked({
+						agent,
+						runId,
+						tool: toolName,
+						action: toolName,
+						reason: "inspection-target-missing",
+						args: event.input ?? {},
+					});
+					return {
+						block: true,
+						reason: `Blocked by fleet child policy: ${toolName} missing path.`,
+					};
+				}
+				target = ".";
 			}
 			const decision = evaluateInspectionPath({
 				cwd: process.cwd(),

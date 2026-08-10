@@ -3,10 +3,24 @@
  */
 
 import {
+	CANONICAL_FLEET_AGENTS,
+} from "./child-policy.ts";
+import {
 	preferNativeModels,
 	type ModelResolveContext,
 } from "./model-resolve.ts";
 import { expandPersonas, type FleetKind, type FleetPersona } from "./personas.ts";
+
+const CANONICAL_AGENT_SET = new Set<string>(CANONICAL_FLEET_AGENTS);
+
+function assertCanonicalFleetAgent(agent: string): void {
+	const name = agent.trim();
+	if (!CANONICAL_AGENT_SET.has(name)) {
+		throw new Error(
+			`uncontained-agent: ${name || agent} is not a canonical fleet role (scout/worker/reviewer overrides rejected)`,
+		);
+	}
+}
 
 export interface FleetModelPolicy {
 	/**
@@ -405,8 +419,16 @@ export function buildFleetPlan(input: FleetPlanInput): FleetPlan {
 		modelResolveContext: input.modelResolveContext,
 	};
 
+	// Reject uncontained agent overrides before any WorkflowScript is generated.
+	const overrideAgent = input.agent?.trim();
+	if (overrideAgent) assertCanonicalFleetAgent(overrideAgent);
+	for (const persona of personas) {
+		assertCanonicalFleetAgent(overrideAgent || persona.agent);
+	}
+
 	const tasks: FleetTask[] = personas.map((persona, index) => {
-		const agent = input.agent?.trim() || persona.agent;
+		const agent = overrideAgent || persona.agent;
+		assertCanonicalFleetAgent(agent);
 		const model = pickModel(index, input.kind, input.modelPolicy, modelOpts);
 		const task = buildTaskPrompt({
 			kind: input.kind,
