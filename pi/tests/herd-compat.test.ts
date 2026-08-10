@@ -1,6 +1,7 @@
 // CMP-01 — Herdr 0.8 compatibility matrix + dual-era fixtures
 // Acceptance: docs/plans/work-packages/CMP-01.feature
-// Traces: docs/plans/work-packages/CMP-01-example-map.md R1–R7, E1–E12
+// Traces: docs/plans/work-packages/CMP-01-example-map.md R1–R7, E1–E16
+import { createHash } from "node:crypto";
 import { describe, expect, test } from "bun:test";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -261,5 +262,146 @@ describe("Compatibility docs and vendored skill (E10/E11)", () => {
     expect(skill).toMatch(/0\.8\.0/);
     // Footer / vendoring stamp must not still claim 0.7.5 as the vendored version.
     expect(skill).not.toMatch(/\(herdr 0\.7\.5,/i);
+  });
+});
+
+describe("Pi integration status isolation", () => {
+  test("E13: pi: current beside omp: not installed reports Pi installed", async () => {
+    const mod = await loadCompat();
+    if (mod === null) return;
+
+    const text = readText("integration-status-pi-current-omp-absent.txt");
+    expect(text).toMatch(/^pi:\s*current/im);
+    expect(text).toMatch(/^omp:\s*not installed/im);
+
+    const result = mod.interpretPiIntegrationStatus(text);
+    expect(result.installed).toBe(true);
+    expect(result.message.toLowerCase()).not.toMatch(/\bnot installed\b/);
+    // Sibling absence must not poison the Pi line.
+    expect(result.message.toLowerCase()).not.toMatch(/\bomp\b/);
+  });
+
+  test("E14: missing pi: line is absent/unclear and never borrows siblings", async () => {
+    const mod = await loadCompat();
+    if (mod === null) return;
+
+    const text = readText("integration-status-no-pi-line.txt");
+    expect(text).not.toMatch(/^pi\s*:/im);
+    expect(text).toMatch(/^codex:\s*current/im);
+
+    const result = mod.interpretPiIntegrationStatus(text);
+    expect(result.installed).toBe(false);
+    expect(result.message.toLowerCase()).toMatch(
+      /not installed|absent|missing|unclear/,
+    );
+    // Must not claim installed merely because codex is current.
+    expect(result.message.toLowerCase()).not.toMatch(
+      /appears installed|is installed/,
+    );
+  });
+});
+
+describe("Herdr runtime version policy", () => {
+  test("E15: only 0.8.x versions are compatible; others fail closed", async () => {
+    const mod = await loadCompat();
+    if (mod === null) return;
+
+    const base = { protocol: 19 as const, schemaVersion: 1 as const };
+
+    for (const version of ["0.8.0", "0.8.42", "v0.8.0"]) {
+      const result = mod.checkHerdrCompatibility({ version, ...base });
+      expect(result.status).toBe("compatible");
+    }
+
+    for (const version of ["0.7.5", "0.9.0", "1.0.0"]) {
+      const result = mod.checkHerdrCompatibility({ version, ...base });
+      expect(result.status).toBe("incompatible");
+      expect(result.message).toContain(version);
+      expect(result.message.toLowerCase()).toMatch(/0\.8/);
+      expect(result.message.toLowerCase()).toMatch(/doctor|compatibility/);
+    }
+
+    for (const version of [null, undefined, "", "not-a-version", "0.8", "v0.8"]) {
+      const result = mod.checkHerdrCompatibility({
+        version: version as string | null | undefined,
+        ...base,
+      });
+      expect(result.status).toBe("unknown");
+      expect(result.status).not.toBe("compatible");
+    }
+  });
+});
+
+describe("Skill provenance", () => {
+  test("E16: normalized body hash matches Herdr 0.8 capture; footer alone is insufficient", () => {
+    type Provenance = {
+      source: string;
+      herdrVersion: string;
+      algorithm: string;
+      normalizedSha256: string;
+      normalization: {
+        stripLocalFooterMarker: string;
+        reverseKindAdaptation: { local: string; upstream: string };
+      };
+      sensitivity: {
+        liveSessionIds: boolean;
+        livePaths: boolean;
+        secrets: boolean;
+      };
+    };
+
+    const provenance = loadFixture<Provenance>("skill-provenance-0.8.0.json");
+    expect(provenance.source).toBe("herdr --skill");
+    expect(provenance.herdrVersion).toBe("0.8.0");
+    expect(provenance.algorithm.toLowerCase()).toBe("sha-256");
+    expect(provenance.normalizedSha256).toMatch(/^[a-f0-9]{64}$/);
+    expect(provenance.sensitivity.liveSessionIds).toBe(false);
+    expect(provenance.sensitivity.livePaths).toBe(false);
+    expect(provenance.sensitivity.secrets).toBe(false);
+
+    const fixtureRaw = readText("skill-provenance-0.8.0.json");
+    expect(fixtureRaw).not.toMatch(/\/Users\//);
+    // Live credential material only — the word "secrets" in docs is fine.
+    expect(fixtureRaw).not.toMatch(
+      /HERDR_[A-Z0-9_]*TOKEN\s*[:=]|api[_-]?key\s*[:=]|Bearer\s+[A-Za-z0-9._\-]+/i,
+    );
+    expect(fixtureRaw).not.toMatch(/\bw\d+:p\d+\b/);
+
+    const skill = readFileSync(skillPath, "utf8");
+    const marker = provenance.normalization.stripLocalFooterMarker;
+    const markerAt = skill.indexOf(marker);
+    expect(markerAt).toBeGreaterThan(0);
+    const bodyWithoutFooter = skill.slice(0, markerAt);
+    // Footer version string alone must not be treated as provenance.
+    expect(bodyWithoutFooter).not.toMatch(/\*\*Vendored from\*\*/);
+    expect(bodyWithoutFooter).toContain(
+      provenance.normalization.reverseKindAdaptation.local,
+    );
+
+    const normalized = bodyWithoutFooter.split(
+      provenance.normalization.reverseKindAdaptation.local,
+    ).join(provenance.normalization.reverseKindAdaptation.upstream);
+    expect(normalized).not.toContain(
+      provenance.normalization.reverseKindAdaptation.local,
+    );
+    expect(normalized).toContain(
+      provenance.normalization.reverseKindAdaptation.upstream,
+    );
+
+    const digest = createHash("sha256").update(normalized, "utf8").digest("hex");
+    expect(digest).toBe(provenance.normalizedSha256);
+
+    // A skill that only rebadges the footer must not satisfy body provenance.
+    const footerOnlyFake =
+      "# Not the official skill\n\n---\n\n> **Vendored from** upstream (herdr 0.8.0).";
+    const fakeMarkerAt = footerOnlyFake.indexOf(marker);
+    const fakeBody =
+      fakeMarkerAt >= 0
+        ? footerOnlyFake.slice(0, fakeMarkerAt)
+        : footerOnlyFake;
+    const fakeDigest = createHash("sha256")
+      .update(fakeBody, "utf8")
+      .digest("hex");
+    expect(fakeDigest).not.toBe(provenance.normalizedSha256);
   });
 });

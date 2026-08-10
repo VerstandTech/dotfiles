@@ -86,3 +86,32 @@ Feature: CMP-01 Herdr 0.8 compatibility matrix and parser rebaseline
     Given a proposal to claim a new Herdr protocol or major runtime
     When the version policy is applied
     Then fixtures and compatibility tests must change before the support claim changes
+
+  Scenario: Pi current beside sibling not-installed stays installed (E13)
+    Given multi-line integration status with "pi: current (v7)" and "omp: not installed"
+    When interpretPiIntegrationStatus runs
+    Then Pi is reported installed
+    And sibling integration absence never determines the Pi state
+
+  Scenario: Missing pi line is absent or unclear (E14)
+    Given integration status text with no "pi:" line
+    When interpretPiIntegrationStatus runs
+    Then the result is absent or unclear
+    And it never borrows another integration's installed state
+
+  Scenario: Runtime version policy rejects non-0.8 even with matching protocol (E15)
+    Given protocol 19 and schema version 1
+    When checkHerdrCompatibility runs for versions "0.8.0", "0.8.42", and optionally "v0.8.0"
+    Then those results are compatible
+    When checkHerdrCompatibility runs for versions "0.7.5", "0.9.0", and "1.0.0"
+    Then those results are incompatible
+    When version is missing or malformed with protocol 19 and schema 1
+    Then the result is unknown and never compatible
+
+  Scenario: Vendored skill provenance matches normalized Herdr 0.8 capture (E16)
+    Given the installed Herdr 0.8.0 "herdr --skill" normalized SHA-256 provenance fixture
+    When the vendored skill body is compared after removing only the local footer
+    And the documented "--kind pi" adaptation is normalized back to upstream "--kind codex"
+    Then the normalized body hash matches the official capture
+    And a footer version string alone cannot satisfy the assertion
+    And the fixture contains no live session ids, paths, or secrets
