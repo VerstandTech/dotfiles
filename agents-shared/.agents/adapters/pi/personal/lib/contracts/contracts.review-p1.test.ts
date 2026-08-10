@@ -469,31 +469,224 @@ function findDeclAcrossSources(
 	return extractDeclaration(combinedProductionSource(), kind, name);
 }
 
-/** Reject open/escape hatches on authoritative envelope type bodies. */
-function assertClosedEnvelopeDecl(decl: string, name: string): void {
-	expect(decl.length > 0, sig(`${name} declaration empty`)).toBe(true);
-	// No any / unknown value fields, no index signatures, no Record escape.
-	expect(
-		!/\bany\b/.test(decl),
-		sig(`${name} must not use any`),
-	).toBe(true);
-	// Allow `input: unknown` only on parsers — envelope types must not.
-	expect(
-		!/(?<![A-Za-z_])unknown(?![A-Za-z0-9_])/.test(decl),
-		sig(`${name} must not use unknown in envelope declaration`),
-	).toBe(true);
-	expect(
-		!/Record\s*</.test(decl),
-		sig(`${name} must not use Record<...> escape`),
-	).toBe(true);
-	expect(
-		!/\[\s*(?:key|k|index|prop|p)\s*:\s*string\s*\]/.test(decl),
-		sig(`${name} must not use string index signature`),
-	).toBe(true);
-	expect(
-		!/\[\s*[A-Za-z_][A-Za-z0-9_]*\s*:\s*string\s*\]\s*:/.test(decl),
-		sig(`${name} must not use open index signature`),
-	).toBe(true);
+/** Normalize a type-alias RHS for literal-union analysis (leading |, one paren wrap). */
+function normalizeTypeAliasBody(raw: string): string {
+	let body = raw.replace(/\s+/g, " ").trim();
+	// Idiomatic leading union bar: type X = | "a" | "b"
+	if (body.startsWith("|")) body = body.slice(1).trim();
+	// One wrapping parenthesis pair only: type X = ("a" | "b")
+	if (body.startsWith("(") && body.endsWith(")")) {
+		const inner = body.slice(1, -1).trim();
+		// Only unwrap when balanced as a single outer pair (no extra trailing junk).
+		let depth = 0;
+		let ok = true;
+		for (let i = 0; i < body.length; i++) {
+			if (body[i] === "(") depth++;
+			else if (body[i] === ")") {
+				depth--;
+				if (depth < 0) {
+					ok = false;
+					break;
+				}
+				if (depth === 0 && i !== body.length - 1) {
+					ok = false;
+					break;
+				}
+			}
+		}
+		if (ok && depth === 0) body = inner;
+	}
+	// Drop a second leading | after unwrap.
+	if (body.startsWith("|")) body = body.slice(1).trim();
+	return body;
+}
+
+/** Split a statement-local union body on top-level `|` (no nested generics needed for lit unions). */
+function splitUnionParts(body: string): string[] {
+	return body
+		.split("|")
+		.map((p) => p.trim())
+		.filter((p) => p.length > 0);
+}
+
+const WIDE_TYPE_ALIASES = new Set([
+	"string",
+	"number",
+	"boolean",
+	"bigint",
+	"symbol",
+	"object",
+	"any",
+	"unknown",
+	"never",
+	"void",
+	"null",
+	"undefined",
+]);
+
+function hasForbiddenOpenTypeShapes(decl: string): boolean {
+	if (/\bany\b/.test(decl)) return true;
+	if (/(?<![A-Za-z_])unknown(?![A-Za-z0-9_])/.test(decl)) return true;
+	if (/Record\s*</.test(decl)) return true;
+	if (/\[\s*[A-Za-z_][A-Za-z0-9_]*\s*:\s*string\s*\]/.test(decl)) return true;
+	return false;
+}
+
+/** Extract `export type Name = RHS;` body or null. */
+function typeAliasRhs(decl: string, name: string): string | null {
+	const m = new RegExp(
+		String.raw`^export\s+type\s+${name}\s*=\s*([\s\S]*);\s*$`,
+	).exec(decl.trim());
+	return m ? m[1]!.trim() : null;
+}
+
+/** True if decl is an object-shaped type/interface with at least one property field. */
+function objectShapeFieldNames(decl: string): string[] {
+	// Interface or type { ... }
+	const brace = decl.indexOf("{");
+	if (brace < 0) return [];
+	const end = decl.lastIndexOf("}");
+	if (end <= brace) return [];
+	const body = decl.slice(brace + 1, end);
+	const fields: string[] = [];
+	// property:  name?: type  /  readonly name: type
+	const re = /(?:(?:readonly|public|private|protected)\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*[?]?:\s*/g;
+	let m: RegExpExecArray | null;
+	while ((m = re.exec(body))) {
+		// Skip method-ish if followed immediately by (
+		const after = body.slice(m.index + m[0].length);
+		if (after.trimStart().startsWith("(")) continue;
+		fields.push(m[1]!);
+	}
+	return fields;
+}
+
+function isOpaqueOrEmptyShape(decl: string, name: string): boolean {
+	const rhs = typeAliasRhs(decl, name);
+	if (rhs !== null) {
+		const norm = normalizeTypeAliasBody(rhs);
+		// Empty object
+		if (/^\{\s*\}$/.test(norm)) return true;
+		// Bare object / wide primitives
+		if (WIDE_TYPE_ALIASES.has(norm)) return true;
+		// Alias-only to another name (no structural fields, no literal union)
+		if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(norm)) return true;
+		// object & {} / {} & Foo
+		if (/\bobject\b/.test(norm) && !norm.includes("{")) return true;
+	}
+	// Interface with empty body
+	if (/export\s+interface\s+/.test(decl)) {
+		const fields = objectShapeFieldNames(decl);
+		if (fields.length === 0 && !/\bextends\b/.test(decl)) return true;
+	}
+	return false;
+}
+
+/**
+ * Authoritative envelope: structural object with schemaVersion + kind;
+ * reject open escapes and opaque aliases (object, {}, OtherName-only).
+ */
+function envelopeDeclProblems(decl: string, name: string): string[] {
+	const problems: string[] = [];
+	if (!decl || decl.length === 0) return ["empty"];
+	if (hasForbiddenOpenTypeShapes(decl)) problems.push("open-any-unknown-Record-index");
+
+	const rhs = typeAliasRhs(decl, name);
+	if (rhs !== null) {
+		const norm = normalizeTypeAliasBody(rhs);
+		if (WIDE_TYPE_ALIASES.has(norm)) problems.push(`opaque:${norm}`);
+		if (/^\{\s*\}$/.test(norm)) problems.push("opaque:empty-object");
+		// Alias-only name with no structure
+		if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(norm)) problems.push(`opaque-alias:${norm}`);
+		// Must be object-typed (contains `{` ... `}`) — not a bare alias/union of names only
+		if (!norm.includes("{")) problems.push("not-structural-object");
+	}
+
+	const fields = objectShapeFieldNames(decl);
+	if (!fields.includes("schemaVersion")) problems.push("missing-field:schemaVersion");
+	if (!fields.includes("kind")) problems.push("missing-field:kind");
+	if (fields.length < 2) problems.push("too-few-fields");
+
+	if (isOpaqueOrEmptyShape(decl, name)) problems.push("opaque-or-empty");
+	return problems;
+}
+
+/**
+ * Supporting types: reject open/opaque/empty; require >=1 declared field OR closed literal union.
+ */
+function supportingDeclProblems(decl: string, name: string): string[] {
+	const problems: string[] = [];
+	if (!decl || decl.length === 0) return ["empty"];
+	if (hasForbiddenOpenTypeShapes(decl)) problems.push("open-any-unknown-Record-index");
+
+	const rhs = typeAliasRhs(decl, name);
+	if (rhs !== null) {
+		const norm = normalizeTypeAliasBody(rhs);
+		if (WIDE_TYPE_ALIASES.has(norm)) problems.push(`opaque:${norm}`);
+		if (/^\{\s*\}$/.test(norm)) problems.push("opaque:empty-object");
+		if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(norm)) problems.push(`opaque-alias:${norm}`);
+
+		// Closed literal union path
+		const parts = splitUnionParts(norm);
+		const allStringLits = parts.length > 0 && parts.every((p) => /^"[A-Za-z0-9_\-]+"$/.test(p));
+		if (allStringLits && parts.length >= 1) {
+			// OK as closed literal union (e.g. UsageV1 may be "unknown" | {...} — mixed handled below)
+			return problems;
+		}
+
+		// Mixed union (e.g. "unknown" | { inputTokens: number; ... }) — require at least one object arm or lit
+		const hasLit = parts.some((p) => /^"[A-Za-z0-9_\-]+"$/.test(p));
+		const hasObj = parts.some((p) => p.includes("{")) || norm.includes("{");
+		if (hasLit || hasObj) {
+			// Still forbid empty object-only
+			if (hasObj) {
+				const fields = objectShapeFieldNames(`export type ${name} = ${norm};`);
+				// For multi-arm, field scan may still find props inside braces
+				if (!hasLit && fields.length === 0 && !/\{[\s\S]*[A-Za-z_][A-Za-z0-9_]*\s*[?]?:/.test(norm)) {
+					problems.push("no-fields-or-literal-union");
+				}
+			}
+			return problems;
+		}
+
+		const fields = objectShapeFieldNames(decl);
+		if (fields.length === 0) problems.push("no-fields-or-literal-union");
+	} else {
+		// interface
+		const fields = objectShapeFieldNames(decl);
+		if (fields.length === 0) problems.push("no-fields-or-literal-union");
+	}
+
+	if (isOpaqueOrEmptyShape(decl, name)) problems.push("opaque-or-empty");
+	return problems;
+}
+
+/**
+ * ContractIssueCode: statement-local string-literal union after normalizing leading |
+ * and one wrapping paren pair. >=2 codes, includes a known stable code, no wide aliases.
+ */
+function analyzeContractIssueCode(decl: string): { ok: boolean; reason: string } {
+	const bodyMatch = /^export\s+type\s+ContractIssueCode\s*=\s*([\s\S]*);$/.exec(decl.trim());
+	if (!bodyMatch) return { ok: false, reason: "not-type-alias" };
+	const norm = normalizeTypeAliasBody(bodyMatch[1]!);
+	const parts = splitUnionParts(norm);
+	if (parts.length < 2) return { ok: false, reason: `need>=2-parts got ${parts.length}` };
+
+	const lits: string[] = [];
+	for (const p of parts) {
+		// Reject wide aliases and non-literal arms
+		if (WIDE_TYPE_ALIASES.has(p)) return { ok: false, reason: `wide:${p}` };
+		if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(p)) return { ok: false, reason: `alias-arm:${p}` };
+		const lit = /^"([A-Za-z0-9_]+)"$/.exec(p);
+		if (!lit) return { ok: false, reason: `non-literal:${p}` };
+		lits.push(lit[1]!);
+	}
+	if (lits.length < 2) return { ok: false, reason: "need>=2-string-lits" };
+	const known = ["unknown_field", "bound_exceeded", "unsafe_path", "invalid_type", "required"];
+	if (!lits.some((c) => known.includes(c))) {
+		return { ok: false, reason: `missing-known-stable among ${lits.join(",")}` };
+	}
+	return { ok: true, reason: "ok" };
 }
 
 // ─── 1. Concrete path vs validation-only trailing glob ──────────────────────
@@ -1250,7 +1443,6 @@ describe("CON-01 review P1", () => {
 
 		const indexSrc = readFileSync(join(CONTRACTS_DIR, "index.ts"), "utf8");
 		const indexExports = exportedTypeNames(indexSrc);
-		const allSrc = combinedProductionSource();
 
 		const envelopes = [
 			"RoleRequestV1",
@@ -1271,8 +1463,10 @@ describe("CON-01 review P1", () => {
 			"SensitivityV1",
 		] as const;
 
+		// (1) Authoritative envelopes: structural schemaVersion+kind; reject opaque aliases.
 		const missingEnvelopes: string[] = [];
 		const openEnvelopes: string[] = [];
+		const envelopeProblems: Record<string, string[]> = {};
 		for (const name of envelopes) {
 			const decl =
 				findDeclAcrossSources("type", name) ?? findDeclAcrossSources("interface", name);
@@ -1280,55 +1474,37 @@ describe("CON-01 review P1", () => {
 				missingEnvelopes.push(name);
 				continue;
 			}
-			try {
-				assertClosedEnvelopeDecl(decl, name);
-			} catch {
+			const problems = envelopeDeclProblems(decl, name);
+			if (problems.length > 0) {
 				openEnvelopes.push(name);
-			}
-			// Re-check open patterns into list without throwing mid-loop for batch report.
-			if (
-				/\bany\b/.test(decl) ||
-				/(?<![A-Za-z_])unknown(?![A-Za-z0-9_])/.test(decl) ||
-				/Record\s*</.test(decl) ||
-				/\[\s*[A-Za-z_][A-Za-z0-9_]*\s*:\s*string\s*\]/.test(decl)
-			) {
-				if (!openEnvelopes.includes(name)) openEnvelopes.push(name);
+				envelopeProblems[name] = problems;
 			}
 		}
 
-		const missingSupporting = supporting.filter((name) => {
+		// Supporting: present + non-opaque + >=1 field or closed literal union.
+		const missingSupporting: string[] = [];
+		const openSupporting: string[] = [];
+		const supportingProblems: Record<string, string[]> = {};
+		for (const name of supporting) {
 			const decl =
 				findDeclAcrossSources("type", name) ?? findDeclAcrossSources("interface", name);
-			return !decl;
-		});
-
-		// ContractIssueCode — statement-local closed string-literal union only.
-		const issueCodeDecl = findDeclAcrossSources("type", "ContractIssueCode");
-		let issueCodeOk = false;
-		if (issueCodeDecl) {
-			// Must be `export type ContractIssueCode = "a" | "b" | ...;`
-			// Statement-local: no trailing consumption of later types.
-			const bodyMatch = /^export\s+type\s+ContractIssueCode\s*=\s*([\s\S]*);$/.exec(
-				issueCodeDecl.trim(),
-			);
-			if (bodyMatch) {
-				const body = bodyMatch[1]!.trim();
-				// Only string literal unions (and whitespace/|).
-				const onlyLits = /^"([A-Za-z0-9_]+)"(\s*\|\s*"([A-Za-z0-9_]+)")*$/.test(
-					body.replace(/\s+/g, " ").trim(),
-				);
-				// Must include at least one known stable code and a union bar.
-				const hasUnion = body.includes("|");
-				const hasKnown =
-					body.includes('"unknown_field"') ||
-					body.includes('"bound_exceeded"') ||
-					body.includes('"unsafe_path"');
-				// Reject string / any / wide aliases.
-				const notWide =
-					!/\bstring\b/.test(body) && !/\bany\b/.test(body) && !/\bunknown\b/.test(body);
-				issueCodeOk = onlyLits && hasUnion && hasKnown && notWide;
+			if (!decl) {
+				missingSupporting.push(name);
+				continue;
+			}
+			const problems = supportingDeclProblems(decl, name);
+			if (problems.length > 0) {
+				openSupporting.push(name);
+				supportingProblems[name] = problems;
 			}
 		}
+
+		// (2) ContractIssueCode — leading | / one paren wrap; >=2 string lits; known stable; no wide.
+		const issueCodeDecl = findDeclAcrossSources("type", "ContractIssueCode");
+		const issueCodeAnalysis = issueCodeDecl
+			? analyzeContractIssueCode(issueCodeDecl)
+			: { ok: false, reason: "missing" };
+		const issueCodeOk = issueCodeAnalysis.ok;
 
 		// ContractIssue.code: ContractIssueCode inside ContractIssue decl.
 		const contractIssueDecl =
@@ -1337,7 +1513,7 @@ describe("CON-01 review P1", () => {
 		const issueCodeFieldOk =
 			!!contractIssueDecl && /code\s*:\s*ContractIssueCode\b/.test(contractIssueDecl);
 
-		// Parser signatures — exact ParseResult<EnvelopeV1>, statement-local.
+		// (3) Parser signatures — exact ParseResult<EnvelopeV1>, statement-local.
 		const parsers: Array<[string, string]> = [
 			["parseRoleRequestV1", "RoleRequestV1"],
 			["parseRoleResultV1", "RoleResultV1"],
@@ -1352,7 +1528,6 @@ describe("CON-01 review P1", () => {
 				badParsers.push(`${fn}:missing`);
 				continue;
 			}
-			// Allow single-line or multi-line param/return.
 			const ok =
 				new RegExp(
 					String.raw`export\s+function\s+${fn}\s*\(\s*input\s*:\s*unknown\s*\)\s*:\s*ParseResult\s*<\s*${t}\s*>`,
@@ -1371,11 +1546,90 @@ describe("CON-01 review P1", () => {
 			!!parseResultDecl &&
 			/export\s+type\s+ParseResult\s*<\s*T\s*>/.test(parseResultDecl.replace(/\s+/g, " "));
 
+		// Analyzer self-checks FIRST (always run; independent of production gaps).
+		const syntheticOk = [
+			`export type ContractIssueCode = "unknown_field" | "bound_exceeded";`,
+			`export type ContractIssueCode = | "unknown_field" | "unsafe_path";`,
+			`export type ContractIssueCode = ("invalid_type" | "required");`,
+			`export type ContractIssueCode = (| "unknown_field" | "bound_exceeded");`,
+		];
+		for (const s of syntheticOk) {
+			expect(
+				analyzeContractIssueCode(s).ok,
+				sig(`ContractIssueCode analyzer must accept idiomatic ${s}`),
+			).toBe(true);
+		}
+		const syntheticBad = [
+			`export type ContractIssueCode = string;`,
+			`export type ContractIssueCode = "only_one";`,
+			`export type ContractIssueCode = "unknown_field" | string;`,
+			`export type ContractIssueCode = SomeAlias | "unknown_field";`,
+			`export type ContractIssueCode = object;`,
+		];
+		for (const s of syntheticBad) {
+			expect(
+				analyzeContractIssueCode(s).ok,
+				sig(`ContractIssueCode analyzer must reject wide/opaque ${s}`),
+			).toBe(false);
+		}
+		expect(
+			envelopeDeclProblems(`export type RoleRequestV1 = object;`, "RoleRequestV1").length > 0,
+			sig("envelope oracle rejects opaque object alias"),
+		).toBe(true);
+		expect(
+			envelopeDeclProblems(`export type RoleRequestV1 = {};`, "RoleRequestV1").length > 0,
+			sig("envelope oracle rejects empty object alias"),
+		).toBe(true);
+		expect(
+			envelopeDeclProblems(`export type RoleRequestV1 = OtherName;`, "RoleRequestV1").length >
+				0,
+			sig("envelope oracle rejects alias-only name"),
+		).toBe(true);
+		// Structural positive: schemaVersion + kind required.
+		const structuralOk = envelopeDeclProblems(
+			`export type RoleRequestV1 = { schemaVersion: 1; kind: "role-request"; taskId: string; };`,
+			"RoleRequestV1",
+		);
+		expect(
+			structuralOk,
+			sig(`envelope oracle must accept structural schemaVersion+kind; got ${structuralOk.join(",")}`),
+		).toEqual([]);
+		expect(
+			supportingDeclProblems(`export type BudgetV1 = object;`, "BudgetV1").length > 0,
+			sig("supporting oracle rejects opaque object"),
+		).toBe(true);
+		expect(
+			supportingDeclProblems(`export type BudgetV1 = {};`, "BudgetV1").length > 0,
+			sig("supporting oracle rejects empty object"),
+		).toBe(true);
+		expect(
+			supportingDeclProblems(
+				`export type BudgetV1 = { maxTokens: number; maxCostUsd: number; maxDurationMs: number; };`,
+				"BudgetV1",
+			),
+			sig("supporting oracle accepts fieldful object"),
+		).toEqual([]);
+
+		// Spot-check: extractor stays statement-local when present.
+		if (issueCodeDecl) {
+			expect(
+				issueCodeDecl.includes("export type ContractIssueCode"),
+				sig("ContractIssueCode decl must be statement-local export"),
+			).toBe(true);
+			const exportTypeCount = (issueCodeDecl.match(/export\s+type\s+/g) ?? []).length;
+			expect(
+				exportTypeCount,
+				sig("ContractIssueCode extractor must not swallow later export type decls"),
+			).toBe(1);
+		}
+
+		// Production surface batch (causal red on current HEAD).
 		expect(
 			{
 				missingEnvelopes,
 				openEnvelopes,
 				missingSupporting,
+				openSupporting,
 				issueCodeOk,
 				issueCodeFieldOk,
 				badParsers,
@@ -1383,34 +1637,19 @@ describe("CON-01 review P1", () => {
 				parseResultOk,
 			},
 			sig(
-				`typed public surface; missingEnvelopes=${JSON.stringify(missingEnvelopes)} openEnvelopes=${JSON.stringify(openEnvelopes)} missingSupporting=${JSON.stringify(missingSupporting)} issueCodeOk=${issueCodeOk} badParsers=${JSON.stringify(badParsers)} missingIndex=${JSON.stringify(missingIndex)}`,
+				`typed public surface; missingEnvelopes=${JSON.stringify(missingEnvelopes)} openEnvelopes=${JSON.stringify(openEnvelopes)} envelopeProblems=${JSON.stringify(envelopeProblems)} missingSupporting=${JSON.stringify(missingSupporting)} openSupporting=${JSON.stringify(openSupporting)} supportingProblems=${JSON.stringify(supportingProblems)} issueCodeOk=${issueCodeOk} issueCodeReason=${issueCodeAnalysis.reason} badParsers=${JSON.stringify(badParsers)} missingIndex=${JSON.stringify(missingIndex)}`,
 			),
 		).toEqual({
 			missingEnvelopes: [],
 			openEnvelopes: [],
 			missingSupporting: [],
+			openSupporting: [],
 			issueCodeOk: true,
 			issueCodeFieldOk: true,
 			badParsers: [],
 			missingIndex: [],
 			parseResultOk: true,
 		});
-
-		// Spot-check: greedy union must not falsely pass if someone writes
-		// `type ContractIssueCode = string; type Other = "a" | "b"` later — already
-		// statement-local via extractDeclaration stop at `;`.
-		if (issueCodeDecl) {
-			expect(
-				issueCodeDecl.includes("export type ContractIssueCode"),
-				sig("ContractIssueCode decl must be statement-local export"),
-			).toBe(true);
-			// Declaration must not contain a second export type (greed guard).
-			const exportTypeCount = (issueCodeDecl.match(/export\s+type\s+/g) ?? []).length;
-			expect(
-				exportTypeCount,
-				sig("ContractIssueCode extractor must not swallow later export type decls"),
-			).toBe(1);
-		}
 	});
 });
 
