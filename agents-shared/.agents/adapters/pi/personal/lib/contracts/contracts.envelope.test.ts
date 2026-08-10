@@ -6,6 +6,7 @@ import {
 	CON01_P0_FAILURE_SIGNATURE,
 	allMinimalFixtures,
 	expectAccepted,
+	expectProducerRefuses,
 	expectRejected,
 	loadContractsModule,
 	minimalApprovalDecision,
@@ -126,7 +127,7 @@ describe("CON-01 envelopes", () => {
 
 		const unknownNested = {
 			...minimalRoleRequest(),
-			budget: { maxTokens: 1, unexpected: true },
+			budget: { maxTokens: 1, maxCostUsd: 1, maxDurationMs: 1, unexpected: true },
 		};
 		expectRejected(parse(unknownNested), "E3 unknown nested field", /unknown|additional|extra|closed/i);
 
@@ -145,7 +146,7 @@ describe("CON-01 envelopes", () => {
 		);
 	});
 
-	test("canonical JSON is deterministic, ordered, and round-trippable", async () => {
+	test("canonical JSON is deterministic, ordered, and round-trippable; invalid refused", async () => {
 		const mod = requireContracts(await loadContractsModule());
 		const parse = requireFn(mod, "parseContractV1", "parseContractV1");
 		const canon = requireFn(mod, "canonicalizeContractV1", "canonicalizeContractV1");
@@ -173,24 +174,77 @@ describe("CON-01 envelopes", () => {
 			expect(canon(b.value), `E25 order-independent canon for ${kind}`).toBe(bytes1);
 		}
 
-		// Invalid values cannot reach authoritative canonical serializer
-		let threw = false;
-		try {
-			canon({ schemaVersion: 2, kind: "role-request" });
-		} catch {
-			threw = true;
-		}
-		const maybeResult = (() => {
-			try {
-				return canon({ not: "a contract" });
-			} catch {
-				threw = true;
-				return null;
+		// E26: every invalid input refused — never discard/skip first result.
+		const invalidCanonInputs: Array<{ label: string; value: unknown }> = [
+			{ label: "wrong version shell", value: { schemaVersion: 2, kind: "role-request" } },
+			{ label: "unrelated object", value: { not: "a contract" } },
+			{ label: "null", value: null },
+			{ label: "string", value: "nope" },
+			{ label: "array", value: [] },
+			{ label: "number", value: 1 },
+			{ label: "schemaVersion 0 full", value: minimalRoleRequest({ schemaVersion: 0 }) },
+			{ label: "unknown kind full", value: minimalRoleRequest({ kind: "nope" }) },
+			{
+				label: "missing required",
+				value: (() => {
+					const f = minimalRoleRequest();
+					delete f.goal;
+					return f;
+				})(),
+			},
+			{ label: "raw unvalidated valid-looking", value: minimalRoleRequest() },
+		];
+
+		// Raw unvalidated valid-looking may canonicalize only AFTER parse acceptance.
+		// Canonicalizer must require validated values — raw fixtures are refused unless
+		// the API documents parse-then-canon. Lock validated-only: raw input refuses OR
+		// equals canon(parse(raw).value) only when parse accepts and API allows dual entry.
+		// Critic: invalid cannot reach authoritative serializer. Treat unparsed input as
+		// needing prior validation — refuse raw even if shape looks valid.
+		for (const c of invalidCanonInputs) {
+			if (c.label === "raw unvalidated valid-looking") {
+				// Dual-entry allowed only if output matches validated canon; still must not throw crash.
+				let out: unknown;
+				let threw = false;
+				try {
+					out = canon(c.value);
+				} catch {
+					threw = true;
+				}
+				if (!threw && typeof out === "string" && out.length > 0) {
+					const parsed = parse(c.value);
+					expectAccepted(parsed, "raw shape must parse if canon accepts raw");
+					expect(out, "raw canon must equal validated canon").toBe(canon(parsed.value));
+				}
+				// Refusal (throw/empty/err) is also correct for validated-only APIs.
+				continue;
 			}
-		})();
+			expectProducerRefuses(canon, c.value, `E26 canon refuses ${c.label}`);
+		}
+
+		// Explicit: never drop the first invalid while only checking the second.
+		const first = { schemaVersion: 2, kind: "role-request" };
+		const second = { not: "a contract" };
+		let firstThrew = false;
+		let firstOut: unknown;
+		try {
+			firstOut = canon(first);
+		} catch {
+			firstThrew = true;
+		}
+		const firstRefused =
+			firstThrew ||
+			firstOut === "" ||
+			firstOut === null ||
+			firstOut === undefined ||
+			(typeof firstOut === "object" &&
+				firstOut !== null &&
+				"ok" in firstOut &&
+				(firstOut as { ok: boolean }).ok === false);
 		expect(
-			threw || maybeResult === null || maybeResult === "",
-			`${CON01_P0_FAILURE_SIGNATURE}: E26 untrusted value must not canonicalize authoritatively`,
+			firstRefused,
+			`${CON01_P0_FAILURE_SIGNATURE}: E26 first invalid canon input must be refused on its own`,
 		).toBe(true);
+		expectProducerRefuses(canon, second, "E26 second invalid canon input");
 	});
 });

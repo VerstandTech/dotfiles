@@ -71,7 +71,8 @@ describe("CON-01 P0", () => {
 			{ ...minimalRoleRequest(), schemaVersion: "1" },
 			// 1.0 as Number is === 1 in JS; lock non-integer / boxed impostors instead.
 			{ ...minimalRoleRequest(), schemaVersion: 1.5 },
-			{ ...minimalRoleRequest(), schemaVersion: Number(1) && 1.0001 },
+			{ ...minimalRoleRequest(), schemaVersion: 1.0001 },
+			{ ...minimalRoleRequest(), schemaVersion: Object(1) },
 			{ ...minimalRoleRequest(), schemaVersion: true },
 			{ ...minimalRoleRequest(), schemaVersion: null },
 			(() => {
@@ -87,11 +88,11 @@ describe("CON-01 P0", () => {
 			expectRejected(
 				result,
 				"unsupported version/kind must reject",
-				/version|kind|schema|unsupported|unknown/i,
+				/version|kind|schema|unsupported|unknown|type/i,
 			);
 		}
 
-		// Unsafe artifact / repo-relative paths must reject.
+		// Unsafe artifact / repo-relative paths must reject (incl. C:/, c:/, UNC).
 		for (const p of UNSAFE_PATHS) {
 			expect(
 				isSafe(p),
@@ -145,9 +146,7 @@ describe("CON-01 P0", () => {
 			).toBe(n);
 		}
 
-		// Final signature anchor: if we reached here with module present, the suite
-		// still uses the locked phrase in every rejection path above. Keep a live
-		// expect that names it so signature-mode scanners always observe it on fail.
+		// Final signature anchor for signature-mode scanners.
 		expect(
 			CON01_P0_FAILURE_SIGNATURE.includes("invalid version/path/red-cause"),
 			CON01_P0_FAILURE_SIGNATURE,

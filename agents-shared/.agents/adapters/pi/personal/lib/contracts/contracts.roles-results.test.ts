@@ -18,23 +18,26 @@ import {
 } from "./contracts.shared.test.ts";
 
 describe("CON-01 role requests", () => {
-	test("valid requests for every assurance role round-trip with expected write scope", async () => {
+	test("valid requests for every assurance role and every allowed phase round-trip", async () => {
 		const mod = requireContracts(await loadContractsModule());
 		const parse = requireFn(mod, "parseRoleRequestV1", "parseRoleRequestV1");
 
 		for (const role of ASSURANCE_ROLES_V1) {
-			const fixture = minimalRoleRequest(role);
-			const result = parse(fixture);
-			expectAccepted(result, `E13 role ${role}`);
-			const v = result.value as Record<string, unknown>;
-			expect(v.role).toBe(role);
-			expect(v.writeScope).toBe(ROLE_WRITE_SCOPE_MATRIX[role].writeScope);
-			expect(v.phase).toBe(ROLE_WRITE_SCOPE_MATRIX[role].allowedPhases[0]);
-			// No embedded authority fields
-			expect(v).not.toHaveProperty("paneId");
-			expect(v).not.toHaveProperty("writerToken");
-			expect(v).not.toHaveProperty("leaseGrant");
-			expect(v).not.toHaveProperty("approvalToken");
+			const matrix = ROLE_WRITE_SCOPE_MATRIX[role];
+			for (const phase of matrix.allowedPhases) {
+				const fixture = minimalRoleRequest(role, { phase });
+				const result = parse(fixture);
+				expectAccepted(result, `E13 role ${role} phase ${phase}`);
+				const v = result.value as Record<string, unknown>;
+				expect(v.role).toBe(role);
+				expect(v.writeScope).toBe(matrix.writeScope);
+				expect(v.phase).toBe(phase);
+				// No embedded authority fields
+				expect(v).not.toHaveProperty("paneId");
+				expect(v).not.toHaveProperty("writerToken");
+				expect(v).not.toHaveProperty("leaseGrant");
+				expect(v).not.toHaveProperty("approvalToken");
+			}
 		}
 	});
 
@@ -118,7 +121,7 @@ describe("CON-01 role results", () => {
 		expectAccepted(parse(sha64), "E15 sha64");
 	});
 
-	test("blocked, failed, unknown, dirty, and missing-usage preserve uncertainty", async () => {
+	test("blocked, failed, unknown, dirty, missing-usage, and nonempty blockers preserve uncertainty", async () => {
 		const mod = requireContracts(await loadContractsModule());
 		const parse = requireFn(mod, "parseRoleResultV1", "parseRoleResultV1");
 
@@ -130,11 +133,12 @@ describe("CON-01 role results", () => {
 				usage: "unknown",
 			});
 			const result = parse(fixture);
-			expectAccepted(result, `E16 status ${status}`);
+			expectAccepted(result, `E16 status ${status} with nonempty blockers`);
 			const v = result.value as Record<string, unknown>;
 			expect(v.status, `preserve ${status}`).toBe(status);
 			expect(v.dirty).toBe(true);
 			expect(v.usage, "missing usage is unknown never zero").toBe("unknown");
+			expect(Array.isArray(v.blockers) && (v.blockers as string[]).length).toBeGreaterThan(0);
 		}
 
 		// Explicit null/omitted usage → unknown representation (not zero)
@@ -153,8 +157,24 @@ describe("CON-01 role results", () => {
 		}
 
 		// dirty clean completed
-		expectAccepted(parse(minimalRoleResult({ dirty: false, status: "completed", blockers: [] })), "clean completed");
-		expectAccepted(parse(minimalRoleResult({ dirty: true, status: "blocked", blockers: ["dirty-tree"] })), "dirty blocked");
+		expectAccepted(
+			parse(minimalRoleResult({ dirty: false, status: "completed", blockers: [] })),
+			"clean completed",
+		);
+		expectAccepted(
+			parse(minimalRoleResult({ dirty: true, status: "blocked", blockers: ["dirty-tree"] })),
+			"dirty blocked with nonempty blockers",
+		);
+		expectAccepted(
+			parse(
+				minimalRoleResult({
+					status: "failed",
+					blockers: ["unit-red", "path-policy"],
+					dirty: false,
+				}),
+			),
+			"failed with multiple nonempty blockers",
+		);
 	});
 
 	test("malformed SHA, unsafe paths, transcripts, completed-with-blockers, contradictions fail", async () => {

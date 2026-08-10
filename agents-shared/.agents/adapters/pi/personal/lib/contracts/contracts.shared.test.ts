@@ -21,15 +21,19 @@ export const CONTRACTS_MODULE_URL = pathToFileURL(CONTRACTS_INDEX).href;
 export const PACKAGE_ROOT = join(CONTRACTS_DIR, "../..");
 export const LIB_ROOT = join(CONTRACTS_DIR, "..");
 
-/** Published V1 bounds the Implementer must export (exact-bound positives lock these). */
+/**
+ * Published V1 bounds the Implementer must export.
+ * Every key has exact-limit accept + limit+1 reject oracles in the suite.
+ * (maxMapKeys removed — V1 closed envelopes have no free-form maps.)
+ */
 export const EXPECTED_LIMITS_V1 = {
 	maxSerializedBytes: 65_536,
 	maxNestingDepth: 16,
 	maxStringLength: 4_096,
 	maxPathLength: 512,
 	maxCommandLength: 2_048,
+	maxCommandSummaryLength: 512,
 	maxArrayLength: 256,
-	maxMapKeys: 128,
 	maxRenderedMarkdownBytes: 32_768,
 	maxIssues: 64,
 } as const;
@@ -218,12 +222,12 @@ export function expectRejected(
 		`${CON01_P0_FAILURE_SIGNATURE}: ${detail}: issues unbounded`,
 	).toBe(true);
 	if (codeHint) {
-		const codes = result.issues.map((i) => i.code).join(",");
+		const blob = result.issues.map((i) => `${i.code} ${i.message} ${i.path}`).join(" | ");
 		const hit =
-			typeof codeHint === "string" ? codes.includes(codeHint) : codeHint.test(codes);
+			typeof codeHint === "string" ? blob.includes(codeHint) : codeHint.test(blob);
 		expect(
 			hit,
-			`${CON01_P0_FAILURE_SIGNATURE}: ${detail}: expected issue code ${codeHint}, got ${codes}`,
+			`${CON01_P0_FAILURE_SIGNATURE}: ${detail}: expected issue ${codeHint}, got ${blob}`,
 		).toBe(true);
 	}
 }
@@ -242,10 +246,59 @@ export function expectAccepted<T>(
 	}
 }
 
+/**
+ * Assert a producer (canon/render/bridge) refuses invalid input:
+ * throw, Result.ok=false, empty string, or non-string — never authoritative output.
+ */
+export function expectProducerRefuses(
+	produce: (input: unknown) => unknown,
+	input: unknown,
+	detail: string,
+	opts?: { allowEmptyString?: boolean },
+): void {
+	let produced: unknown = undefined;
+	let threw = false;
+	try {
+		produced = produce(input);
+	} catch {
+		threw = true;
+	}
+	if (threw) return;
+
+	if (
+		produced !== null &&
+		typeof produced === "object" &&
+		"ok" in (produced as object) &&
+		(produced as ParseErr).ok === false
+	) {
+		return;
+	}
+
+	if (typeof produced === "string") {
+		expect(
+			produced.length === 0 && (opts?.allowEmptyString ?? true),
+			`${CON01_P0_FAILURE_SIGNATURE}: ${detail}: must not return non-empty authoritative string`,
+		).toBe(true);
+		return;
+	}
+
+	// Non-string success-shaped bridge/object counts as a leak unless Result-like refuse.
+	expect(
+		false,
+		`${CON01_P0_FAILURE_SIGNATURE}: ${detail}: must refuse invalid input (threw, err result, or empty)`,
+	).toBe(true);
+}
+
 // ─── Minimal valid fixtures (positive controls) ─────────────────────────────
 
 const SHA40 = "a".repeat(40);
 const SHA64 = "b".repeat(64);
+
+/** Far-future deterministic timestamps — pair binding must not depend on wall clock. */
+export const APPROVAL_REQUESTED_AT = "2099-01-01T12:00:00.000Z";
+export const APPROVAL_EXPIRES_AT = "2099-01-01T18:00:00.000Z";
+export const APPROVAL_DECIDED_AT_VALID = "2099-01-01T13:00:00.000Z";
+export const APPROVAL_DECIDED_AT_AFTER_EXPIRY = "2099-01-01T19:00:00.000Z";
 
 export function minimalRoleRequest(
 	role: AssuranceRoleV1 = "test-designer",
@@ -325,8 +378,8 @@ export function minimalApprovalRequest(
 		scopedPaths: ["agents-shared/.agents/adapters/pi/personal/lib/contracts"],
 		candidateSha: SHA40,
 		fingerprint: "fp-con01-001",
-		requestedAt: "2026-08-10T12:00:00.000Z",
-		expiresAt: "2026-08-10T18:00:00.000Z",
+		requestedAt: APPROVAL_REQUESTED_AT,
+		expiresAt: APPROVAL_EXPIRES_AT,
 		...overrides,
 	};
 }
@@ -344,7 +397,7 @@ export function minimalApprovalDecision(
 		scopedPaths: ["agents-shared/.agents/adapters/pi/personal/lib/contracts"],
 		candidateSha: SHA40,
 		fingerprint: "fp-con01-001",
-		decidedAt: "2026-08-10T13:00:00.000Z",
+		decidedAt: APPROVAL_DECIDED_AT_VALID,
 		humanProvenance: {
 			actorId: "human-operator",
 			method: "local-interactive",
@@ -413,6 +466,12 @@ export const UNSAFE_PATHS = [
 	"a/../../outside",
 	"/tmp/outside",
 	"C:\\outside",
+	"C:/outside",
+	"c:/outside",
+	"c:\\outside",
+	"\\\\server\\share\\x",
+	"//server/share/x",
+	"\\\\?\\C:\\outside",
 	"~/outside",
 	"file:///tmp/outside",
 	"https://example.invalid/a",
@@ -434,67 +493,116 @@ export const UNSAFE_PATHS = [
 	"secrets/private.pem",
 ] as const;
 
-/** Hostile object factories — getters must never be invoked. */
-export function accessorTrap(): Record<string, unknown> {
+/** Safe repo-relative path of exact character length (for bound oracles). */
+export function exactLengthSafePath(length: number): string {
+	const prefix = "docs/";
+	if (length < prefix.length + 1) {
+		return `${prefix}${"a".repeat(Math.max(1, length - prefix.length))}`.slice(0, length);
+	}
+	return `${prefix}${"a".repeat(length - prefix.length)}`;
+}
+
+/** Plain nested object of exact depth (root depth = 1 for `{v: null}` style leaf chain). */
+export function plainNestingDepth(depth: number): unknown {
+	if (depth < 1) return null;
+	let node: unknown = null;
+	for (let i = 0; i < depth; i++) {
+		node = { v: node };
+	}
+	return node;
+}
+
+/**
+ * Accessor trap built from a complete valid fixture — getters must never run.
+ */
+export function accessorTrapFromValid(): {
+	obj: Record<string, unknown>;
+	wasGetterInvoked: () => boolean;
+} {
+	const obj = minimalRoleRequest();
 	let invoked = false;
-	const obj: Record<string, unknown> = {
-		schemaVersion: 1,
-		kind: "role-request",
-	};
+	const originalGoal = obj.goal;
+	delete obj.goal;
 	Object.defineProperty(obj, "goal", {
 		enumerable: true,
 		configurable: true,
 		get() {
 			invoked = true;
-			return "should-not-run";
+			return originalGoal;
 		},
 	});
-	return Object.assign(obj, {
-		__wasGetterInvoked: () => invoked,
-	});
+	return { obj, wasGetterInvoked: () => invoked };
 }
 
-export function protoPollution(): Record<string, unknown> {
-	return JSON.parse('{"schemaVersion":1,"kind":"role-request","__proto__":{"polluted":true}}');
+export function protoPollutionFromValid(): Record<string, unknown> {
+	// JSON proto-key shape while retaining otherwise-complete fields where possible.
+	const base = minimalRoleRequest();
+	return JSON.parse(
+		JSON.stringify({
+			...base,
+			__proto__: { polluted: true },
+		}),
+	);
 }
 
-export function cyclicGraph(): Record<string, unknown> {
-	const o: Record<string, unknown> = {
-		schemaVersion: 1,
-		kind: "role-request",
-		taskId: "t",
-		role: "specifier",
-		phase: "discovery",
-		goal: "g",
-		writeScope: "none",
-		ownedPaths: [],
-		forbiddenPaths: [],
-		tools: ["read"],
-	};
-	o.self = o;
+export function cyclicGraphFromValid(): Record<string, unknown> {
+	const o = minimalRoleRequest();
+	(o as { self?: unknown }).self = o;
 	return o;
 }
 
-export function sparseArrayContainer(): Record<string, unknown> {
+export function sparseArrayFromValid(): Record<string, unknown> {
+	const o = minimalRoleRequest();
 	const arr: unknown[] = [];
-	arr[5] = "gap";
+	arr[5] = "docs/gap.md";
+	o.ownedPaths = arr;
+	return o;
+}
+
+export function nonFiniteFromValid(
+	which: "nan" | "infinity" = "nan",
+): Record<string, unknown> {
+	const o = minimalRoleRequest();
+	o.budget = {
+		maxTokens: which === "nan" ? Number.NaN : Number.POSITIVE_INFINITY,
+		maxCostUsd: 1,
+		maxDurationMs: 60_000,
+	};
+	return o;
+}
+
+export function functionFieldFromValid(): Record<string, unknown> {
+	return { ...minimalRoleRequest(), goal: () => "x" };
+}
+
+export function symbolFieldFromValid(): Record<string, unknown> {
+	return { ...minimalRoleRequest(), goal: Symbol("x") };
+}
+
+export function bigintFieldFromValid(): Record<string, unknown> {
 	return {
-		schemaVersion: 1,
-		kind: "role-request",
-		taskId: "t",
-		role: "specifier",
-		phase: "discovery",
-		goal: "g",
-		writeScope: "none",
-		ownedPaths: arr,
-		forbiddenPaths: [],
-		tools: ["read"],
+		...minimalRoleRequest(),
+		budget: { maxTokens: 1n as unknown as number, maxCostUsd: 1, maxDurationMs: 1 },
 	};
 }
 
-export class CustomClass {
-	schemaVersion = 1;
-	kind = "role-request";
+export class CustomClassFromValid {
+	constructor() {
+		Object.assign(this, minimalRoleRequest());
+	}
+}
+
+/**
+ * Depth-exceeding graph: complete valid fixture fields at the leaves are not used;
+ * pure nesting beyond maxNestingDepth must fail with a bound issue (pre-field walk).
+ */
+export function depthExceedingGraph(overBy = 1): unknown {
+	return plainNestingDepth(EXPECTED_LIMITS_V1.maxNestingDepth + overBy);
+}
+
+/** Depth exactly at the published limit — must not fail for bound_exceeded. */
+export function depthExactLimitGraph(): unknown {
+	return plainNestingDepth(EXPECTED_LIMITS_V1.maxNestingDepth);
 }
 
 /** Collect production .ts files under lib/contracts excluding *.test.ts */
@@ -525,6 +633,94 @@ export function readProductionSources(): string {
 		.join("\n");
 }
 
+/**
+ * Build a structurally valid blocked RoleResult whose JSON.stringify length is exactly `target`.
+ * Pads residualRisks within maxStringLength / maxArrayLength. Returns null if unreachable.
+ */
+export function roleResultWithExactSerializedSize(
+	target: number,
+): Record<string, unknown> | null {
+	const base = minimalRoleResult({
+		status: "blocked",
+		blockers: ["pad"],
+		residualRisks: [],
+		commands: [{ command: "t", exitCode: 1, summary: "t" }],
+		changedPaths: [],
+		evidenceRefs: [],
+		artifactRefs: [],
+		usage: "unknown",
+	});
+	delete base.redCause;
+	const baseLen = JSON.stringify(base).length;
+	if (baseLen > target) return null;
+	let remaining = target - baseLen;
+	const risks: string[] = [];
+	// Each new risk adds: `,"..."` or for first element inside array `"..."` — measure incrementally.
+	while (remaining > 0 && risks.length < EXPECTED_LIMITS_V1.maxArrayLength) {
+		const trialLen = Math.min(
+			remaining,
+			EXPECTED_LIMITS_V1.maxStringLength,
+			4096,
+		);
+		// probe chunk sizes downward to hit exact remaining after JSON escaping (no escapes for 'r')
+		let placed = false;
+		for (let n = trialLen; n >= 1; n--) {
+			const candidate = [...risks, "r".repeat(n)];
+			const trial = { ...base, residualRisks: candidate };
+			const size = JSON.stringify(trial).length;
+			if (size === target) {
+				return trial;
+			}
+			if (size < target) {
+				risks.push("r".repeat(n));
+				remaining = target - size;
+				placed = true;
+				break;
+			}
+		}
+		if (!placed) {
+			// Cannot place a smaller chunk that fits — try single-char growth on last risk
+			break;
+		}
+	}
+	const final = { ...base, residualRisks: risks };
+	if (JSON.stringify(final).length === target) return final;
+	// Fine-tune last risk upward if short
+	while (risks.length > 0) {
+		const last = risks[risks.length - 1]!;
+		if (last.length >= EXPECTED_LIMITS_V1.maxStringLength) break;
+		risks[risks.length - 1] = last + "r";
+		const trial = { ...base, residualRisks: [...risks] };
+		const size = JSON.stringify(trial).length;
+		if (size === target) return trial;
+		if (size > target) {
+			risks[risks.length - 1] = last;
+			break;
+		}
+	}
+	const out = { ...base, residualRisks: risks };
+	return JSON.stringify(out).length === target ? out : null;
+}
+
+/** Quote-agnostic forbidden import / dependency patterns (E30). */
+export const FORBIDDEN_SOURCE_PATTERNS: RegExp[] = [
+	/\bfrom\s+['"][^'"]*security(\/|['"])/i,
+	/\bfrom\s+['"][^'"]*\/redact['"]/i,
+	/\bfrom\s+['"][^'"]*trajectory(\/|['"])/i,
+	/\bfrom\s+['"][^'"]*worktree(\/|['"])/i,
+	/\bfrom\s+['"][^'"]*child-policy['"]/i,
+	/\bfrom\s+['"]typebox['"]/i,
+	/\bfrom\s+['"]@sinclair\/typebox['"]/i,
+	/\bfrom\s+['"]zod['"]/i,
+	/\bfrom\s+['"]ajv['"]/i,
+	/\bfrom\s+['"]joi['"]/i,
+	/\brequire\s*\(\s*['"]child_process['"]\s*\)/,
+	/\bfrom\s+['"]node:child_process['"]/,
+	/\bfleet_dispatch\b/,
+	/\bpi-subagents\b/,
+	/lib\/security\/redact/,
+];
+
 // Meta: ensure this harness file is collected by bun test without acting as a silent pass suite.
 test("CON-01 harness > exports locked oracle identity constants", () => {
 	expect(CON01_P0_TEST_ID).toBe(
@@ -535,4 +731,15 @@ test("CON-01 harness > exports locked oracle identity constants", () => {
 	);
 	expect(SHA64).toHaveLength(64);
 	expect(dirname(CONTRACTS_INDEX).endsWith("contracts")).toBe(true);
+	expect(exactLengthSafePath(EXPECTED_LIMITS_V1.maxPathLength)).toHaveLength(
+		EXPECTED_LIMITS_V1.maxPathLength,
+	);
+	// Fixture builders used by bound oracles must be exact (independent of production).
+	const exact = roleResultWithExactSerializedSize(EXPECTED_LIMITS_V1.maxSerializedBytes);
+	expect(exact, "exact serialized fixture constructible").not.toBeNull();
+	expect(JSON.stringify(exact!).length).toBe(EXPECTED_LIMITS_V1.maxSerializedBytes);
+	const over = roleResultWithExactSerializedSize(EXPECTED_LIMITS_V1.maxSerializedBytes + 1);
+	if (over) {
+		expect(JSON.stringify(over).length).toBe(EXPECTED_LIMITS_V1.maxSerializedBytes + 1);
+	}
 });

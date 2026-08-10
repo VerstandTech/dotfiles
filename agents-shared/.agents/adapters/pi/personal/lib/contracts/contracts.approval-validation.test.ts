@@ -3,9 +3,13 @@
  */
 import { describe, expect, test } from "bun:test";
 import {
+	APPROVAL_DECIDED_AT_AFTER_EXPIRY,
+	APPROVAL_DECIDED_AT_VALID,
+	APPROVAL_EXPIRES_AT,
 	CON01_P0_FAILURE_SIGNATURE,
 	CON01_P0_TEST_ID,
 	expectAccepted,
+	expectProducerRefuses,
 	expectRejected,
 	loadContractsModule,
 	minimalApprovalDecision,
@@ -28,11 +32,18 @@ describe("CON-01 approval envelopes", () => {
 			"APPROVAL_AUTHORITY_NOTICE",
 		);
 
-		expectAccepted(parseReq(minimalApprovalRequest()), "E18 request");
-		expectAccepted(parseDec(minimalApprovalDecision()), "E18 decision");
+		const req = minimalApprovalRequest();
+		const dec = minimalApprovalDecision();
+		expect(req.expiresAt).toBe(APPROVAL_EXPIRES_AT);
+		expect(dec.decidedAt).toBe(APPROVAL_DECIDED_AT_VALID);
+		// decidedAt must be strictly before expiresAt (deterministic far-future pair).
+		expect(Date.parse(String(dec.decidedAt)) < Date.parse(String(req.expiresAt))).toBe(true);
 
-		const pair = checkPair(minimalApprovalRequest(), minimalApprovalDecision());
-		expectAccepted(pair, "E18 matching pair");
+		expectAccepted(parseReq(req), "E18 request");
+		expectAccepted(parseDec(dec), "E18 decision");
+
+		const pair = checkPair(req, dec);
+		expectAccepted(pair, "E18 matching pair with decidedAt < expiresAt");
 		const pv = pair.value as Record<string, unknown>;
 		// Structural bind only — APR-01 owns authority
 		expect(
@@ -48,7 +59,7 @@ describe("CON-01 approval envelopes", () => {
 		}
 	});
 
-	test("approved decision missing human provenance fails; drift and expiry fail closed", async () => {
+	test("approved decision missing human provenance fails; drift and decidedAt vs expiresAt fail closed", async () => {
 		const mod = requireContracts(await loadContractsModule());
 		const parseDec = requireFn(mod, "parseApprovalDecisionV1", "parseApprovalDecisionV1");
 		const checkPair = requireFn(mod, "checkApprovalPairV1", "checkApprovalPairV1");
@@ -100,13 +111,18 @@ describe("CON-01 approval envelopes", () => {
 			"E20 path drift",
 			/path|bind|mismatch|drift/i,
 		);
+
+		// decidedAt after expiresAt — bind expiry closed (far-future deterministic, not wall-clock).
+		expect(
+			Date.parse(APPROVAL_DECIDED_AT_AFTER_EXPIRY) > Date.parse(APPROVAL_EXPIRES_AT),
+		).toBe(true);
 		expectRejected(
 			checkPair(
-				minimalApprovalRequest({ expiresAt: "2020-01-01T00:00:00.000Z" }),
-				minimalApprovalDecision({ decidedAt: "2026-08-10T13:00:00.000Z" }),
+				minimalApprovalRequest({ expiresAt: APPROVAL_EXPIRES_AT }),
+				minimalApprovalDecision({ decidedAt: APPROVAL_DECIDED_AT_AFTER_EXPIRY }),
 			),
-			"E20 expired",
-			/expir|time|bind/i,
+			"E20 decidedAt after expiresAt",
+			/expir|time|bind|decided/i,
 		);
 		expectRejected(
 			checkPair(
@@ -147,6 +163,41 @@ describe("CON-01 ValidationContractV1 and BDD bridge", () => {
 		expect(bridged).not.toHaveProperty("trustTier");
 		expect(bridged).not.toHaveProperty("reasonCode");
 		expect(bridged).not.toHaveProperty("cause");
+	});
+
+	test("toExpectedRedContract refuses unvalidated, legacy, or missing-test-id input", async () => {
+		const mod = requireContracts(await loadContractsModule());
+		const parse = requireFn(mod, "parseValidationContractV1", "parseValidationContractV1");
+		const bridge = requireFn(mod, "toExpectedRedContract", "toExpectedRedContract");
+
+		// Unvalidated junk (not a ValidationContract shape)
+		for (const bad of [null, undefined, "x", 1, [], { kind: "nope" }, { foo: true }]) {
+			expectProducerRefuses(bridge, bad, `bridge refuses unvalidated ${JSON.stringify(bad)}`);
+		}
+
+		// Legacy matchMode refused (bridge must not emit legacy ExpectedRedContract)
+		expectProducerRefuses(
+			bridge,
+			minimalValidationContract({ matchMode: "legacy" }),
+			"bridge refuses legacy matchMode input",
+		);
+
+		// Missing / empty test id
+		const missingId = minimalValidationContract();
+		delete missingId.expectedTestId;
+		expectProducerRefuses(bridge, missingId, "bridge refuses missing expectedTestId");
+		expectProducerRefuses(
+			bridge,
+			minimalValidationContract({ expectedTestId: "" }),
+			"bridge refuses empty expectedTestId",
+		);
+
+		// Positive: validated value bridges; re-validating plain valid shape is also OK
+		const ok = parse(minimalValidationContract());
+		expectAccepted(ok, "bridge positive setup parse");
+		const bridged = bridge(ok.value);
+		expect(bridged.expectedTestId).toBe(CON01_P0_TEST_ID);
+		expect(bridged.matchMode).not.toBe("legacy" as unknown as "signature");
 	});
 
 	test("forbids legacy mode, missing sensitivity, signature-without-signature, unsafe paths, bad green relation", async () => {
