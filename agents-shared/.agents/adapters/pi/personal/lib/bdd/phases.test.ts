@@ -306,4 +306,103 @@ describe("assurance causal-red progression (BDD-01 R4/R9)", () => {
 		expect(result.ok).toBe(false);
 		expect(result.missing.join(" ")).toMatch(/command-backed mutation|matched mutation|sensitivity/i);
 	});
+
+	// E40 — undefined matched with commands cannot complete handoff
+	test("high-assurance handoff rejects mutation with commands but undefined matched", () => {
+		const e: BddEvidence = {
+			...redGreen,
+			red: {
+				...(redGreen.red as NonNullable<BddEvidence["red"]>),
+				...( {
+					assuranceEligible: true,
+					configFingerprint: "cfg-1",
+				} as object),
+			} as BddEvidence["red"],
+			mutation: {
+				proven: true,
+				note: "commands only",
+				at: "t",
+				failCommand: "bun test a",
+				passCommand: "bun test a",
+				// matched undefined
+			},
+			assurance: {
+				profileFingerprint: "profile-1",
+				planFingerprint: "plan-1",
+				startedAt: "2099-01-01T00:00:01.000Z",
+				completedAt: "2099-01-01T00:00:02.000Z",
+				ok: true,
+				results: [
+					{
+						id: "quality:unit",
+						kind: "unit",
+						required: true,
+						status: "passed",
+						summary: "PASS",
+						...( { trustTier: "trusted", executorKind: "argv" } as object),
+					} as never,
+				],
+				...( { configFingerprint: "cfg-1" } as object),
+			} as BddEvidence["assurance"],
+		};
+		const result = handoffComplete(e, {
+			assuranceEnabled: true,
+			expectedPlanFingerprint: "plan-1",
+			expectedRequiredGateKinds: ["unit"],
+			requireCommandBackedMutation: true,
+			requireCommandBackedMatchedMutation: true,
+			expectedConfigFingerprint: "cfg-1",
+		} as never);
+		expect(result.ok).toBe(false);
+		expect(result.missing.join(" ")).toMatch(/matched|mutation|sensitivity/i);
+	});
+
+	// E41 — red/green fingerprint bind current config
+	test("high-assurance handoff rejects stale red or green config fingerprints", () => {
+		const e: BddEvidence = {
+			...redGreen,
+			red: {
+				...(redGreen.red as NonNullable<BddEvidence["red"]>),
+				...( {
+					assuranceEligible: true,
+					configFingerprint: "stale-red-fp",
+				} as object),
+			} as BddEvidence["red"],
+			green: {
+				...(redGreen.green as NonNullable<BddEvidence["green"]>),
+				...( {
+					configFingerprint: "stale-green-fp",
+				} as object),
+			} as BddEvidence["green"],
+			assurance: {
+				profileFingerprint: "profile-1",
+				planFingerprint: "plan-1",
+				startedAt: "2099-01-01T00:00:01.000Z",
+				completedAt: "2099-01-01T00:00:02.000Z",
+				ok: true,
+				results: [
+					{
+						id: "quality:unit",
+						kind: "unit",
+						required: true,
+						status: "passed",
+						summary: "PASS",
+						...( { trustTier: "trusted", executorKind: "argv" } as object),
+					} as never,
+				],
+				...( { configFingerprint: "cfg-current" } as object),
+			} as BddEvidence["assurance"],
+		};
+		const result = handoffComplete(e, {
+			assuranceEnabled: true,
+			expectedPlanFingerprint: "plan-1",
+			expectedRequiredGateKinds: ["unit"],
+			expectedConfigFingerprint: "cfg-current",
+			requireCausalRed: true,
+		} as never);
+		expect(result.ok).toBe(false);
+		expect(result.missing.join(" ")).toMatch(
+			/stale.*(?:red|green).*config|config fingerprint.*(?:red|green)|red.*config fingerprint|green.*config fingerprint/i,
+		);
+	});
 });

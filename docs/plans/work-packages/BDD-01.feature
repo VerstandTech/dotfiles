@@ -205,3 +205,66 @@ Feature: BDD-01 machine-checkable red cause and trusted gate execution
     Then it fails at "rejects an unrelated failing assertion when the expected test id is absent"
     And the failure shows ok true received where false was expected for an unrelated assertion under contract
     And it does not fail because of import, setup, timeout, or command-not-found
+
+  # --- Adversarial review lock (E37–E47 / R1,R4–R9,R11–R12) ---
+
+  Scenario: Short reverse-substring hint is not identity (E37, R1)
+    Given an expected-red identity contract
+    And a failed-test hint that is only a short substring of the expected test id
+    When validateRedResult runs
+    Then ok is false and the result is not assurance-causal
+    And reverse-substring containment alone cannot prove identity
+
+  Scenario: Assurance green refuses legacy non-causal red (E38, R4)
+    Given assurance is enabled and only legacy or non-causal red evidence exists
+    When bdd_assert_green runs even if the focused suite would pass
+    Then green is refused
+    And implementation paths are not unlocked from that non-causal red
+
+  Scenario: Mutation matched requires assurance-eligible expected assertion (E39, R4, R9)
+    Given mutation fail leg classifies as legacy or unrelated
+    When the mutation tool records evidence
+    Then matched is false
+    And the evidence cannot satisfy assurance handoff
+
+  Scenario: Undefined mutation matched cannot satisfy handoff (E40, R9)
+    Given mutation has fail and pass commands but matched is undefined
+    When assurance handoff runs
+    Then a matched-mutation gap is reported
+
+  Scenario: Red and green bind the current config fingerprint (E41, R8)
+    Given red or green evidence carries a config fingerprint different from current config
+    When handoff runs under assurance
+    Then a stale red or green config fingerprint gap is reported
+
+  Scenario: Shell executor cannot self-label trusted (E42, R6, R11)
+    Given a shell executor config that sets trustTier trusted
+    When the quality gate plan is built
+    Then the shell gate is forced to interactive_untrusted
+
+  Scenario: Forged shell plus trusted tier fails handoff by executor kind (E43, R6, R11)
+    Given a required gate result with executorKind shell and trustTier trusted
+    When assurance handoff runs
+    Then an untrusted executor-kind gap is reported
+
+  Scenario: Strict argv kind without valid argv executor rejects before spawn (E44, R5, R11)
+    Given a strict or overnight plan that claims argv kind without a valid matching argv executor
+    When the gate plan executes
+    Then policy rejects with zero spawns
+
+  Scenario: Trusted runCommand without argv never falls back to shell (E45, R5)
+    Given trust is trusted and argv is omitted
+    When runCommand is invoked with a legacy shell command string
+    Then policy rejects before spawn
+    And shell fallback does not occur
+
+  Scenario: Symlink cwd escape is rejected via realpath (E46, R5)
+    Given an in-project cwd path that is a symlink resolving outside the project root
+    When the trusted argv runner validates cwd
+    Then realpath escape is rejected without spawn
+
+  Scenario: policyRejected rejects red regardless of exit code (E47, R12)
+    Given a result with policyRejected true, a non-126 exit code, and a matching expected hint
+    When validateRedResult runs
+    Then ok is false with a policy-rejection reason
+    And the result is neither red nor green

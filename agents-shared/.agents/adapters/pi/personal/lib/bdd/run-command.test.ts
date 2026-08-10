@@ -413,6 +413,56 @@ describe("expected-red identity and signature classifier (BDD-01 R1–R3)", () =
 			/contract|expectedTestId|required/i,
 		);
 	});
+
+	// E37 — PRIMARY CAUSAL RED (adversarial review)
+	// Current production identityHit accepts reverse-substring: expectedId.includes(shortHint).
+	test("rejects a short unrelated hint contained inside the expected test id", () => {
+		// shortHint is deliberately a token inside expectedId, not the full identity.
+		const shortHint = "unrelated";
+		expect(expectedId.includes(shortHint)).toBe(true);
+		expect(shortHint.includes(expectedId)).toBe(false);
+
+		const check = classifyRed(
+			baseFail({
+				stdout: `FAIL ${shortHint}\nexpected 1 received 2\n`,
+				summary: `FAIL (exit 1): ${shortHint}`,
+				failedTestHints: [shortHint],
+			}),
+			{
+				expectedTestId: expectedId,
+				matchMode: "identity",
+			},
+		);
+
+		// Causal signature: reverse-substring must NOT count as identity.
+		expect(check.ok).toBe(false);
+		expect(check.assuranceEligible ?? false).toBe(false);
+		expect(`${check.reason} ${check.reasonCode ?? ""} ${check.cause ?? ""}`).toMatch(
+			/unrelated|missing|identity|expected.?test|absent|reverse|substring/i,
+		);
+		expect(`${check.reason} ${check.reasonCode ?? ""}`).not.toMatch(
+			/timeout|spawn|not found|import|Cannot find module/i,
+		);
+	});
+
+	// E47 — policyRejected is never red, even with non-126 exit + matching hint
+	test("rejects policyRejected true even with non-126 exit and matching expected hint", () => {
+		const check = classifyRed(
+			baseFail({
+				exitCode: 1,
+				stdout: `FAIL ${expectedId}\n`,
+				summary: `FAIL (exit 1): ${expectedId}`,
+				failedTestHints: [expectedId],
+				policyRejected: true,
+			} as Parameters<typeof validateRedResult>[0]),
+			{ expectedTestId: expectedId, matchMode: "identity" },
+		);
+		expect(check.ok).toBe(false);
+		expect(check.assuranceEligible ?? false).toBe(false);
+		expect(`${check.reason} ${check.reasonCode ?? ""} ${check.cause ?? ""}`).toMatch(
+			/policy/i,
+		);
+	});
 });
 
 describe("trusted argv runner (BDD-01 R5)", () => {
@@ -576,5 +626,73 @@ describe("trusted argv runner (BDD-01 R5)", () => {
 		expect(result.stdout.length).toBeLessThanOrEqual(4_096);
 		expect(result.stdout.length).toBeLessThan(huge.length);
 		expect(Boolean(result.outputTruncated ?? result.bounded)).toBe(true);
+	});
+
+	// E45 — trust:"trusted" without argv must not shell-fallback
+	test("rejects trust trusted without argv before shell fallback", async () => {
+		const { impl, capture } = capturingSpawn(0, "pwned\n");
+		const result = await (
+			runCommand as unknown as (opts: Record<string, unknown>) => Promise<{
+				exitCode: number;
+				policyRejected?: boolean;
+				summary?: string;
+			}>
+		)({
+			cwd: process.cwd(),
+			command: "echo pwned",
+			trust: "trusted",
+			// deliberately omit argv
+			spawnImpl: impl,
+		});
+		expect(capture.calls).toBe(0);
+		expect(result.policyRejected).toBe(true);
+		expect(result.exitCode).not.toBe(0);
+		expect(`${result.summary ?? ""}`).toMatch(/policy|argv|trusted/i);
+	});
+
+	// E46 — in-project symlink cwd that realpaths outside project must reject without spawn
+	test("rejects argv cwd symlink escape using realpath without spawn", async () => {
+		const { mkdtempSync, mkdirSync, symlinkSync, rmSync, realpathSync } = await import("node:fs");
+		const { join } = await import("node:path");
+		const { tmpdir } = await import("node:os");
+
+		const root = mkdtempSync(join(tmpdir(), "bdd01-cwd-root-"));
+		const outside = mkdtempSync(join(tmpdir(), "bdd01-cwd-outside-"));
+		const linkName = "escape-link";
+		const linkPath = join(root, linkName);
+		try {
+			mkdirSync(root, { recursive: true });
+			symlinkSync(outside, linkPath);
+			// Sanity: lexical path is in-project; realpath escapes.
+			expect(linkPath.startsWith(root)).toBe(true);
+			expect(realpathSync(linkPath)).toBe(realpathSync(outside));
+
+			const { impl, capture } = capturingSpawn(0);
+			const result = await (
+				runCommand as unknown as (opts: Record<string, unknown>) => Promise<{
+					exitCode: number;
+					policyRejected?: boolean;
+					summary?: string;
+				}>
+			)({
+				cwd: root,
+				projectRoot: root,
+				argv: {
+					version: 1,
+					file: process.execPath,
+					args: ["-e", "0"],
+					cwd: linkName,
+				},
+				trust: "trusted",
+				spawnImpl: impl,
+			});
+			expect(capture.calls).toBe(0);
+			expect(result.policyRejected).toBe(true);
+			expect(result.exitCode).not.toBe(0);
+			expect(`${result.summary ?? ""}`).toMatch(/cwd|escape|realpath|symlink|policy/i);
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+			rmSync(outside, { recursive: true, force: true });
+		}
 	});
 });

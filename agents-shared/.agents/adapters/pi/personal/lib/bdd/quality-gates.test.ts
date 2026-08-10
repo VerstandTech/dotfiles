@@ -342,6 +342,79 @@ describe("gate executor model and trust (BDD-01 R6–R7)", () => {
 		expect(argvPlan.fingerprint).toMatch(/^[a-f0-9]{64}$/);
 		expect(argvPlan.fingerprint).not.toBe(shellPlan.fingerprint);
 	});
+
+	// E42 — shell executor cannot self-label trusted
+	test("forces shell executor self-labeled trusted down to interactive_untrusted", () => {
+		const plan = buildPlan({
+			enabled: true,
+			trustProfile: "interactive",
+			requiredGateKinds: ["unit"],
+			executors: {
+				unit: { kind: "shell", command: "bun test", trustTier: "trusted" },
+			},
+		});
+		const unit = plan.gates.find((g) => g.kind === "unit") as unknown as {
+			executorKind?: string;
+			trustTier?: string;
+			executor?: { trustTier?: string; kind?: string };
+		};
+		expect(unit?.executorKind ?? unit?.executor?.kind).toMatch(/shell/i);
+		expect(unit?.trustTier).toMatch(/interactive_untrusted/i);
+		expect(unit?.trustTier).not.toMatch(/^trusted$/i);
+		// Nested executor label must also be forced, not left as a forged trusted tier.
+		if (unit?.executor?.trustTier != null) {
+			expect(unit.executor.trustTier).toMatch(/interactive_untrusted/i);
+		}
+	});
+
+	// E44 — strict/overnight argv kind without valid matching argv executor rejects before spawn
+	test("rejects strict argv-kind gate without valid matching argv executor before spawn", async () => {
+		for (const trustProfile of ["strict", "overnight"] as const) {
+			const base = buildPlan({
+				enabled: true,
+				trustProfile,
+				requiredGateKinds: ["unit"],
+				executors: {
+					unit: { kind: "argv", version: 1, file: "bun", args: ["test"] },
+				},
+			});
+			// Forge: claim argv kind but strip/mismatch the argv executor so shell fallback would otherwise run.
+			const forgedPlan = {
+				...base,
+				gates: base.gates.map((gate) =>
+					gate.kind === "unit"
+						? {
+								...gate,
+								availability: "ready" as const,
+								executorKind: "argv" as const,
+								command: "bun test",
+								// mismatched executor shape — shell, not argv
+								executor: { kind: "shell" as const, command: "bun test" },
+						  }
+						: gate,
+				),
+			};
+			let spawned = 0;
+			const result = await runQualityGatePlan({
+				cwd: "/project",
+				plan: forgedPlan as never,
+				execute: async ({ command }) => {
+					spawned += 1;
+					return { command, exitCode: 0, summary: "PASS" };
+				},
+			});
+			expect(spawned).toBe(0);
+			expect(result.ok).toBe(false);
+			const unit = result.results.find((g) => g.kind === "unit") as unknown as {
+				status: string;
+				policyRejected?: boolean;
+				exitCode?: number;
+			};
+			expect(unit?.policyRejected).toBe(true);
+			expect(unit?.status).not.toBe("passed");
+			expect(unit?.status === "passed" && unit?.exitCode === 0).toBe(false);
+		}
+	});
 });
 
 describe("assurance handoff trust gaps (BDD-01 R9 via quality-gates)", () => {
@@ -420,5 +493,32 @@ describe("assurance handoff trust gaps (BDD-01 R9 via quality-gates)", () => {
 			expectedConfigFingerprint: "new-config-fp",
 		} as never);
 		expect(gaps.join(" ")).toMatch(/config fingerprint|stale-config|stale config/i);
+	});
+
+	// E43 — shell executor kind with forged trusted tier is still untrusted
+	test("reports untrusted executor-kind gap for shell result forged as trusted", () => {
+		const value = baseEvidence();
+		value.assurance = {
+			profileFingerprint: "profile-1",
+			planFingerprint: "plan-1",
+			startedAt: "2026-07-26T10:01:00.000Z",
+			completedAt: "2026-07-26T10:02:00.000Z",
+			ok: true,
+			results: [
+				{
+					...passedUnit,
+					...( {
+						executorKind: "shell",
+						trustTier: "trusted",
+					} as object),
+				} as typeof passedUnit,
+			],
+		};
+		const gaps = assuranceHandoffGaps(value, {
+			enabled: true,
+			expectedPlanFingerprint: "plan-1",
+			expectedRequiredGateKinds: ["unit"],
+		} as never);
+		expect(gaps.join(" ")).toMatch(/untrusted|executor|shell|trust/i);
 	});
 });

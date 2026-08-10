@@ -58,4 +58,37 @@ describe("bdd-mode expected-red contract wiring (BDD-01 R4/R10)", () => {
 		expect(region).toMatch(/expectedTestId|expectedFailureSignature|matchMode/);
 		expect(region).toMatch(/validateRedResult\s*\(/);
 	});
+
+	// E38 — assurance bdd_assert_green must refuse legacy/non-causal red (stable source contract)
+	test("bdd_assert_green refuses legacy non-causal red under assurance before unlocking green", () => {
+		const source = extensionSource();
+		const greenIdx = source.indexOf('name: "bdd_assert_green"');
+		expect(greenIdx).toBeGreaterThanOrEqual(0);
+		const nextTool = source.indexOf('name: "bdd_record_evidence"', greenIdx);
+		const region = source.slice(greenIdx, nextTool > 0 ? nextTool : greenIdx + 6_000);
+
+		// Must consult assurance/causal eligibility — not only "has some red exit".
+		expect(region).toMatch(/assuranceEnabled|assurance\.enabled|config\.assurance/);
+		expect(region).toMatch(/assuranceEligible/);
+		// Refusal path must exist (return ok:false / reject) when red is non-causal under assurance.
+		expect(region).toMatch(
+			/non-causal|legacy|assurance-eligible|causal expected-red|Cannot record green|refuses? green|No causal/i,
+		);
+		expect(region).toMatch(/ok:\s*false/);
+	});
+
+	// E39 — mutation matched is true only for assurance-eligible expected assertion
+	test("mutation matched is true only when fail leg is assurance-eligible expected assertion", () => {
+		const source = extensionSource();
+		const mutIdx = source.indexOf('name: "bdd_assert_mutation"');
+		expect(mutIdx).toBeGreaterThanOrEqual(0);
+		const region = source.slice(mutIdx, mutIdx + 6_000);
+
+		// Must record matched from assuranceEligible (or equivalent strict gate), not bare failCheck.ok.
+		expect(region).toMatch(/matched\s*:/);
+		expect(region).toMatch(/assuranceEligible\s*===\s*true/);
+		// Forbid the legacy/unrelated loophole: matched: failCheck.ok or || failCheck.ok
+		expect(region).not.toMatch(/matched\s*:\s*failCheck\.ok\b/);
+		expect(region).not.toMatch(/assuranceEligible\s*===\s*true\s*\|\|\s*failCheck\.ok/);
+	});
 });
