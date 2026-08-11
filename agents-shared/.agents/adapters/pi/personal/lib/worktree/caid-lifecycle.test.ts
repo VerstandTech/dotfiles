@@ -458,6 +458,13 @@ describe("acquire/release lifecycle + board-caid agreement (R4, R7)", () => {
 			caid: caidBoard(),
 			cardId: "feat-a--implementer",
 			now: "2026-08-11T12:00:00.000Z",
+			repoRootRealpath: "/repo",
+			realpathOf: realpathTable({
+				"/repo/.worktrees/caid/other/implementer":
+					"/repo/.worktrees/caid/other/implementer",
+				"/repo/.worktrees/caid/feat-a/implementer":
+					"/repo/.worktrees/caid/feat-a/implementer",
+			}),
 		});
 		expect(result.ok).toBe(false);
 		if (result.ok) return;
@@ -488,6 +495,11 @@ describe("acquire/release lifecycle + board-caid agreement (R4, R7)", () => {
 			cardId: "feat-a--implementer",
 			identity: { sessionId: "sess-1", agentRunId: "run-1" },
 			now: "2026-08-11T12:00:00.000Z",
+			repoRootRealpath: "/repo",
+			realpathOf: realpathTable({
+				"/repo/.worktrees/caid/feat-a/implementer":
+					"/repo/.worktrees/caid/feat-a/implementer",
+			}),
 		});
 		expect(result.ok).toBe(true);
 		if (!result.ok) return;
@@ -601,6 +613,7 @@ describe("acquire/release lifecycle + board-caid agreement (R4, R7)", () => {
 			cardId: "feat-a--implementer",
 			identity: { sessionId: "sess-new", agentRunId: "run-new" },
 			now: "2026-08-11T12:00:00.000Z",
+			repoRootRealpath: "/repo",
 			realpathOf: realpathTable({
 				"/repo/.worktrees/caid/feat-a/implementer":
 					"/repo/.worktrees/caid/feat-a/implementer",
@@ -610,6 +623,158 @@ describe("acquire/release lifecycle + board-caid agreement (R4, R7)", () => {
 		if (!result.ok) return;
 		const card = result.board.cards.find((c: { id: string }) => c.id === "feat-a--implementer");
 		expect(card?.busy).toBe("busy");
+	});
+
+	test("ISO01_ACQUIRE_missing_realpath_oracle_is_unavailable", async () => {
+		const api = await loadApi();
+		const result = api.acquireLifecycleWriterV1({
+			board: board({ maxBusyWriters: 1 }),
+			caid: caidBoard(),
+			cardId: "feat-a--implementer",
+		});
+		expect(result.ok).toBe(false);
+		if (result.ok) return;
+		expect(result.code).toBe("unavailable");
+	});
+
+	test("ISO01_ACQUIRE_busy_peer_missing_realpath_fails_closed", async () => {
+		const api = await loadApi();
+		const busyBoard = board({
+			maxBusyWriters: 2,
+			cards: [
+				{
+					id: "other--implementer",
+					path: "/repo/.worktrees/caid/other/implementer",
+					branch: "caid/other/implementer",
+					head: "ccc333",
+					busy: "busy",
+					updatedAt: "2026-08-11T00:00:00.000Z",
+				},
+				{
+					id: "feat-a--implementer",
+					path: "/repo/.worktrees/caid/feat-a/implementer",
+					branch: "caid/feat-a/implementer",
+					head: "bbb222",
+					busy: "idle",
+					updatedAt: "2026-08-11T00:00:00.000Z",
+				},
+			],
+		});
+		const result = api.acquireLifecycleWriterV1({
+			board: busyBoard,
+			caid: caidBoard(),
+			cardId: "feat-a--implementer",
+			repoRootRealpath: "/repo",
+			// only self resolves — peer missing realpath must not fail open
+			realpathOf: realpathTable({
+				"/repo/.worktrees/caid/feat-a/implementer":
+					"/repo/.worktrees/caid/feat-a/implementer",
+			}),
+		});
+		expect(result.ok).toBe(false);
+		if (result.ok) return;
+		expect(result.code).toBe("unavailable");
+	});
+
+	test("ISO01_ACQUIRE_symlink_escape_denies", async () => {
+		const api = await loadApi();
+		const result = api.acquireLifecycleWriterV1({
+			board: board({ maxBusyWriters: 1 }),
+			caid: caidBoard(),
+			cardId: "feat-a--implementer",
+			repoRootRealpath: "/repo",
+			realpathOf: realpathTable({
+				"/repo/.worktrees/caid/feat-a/implementer": "/tmp/escaped",
+			}),
+		});
+		expect(result.ok).toBe(false);
+		if (result.ok) return;
+		expect(result.code).toBe("path-escape");
+	});
+
+	test("ISO01_ACQUIRE_idle_caid_peer_alias_collides", async () => {
+		const api = await loadApi();
+		const result = api.acquireLifecycleWriterV1({
+			board: board({
+				maxBusyWriters: 2,
+				cards: [
+					{
+						id: "feat-a--implementer",
+						path: "/repo/.worktrees/caid/feat-a/implementer",
+						branch: "caid/feat-a/implementer",
+						head: "bbb222",
+						busy: "idle",
+						updatedAt: "2026-08-11T00:00:00.000Z",
+					},
+				],
+			}),
+			caid: caidBoard({
+				assignments: [
+					{
+						taskId: "feat-a",
+						role: "implementer",
+						isolation: "worktree",
+						path: "/repo/.worktrees/caid/feat-a/implementer",
+						branch: "caid/feat-a/implementer",
+						cardId: "feat-a--implementer",
+						status: "active",
+						updatedAt: "2026-08-11T00:00:00.000Z",
+					},
+					{
+						taskId: "feat-a",
+						role: "test-designer",
+						isolation: "worktree",
+						path: "/repo/.worktrees/alias-td",
+						branch: "caid/feat-a/test-designer",
+						cardId: "feat-a--test-designer",
+						status: "active",
+						updatedAt: "2026-08-11T00:00:00.000Z",
+					},
+				],
+			}),
+			cardId: "feat-a--implementer",
+			repoRootRealpath: "/repo",
+			realpathOf: realpathTable({
+				"/repo/.worktrees/caid/feat-a/implementer": "/repo/shared-real",
+				"/repo/.worktrees/alias-td": "/repo/shared-real",
+			}),
+		});
+		expect(result.ok).toBe(false);
+		if (result.ok) return;
+		expect(result.code).toBe("collision");
+	});
+
+	test("ISO01_ACQUIRE_identity_mismatch_refuses_lease_held", async () => {
+		const api = await loadApi();
+		const held = board({
+			maxBusyWriters: 1,
+			cards: [
+				{
+					id: "feat-a--implementer",
+					path: "/repo/.worktrees/caid/feat-a/implementer",
+					branch: "caid/feat-a/implementer",
+					head: "bbb222",
+					busy: "busy",
+					agentRunId: "run-1",
+					sessionId: "sess-1",
+					updatedAt: "2026-08-11T00:00:00.000Z",
+				},
+			],
+		});
+		const result = api.acquireLifecycleWriterV1({
+			board: held,
+			caid: caidBoard(),
+			cardId: "feat-a--implementer",
+			identity: { sessionId: "forged", agentRunId: "run-1" },
+			repoRootRealpath: "/repo",
+			realpathOf: realpathTable({
+				"/repo/.worktrees/caid/feat-a/implementer":
+					"/repo/.worktrees/caid/feat-a/implementer",
+			}),
+		});
+		expect(result.ok).toBe(false);
+		if (result.ok) return;
+		expect(result.code).toBe("identity-mismatch");
 	});
 });
 

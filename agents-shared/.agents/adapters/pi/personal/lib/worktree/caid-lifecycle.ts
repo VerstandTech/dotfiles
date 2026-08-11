@@ -318,6 +318,13 @@ export function evaluateCleanupReadinessV1(input: EvaluateCleanupReadinessInput)
 	if (facts.dirty === true) {
 		return deny("dirty");
 	}
+	// Fail closed: allow requires explicit matching SHA evidence (absence is not a match).
+	if (facts.expectedHeadSha == null || facts.observedHeadSha == null) {
+		return deny("sha-mismatch");
+	}
+	if (facts.expectedHeadSha !== facts.observedHeadSha) {
+		return deny("sha-mismatch");
+	}
 	if (card.busy === "busy" && facts.heartbeatClassification === "stale") {
 		return deny("leased");
 	}
@@ -334,14 +341,6 @@ export function evaluateCleanupReadinessV1(input: EvaluateCleanupReadinessInput)
 		// working is not auto-cleanable — treat as busy-like deny
 		return deny("busy");
 	}
-	if (
-		facts.expectedHeadSha != null &&
-		facts.observedHeadSha != null &&
-		facts.expectedHeadSha !== facts.observedHeadSha
-	) {
-		return deny("sha-mismatch");
-	}
-
 	const candidates = deepFreeze([
 		cloneJson({
 			id: card.id,
@@ -414,7 +413,11 @@ export function acquireLifecycleWriterV1(input: {
 	cardId: string;
 	identity?: { sessionId?: string; agentRunId?: string };
 	now?: string;
+	/** Required in strict isolation acquires — missing realpath facts fail closed. */
 	realpathOf?: (path: string) => string | undefined;
+	repoRootRealpath?: string;
+	/** When true (default), require realpathOf and fail closed on any collision helper error. */
+	strictPathFacts?: boolean;
 }) {
 	const board = cloneBoard(input.board);
 	const cardId = typeof input.cardId === "string" ? input.cardId.trim() : "";
@@ -432,23 +435,63 @@ export function acquireLifecycleWriterV1(input: {
 	const card = board.cards.find((c) => c.id === cardId);
 	if (!card) return freezeErr("not-found");
 
-	// Optional collision check against other busy exclusive writers
+	const strictPathFacts = input.strictPathFacts !== false;
+
+	// Fail closed: exclusive path checks need an injected realpath oracle in strict mode.
+	if (strictPathFacts && typeof input.realpathOf !== "function") {
+		return freezeErr("unavailable");
+	}
+
 	if (typeof input.realpathOf === "function") {
-		const exclusive = board.cards
-			.filter((c) => c.busy === "busy" || c.id === cardId)
-			.map((c) => ({ path: c.path, cardId: c.id, status: "active" as const }));
+		// Exclusive set = this card + all busy board cards + all active CAID assignments
+		// (idle/planned peers still collide for isolation).
+		const byId = new Map<string, { path: string; cardId: string; status: "active" }>();
+		for (const c of board.cards) {
+			if (c.busy === "busy" || c.id === cardId) {
+				byId.set(c.id, { path: c.path, cardId: c.id, status: "active" });
+			}
+		}
+		const assignments =
+			(input.caid as { assignments?: Array<{ cardId: string; path: string; status?: string }> })
+				.assignments ?? [];
+		for (const a of assignments) {
+			if (!isActiveStatus(a.status)) continue;
+			const id = typeof a.cardId === "string" ? a.cardId : "";
+			if (!id) continue;
+			if (!byId.has(id)) {
+				byId.set(id, { path: a.path, cardId: id, status: "active" });
+			}
+		}
+		const exclusive = [...byId.values()];
 		const collision = evaluatePathCollisionV1({
 			exclusiveWriters: exclusive,
 			realpathOf: input.realpathOf,
+			repoRootRealpath: input.repoRootRealpath,
 			strict: true,
 		});
-		if (!collision.ok && collision.code === "collision") {
-			return freezeErr("collision");
+		// Any non-ok collision result fails closed (collision, unavailable, path-escape, invalid-path).
+		if (!collision.ok) {
+			const code =
+				collision.code === "collision" ||
+				collision.code === "unavailable" ||
+				collision.code === "path-escape" ||
+				collision.code === "invalid-path"
+					? collision.code
+					: "unavailable";
+			return freezeErr(code);
 		}
 	}
 
 	if (card.busy === "busy") {
-		// Idempotent hold — does not consume an extra cap slot
+		// Idempotent hold only under matching caller identity when bindings exist.
+		const wantSession = input.identity?.sessionId;
+		const wantRun = input.identity?.agentRunId;
+		if (wantSession != null && card.sessionId != null && wantSession !== card.sessionId) {
+			return freezeErr("identity-mismatch");
+		}
+		if (wantRun != null && card.agentRunId != null && wantRun !== card.agentRunId) {
+			return freezeErr("identity-mismatch");
+		}
 		return freezeOk({
 			code: "lease-held" as const,
 			board,
@@ -457,6 +500,9 @@ export function acquireLifecycleWriterV1(input: {
 
 	const busyCount = board.cards.filter((c) => c.busy === "busy").length;
 	const cap = board.maxBusyWriters;
+	if (!Number.isFinite(cap) || cap < 1 || cap > 64) {
+		return freezeErr("invalid-cap");
+	}
 	if (busyCount >= cap) {
 		return freezeErr("cap-exceeded");
 	}
@@ -595,13 +641,24 @@ export function validateBoardV1(input: unknown) {
 		});
 	}
 
+	let maxBusyWriters = 2;
+	if (input.maxBusyWriters != null) {
+		if (
+			typeof input.maxBusyWriters !== "number" ||
+			!Number.isFinite(input.maxBusyWriters) ||
+			!Number.isInteger(input.maxBusyWriters) ||
+			input.maxBusyWriters < 1 ||
+			input.maxBusyWriters > 64
+		) {
+			return freezeErr("invalid-cap");
+		}
+		maxBusyWriters = input.maxBusyWriters;
+	}
+
 	const board = {
 		version: 1 as const,
 		repoRoot: typeof input.repoRoot === "string" ? input.repoRoot : "",
-		maxBusyWriters:
-			typeof input.maxBusyWriters === "number" && Number.isFinite(input.maxBusyWriters)
-				? Math.floor(input.maxBusyWriters)
-				: 2,
+		maxBusyWriters,
 		focusedId: typeof input.focusedId === "string" ? input.focusedId : undefined,
 		cards,
 	};
