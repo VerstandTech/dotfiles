@@ -172,6 +172,13 @@ Any limited dimension with missing used value is `unknown`. Aggregate status can
 | Q7 | FIT dependency direction? | BUD before FIT |
 | Q8 | Confirmation authority? | External approval ref; not model boolean |
 
+## Deferred integration (serial wave)
+
+- **Path:** `agents-shared/.agents/adapters/pi/personal/extensions/agentic-fleet.ts`
+- **Status:** unmodified in BUD-01 first merge
+- **First merge delivers:** pure `lib/bdd/cost-budget.ts` + `lib/fleet/budget.ts` + tests + this package docs
+- **Follow-up:** wire `planSpawnBudgetGateV1` into fleet dispatch preflight only after this pure core is merged; keep exclusive path ownership vs CMP-02 plan transport
+
 ## Out of scope
 
 - Live provider billing APIs
