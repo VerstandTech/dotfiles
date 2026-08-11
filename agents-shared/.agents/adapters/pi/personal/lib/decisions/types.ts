@@ -27,6 +27,12 @@ export const DECISION_KINDS = [
 
 export type DecisionKind = (typeof DECISION_KINDS)[number];
 
+/** Deterministic V1 enforcement. Prose is never executable policy. */
+export interface DecisionEnforcementV1 {
+	effect: "forbid";
+	actionIds: string[];
+}
+
 export interface DecisionRecord {
 	/** Stable id, e.g. DEC-001 or ADR-012 */
 	id: string;
@@ -54,6 +60,8 @@ export interface DecisionRecord {
 	confidence?: number;
 	/** Human review status */
 	humanReview?: "pending" | "approved" | "rejected";
+	/** Optional structured policy consumed only by trusted DEC-01 evidence. */
+	enforcement?: DecisionEnforcementV1;
 	createdAt: string;
 	updatedAt: string;
 	/** Author: human handle or agent role */
