@@ -1,0 +1,19 @@
+onboarding = false
+
+[ui]
+sidebar_width = 26
+sidebar_min_width = 18
+sidebar_max_width = 36
+sidebar_start_collapsed = false
+sidebar_collapsed_mode = "compact"
+redraw_on_focus_gained = true
+
+[ui.toast]
+delivery = "herdr"
+delay_seconds = 1
+
+[ui.sound]
+enabled = false
+
+[session]
+resume_agents_on_restore = false

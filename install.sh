@@ -3,10 +3,83 @@ set -euo pipefail
 
 DOTFILES_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BACKUP_DIR="$HOME/dotfiles-backup-$(date +%Y%m%d-%H%M%S)"
-PACKAGES=(zsh wezterm nvim agents-shared claude codex grok opencode pi)
+PACKAGES=(zsh wezterm herdr nvim agents-shared claude codex grok opencode pi)
 
 log()  { printf '\033[1;34m[dotfiles]\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m[dotfiles] WARN:\033[0m %s\n' "$*"; }
+fail() { printf '\033[1;31m[dotfiles] FATAL:\033[0m %s\n' "$*" >&2; return 1; }
+
+ensure_herdr_available() {
+  local herdr_bin="${1:-herdr}"
+  local host_os="${2:-$(uname -s)}"
+  local install_action version_output
+
+  if ! command -v "$herdr_bin" >/dev/null 2>&1; then
+    case "$host_os" in
+      Darwin) install_action="brew install herdr" ;;
+      Linux) install_action="curl -fsSL https://herdr.dev/install.sh | sh" ;;
+      *) fail "Herdr is unsupported on $host_os"; return 1 ;;
+    esac
+    fail "herdr not found; install it with: $install_action"
+    return 1
+  fi
+
+  if ! version_output="$("$herdr_bin" --version 2>&1)"; then
+    fail "could not execute herdr --version"
+    return 1
+  fi
+  if [[ ! "$version_output" =~ ^herdr[[:space:]]+0\.8\.[0-9]+([+-][A-Za-z0-9._-]+)?$ ]]; then
+    fail "unsupported Herdr version '$version_output'; HOST-01 requires CMP-01-approved 0.8.x"
+    return 1
+  fi
+}
+
+herdr_pi_is_current() {
+  grep -Eq '^pi: current([[:space:]]|$)'
+}
+
+herdr_integration_status() {
+  local herdr_bin="${1:-herdr}"
+  local config_path="${2:-$HOME/.config/herdr/config.toml}"
+  local status
+  if ! status="$(HERDR_CONFIG_PATH="$config_path" "$herdr_bin" integration status)"; then
+    fail "herdr integration status failed"
+    return 1
+  fi
+  printf '%s\n' "$status"
+}
+
+configure_herdr_pi() {
+  local herdr_bin="${1:-herdr}"
+  local config_path="${2:-$HOME/.config/herdr/config.toml}"
+  local status
+
+  HERDR_CONFIG_PATH="$config_path" "$herdr_bin" config check || {
+    fail "herdr config check failed"
+    return 1
+  }
+
+  status="$(herdr_integration_status "$herdr_bin" "$config_path")" || return 1
+  printf '%s\n' "$status"
+  if printf '%s\n' "$status" | herdr_pi_is_current; then
+    log "Herdr Pi integration is current"
+    return 0
+  fi
+
+  log "installing or refreshing Herdr Pi integration"
+  HERDR_CONFIG_PATH="$config_path" "$herdr_bin" integration install pi || {
+    fail "herdr integration install pi failed"
+    return 1
+  }
+
+  status="$(herdr_integration_status "$herdr_bin" "$config_path")" || return 1
+  printf '%s\n' "$status"
+  if ! printf '%s\n' "$status" | herdr_pi_is_current; then
+    fail "Herdr Pi integration is not current after install"
+    return 1
+  fi
+  log "Herdr Pi integration is current"
+}
 
 resolved_path() {
   python3 - "$1" <<'PY'
@@ -283,11 +356,14 @@ PY
 
 
 main() {
-  case "$(uname -s)" in
+  local host_os
+  host_os="$(uname -s)"
+  case "$host_os" in
     Darwin) install_macos ;;
     Linux)  install_ubuntu ;;
-    *) warn "unsupported OS $(uname -s); skipping tool install" ;;
+    *) warn "unsupported OS $host_os; skipping tool install" ;;
   esac
+  ensure_herdr_available
   install_zsh_aesthetics
 
   command -v stow >/dev/null 2>&1 || { echo "FATAL: stow not installed" >&2; exit 1; }
@@ -308,6 +384,7 @@ main() {
   # directory symlink so new extension files appear without per-file restow.
   # (stow --no-folding tree-folds inside the existing ~/.pi/agent directory.)
   ensure_pi_personal_link
+  configure_herdr_pi
 
   python3 "$DOTFILES_DIR/agents-shared/.agents/scripts/verify-ai-resources.py" \
     --repo "$DOTFILES_DIR" \
@@ -318,4 +395,6 @@ main() {
   log "done — open a new shell to pick up zsh config"
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi

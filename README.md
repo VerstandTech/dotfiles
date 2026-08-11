@@ -25,6 +25,7 @@ Each top-level directory is a stow package mirroring `$HOME`:
 |---|---|---|
 | `zsh` | `~/.zshrc`, `~/.zprofile`, `~/.p10k.zsh`, `~/.config/zsh/` | shell config + prompt theme |
 | `wezterm` | `~/.config/wezterm/` | terminal config |
+| `herdr` | `~/.config/herdr/config.toml` | durable terminal/session defaults; runtime state remains local |
 | `nvim` | `~/.config/nvim/` | editor config + `lazy-lock.json` |
 | `claude` | `~/.claude/` | native settings + symlink entrypoints into `~/.agents` |
 | `codex` | `~/.codex/` | native config + symlink entrypoints into `~/.agents` |
