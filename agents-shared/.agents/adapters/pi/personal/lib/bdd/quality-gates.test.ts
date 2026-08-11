@@ -139,6 +139,9 @@ describe("runQualityGatePlan", () => {
 				enabled: true,
 				requiredGateKinds: ["unit"],
 				advisoryGateKinds: ["doctor"],
+				executors: {
+					unit: { kind: "argv", version: 1, file: "bun", args: ["test"] },
+				},
 			},
 		});
 		const calls: string[] = [];
@@ -157,8 +160,11 @@ describe("runQualityGatePlan", () => {
 		expect(result.results.find((gate) => gate.kind === "doctor")?.status).toBe("failed");
 	});
 
-	test("treats timeout and spawn errors as failures even with exit code zero", async () => {
-		for (const infrastructure of [{ timedOut: true }, { spawnError: true }]) {
+	test("treats timeout and spawn errors as non-passing even with exit code zero", async () => {
+		for (const infrastructure of [
+			{ timedOut: true, expectedStatus: "timeout" },
+			{ spawnError: true, expectedStatus: "failed" },
+		]) {
 			const plan = buildQualityGatePlan({
 				profile: { ...profile, commands: { unitTest: "bun test" } },
 				assurance: { enabled: true, requiredGateKinds: ["unit"] },
@@ -169,7 +175,9 @@ describe("runQualityGatePlan", () => {
 				execute: async ({ command }) => ({ command, exitCode: 0, summary: "infra", ...infrastructure }),
 			});
 			expect(result.ok).toBe(false);
-			expect(result.results.find((gate) => gate.kind === "unit")?.status).toBe("failed");
+			expect(result.results.find((gate) => gate.kind === "unit")?.status).toBe(
+				infrastructure.expectedStatus,
+			);
 		}
 	});
 
@@ -670,6 +678,27 @@ describe("FIT-01 canonical command and internal gate integration", () => {
 		}
 	});
 
+	test("maps an internal adapter exception to a canonical blocking failure", async () => {
+		const plan = fitPlan({ kind: "trajectory" as QualityGateKind, id: "fit.trajectory.v1" });
+		const malformed = {
+			...baseEnvelope,
+			adapter: "trajectory",
+			expectedRunId: "run-1",
+			result: undefined,
+		} as unknown as InternalGateEvidence;
+		const result = await runInternal({
+			plan,
+			internalEvidence: { "fit.trajectory.v1": malformed },
+		});
+		expect(result.ok).toBe(false);
+		expect(result.results[0]).toMatchObject({
+			status: "failed",
+			reasonCode: "FIT01_INTERNAL_ADAPTER_FAILED",
+			executorKind: "internal",
+			trustTier: "trusted",
+		});
+	});
+
 	test("records advisory internal failure and continues to a later trusted argv gate", async () => {
 		const plan = {
 			...fitPlan({ kind: "trajectory" as QualityGateKind, id: "fit.trajectory.v1", required: false }),
@@ -717,6 +746,30 @@ describe("FIT-01 canonical command and internal gate integration", () => {
 		expect(result.results.map((item) => item.status)).toEqual(["failed", "passed"]);
 		expect(commands).toBe(1);
 		expect(result.ok).toBe(true);
+	});
+
+	test("does not let an interactive shell result satisfy a required gate", async () => {
+		const plan = buildQualityGatePlan({
+			profile: { ...profile, commands: {} },
+			assurance: {
+				enabled: true,
+				trustProfile: "interactive",
+				requiredGateKinds: ["unit"],
+				executors: { unit: { kind: "shell", command: "bun test" } },
+			},
+		});
+		const result = await runQualityGatePlan({
+			cwd: "/project",
+			plan,
+			execute: async ({ command }) => ({ command, exitCode: 0, summary: "PASS" }),
+		});
+		expect(result.ok).toBe(false);
+		expect(result.results.find((gate) => gate.kind === "unit")).toMatchObject({
+			status: "failed",
+			executorKind: "shell",
+			trustTier: "interactive_untrusted",
+			reasonCode: "FIT01_REQUIRED_EXECUTOR_UNTRUSTED",
+		});
 	});
 
 	test("uses a distinct timeout status and never parses threshold prose", async () => {
