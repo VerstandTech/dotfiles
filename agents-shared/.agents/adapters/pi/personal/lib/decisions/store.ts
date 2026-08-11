@@ -2,6 +2,8 @@
  * Pure decision-store helpers: upsert, query, supersede, pre-action gates.
  */
 
+export * from "./evidence.ts";
+
 import type {
 	DecisionGateResult,
 	DecisionQuery,
