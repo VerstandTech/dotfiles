@@ -391,22 +391,72 @@ export function createBufferedTrajectoryWriterV1(options: {
 	};
 }
 
+export function validateTrajectoryFileTargetV1(input: unknown): Readonly<
+	| { ok: true; relativePath: string }
+	| { ok: false; code: TrajectoryRefusalCodeV1 }
+> {
+	if (!isPlainObject(input)) return Object.freeze({ ok: false, code: "invalid-event" });
+	try {
+		ownDataKeys(input);
+	} catch (error) {
+		const code = (error as { code?: TrajectoryRefusalCodeV1 }).code ?? "invalid-event";
+		return Object.freeze({ ok: false, code });
+	}
+	const projectRoot = input.projectRoot;
+	const sessionId = input.sessionId;
+	const segment = input.segment;
+	const resolvedProjectRoot = input.resolvedProjectRoot;
+	const resolvedTarget = input.resolvedTarget;
+	const kind = input.kind;
+	const links = input.links;
+	const symlink = input.symlink;
+	if (typeof projectRoot !== "string" || projectRoot.length === 0) return Object.freeze({ ok: false, code: "unsafe-file-target" });
+	if (typeof sessionId !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(sessionId)) {
+		return Object.freeze({ ok: false, code: "invalid-session-id" });
+	}
+	if (!Number.isSafeInteger(segment) || (segment as number) < 0) return Object.freeze({ ok: false, code: "invalid-event" });
+	if (typeof resolvedProjectRoot !== "string" || typeof resolvedTarget !== "string") {
+		return Object.freeze({ ok: false, code: "unsafe-file-target" });
+	}
+	if (symlink !== false) return Object.freeze({ ok: false, code: "unsafe-file-target" });
+	if (links !== 1) return Object.freeze({ ok: false, code: "unsafe-file-target" });
+	if (kind !== "file" && kind !== undefined) {
+		// exists:false may omit kind; existing targets must be regular files.
+		if (input.exists === true && kind !== "file") return Object.freeze({ ok: false, code: "unsafe-file-kind" });
+		if (input.exists !== false && kind !== "file") return Object.freeze({ ok: false, code: "unsafe-file-kind" });
+	}
+	if (input.exists === true && kind !== "file") return Object.freeze({ ok: false, code: "unsafe-file-kind" });
+	const root = resolvedProjectRoot.endsWith("/") ? resolvedProjectRoot.slice(0, -1) : resolvedProjectRoot;
+	const expected = `${root}/.pi/trajectories/${sessionId}-${segment}.ndjson`;
+	if (resolvedTarget !== expected) return Object.freeze({ ok: false, code: "unsafe-file-target" });
+	if (!resolvedTarget.startsWith(`${root}/`)) return Object.freeze({ ok: false, code: "unsafe-file-target" });
+	return Object.freeze({
+		ok: true,
+		relativePath: `.pi/trajectories/${sessionId}-${segment}.ndjson`,
+	});
+}
+
 export function createTrajectoryRecorderV1(options: {
-	now: () => string;
+	now?: () => string;
 	priorEntries?: unknown[];
 	maxSessionEntries?: number;
 	appendSessionEntry?: (type: string, value: unknown) => void | Promise<void>;
 	fileWriter?: TrajectoryBufferedWriterV1;
-} = { now: () => new Date().toISOString() }): TrajectoryRecorderV1 {
+} = {}): TrajectoryRecorderV1 {
+	const now = typeof options.now === "function" ? options.now : () => new Date().toISOString();
 	const restored = restoreTrajectorySequenceV1(options.priorEntries ?? []);
 	if (!restored.ok) {
-		// Fail closed for the whole recorder lifecycle when history is invalid.
-		let closed = true;
+		// Fail closed for the whole recorder lifecycle when history is invalid,
+		// but still close any injected writer exactly once.
+		let closed = false;
 		return {
 			async record() {
 				return refuse(restored.code);
 			},
 			async close() {
+				if (closed) return Object.freeze({ ok: true });
+				closed = true;
+				if (options.fileWriter) return options.fileWriter.close();
 				return Object.freeze({ ok: true });
 			},
 		};
@@ -449,7 +499,7 @@ export function createTrajectoryRecorderV1(options: {
 				const eventCandidate: Record<string, unknown> = {
 					schemaVersion: 1,
 					seq: nextSequence,
-					at: options.now(),
+					at: now(),
 					kind: projected.kind,
 				};
 				if (projected.actor !== undefined) eventCandidate.agent = projected.actor;

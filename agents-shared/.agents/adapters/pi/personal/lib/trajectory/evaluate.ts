@@ -12,6 +12,9 @@ import type {
 	TrajectoryMetrics,
 	TrajectoryRun,
 } from "./types.ts";
+import { TRAJECTORY_EVENT_KINDS } from "./types.ts";
+
+const KNOWN_KINDS = new Set<string>(TRAJECTORY_EVENT_KINDS);
 
 const MAX_EVENTS = 10_000;
 const MAX_ASSERTIONS = 256;
@@ -90,8 +93,8 @@ export function validateTrajectoryRunV1(run: unknown): { ok: true; value: Trajec
 			}
 			previousAt = atMs;
 		}
-		if (typeof row.kind !== "string" || row.kind.length === 0) {
-			return { ok: false, code: "invalid-event-kind", message: `Missing event kind at seq ${row.seq}` };
+		if (typeof row.kind !== "string" || row.kind.length === 0 || !KNOWN_KINDS.has(row.kind)) {
+			return { ok: false, code: "invalid-event-kind", message: `Unknown or missing event kind at seq ${row.seq}` };
 		}
 	}
 	return { ok: true, value: candidate as unknown as TrajectoryRun };
@@ -161,7 +164,23 @@ function assertRequiredTools(
 			summary: ok ? "Unordered tool multiset match" : "Unordered tool multiset mismatch",
 		};
 	}
-	if (mode !== "subset" && mode !== "superset") {
+	if (mode === "superset") {
+		// Required tools must appear in order; extra tools are allowed (true superset of the required sequence).
+		let i = 0;
+		for (const t of tools) {
+			if (t === required[i]) i++;
+			if (i >= required.length) break;
+		}
+		const ok = i >= required.length;
+		return {
+			id: assertion.id,
+			ok,
+			summary: ok
+				? `Superset tool sequence contains required tools in order (${required.join(" → ")})`
+				: `Missing required tools in order for superset match; matched ${i}/${required.length}`,
+		};
+	}
+	if (mode !== "subset") {
 		return {
 			id: assertion.id,
 			ok: false,
@@ -220,12 +239,12 @@ export function evaluateAssertion(
 	}
 
 	if (assertion.forbidSuccessAfterFailedGate) {
-		const metrics = computeTrajectoryMetrics(run);
-		if (run.outcome === "success" && metrics.gateFailures > 0) {
+		const anti = detectTrajectoryAntiPatterns(run);
+		if (anti.some((hit) => hit.code === "SUCCESS_AFTER_FAILED_GATE")) {
 			return {
 				id: assertion.id,
 				ok: false,
-				summary: "Success outcome with gate failures",
+				summary: "Success outcome with unresolved required gate failures",
 			};
 		}
 	}

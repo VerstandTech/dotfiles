@@ -105,4 +105,20 @@ describe("OBS-01 committed golden replay", () => {
 		};
 		expect(evaluateTrajectory(run, []).antiPatterns.some((item) => item.startsWith("SECRET_IN_PREVIEW:"))).toBe(false);
 	});
+
+
+	test("rejects unknown event kinds during replay validation", () => {
+		const run: TrajectoryRun = {
+			version: 1,
+			runId: "99999999-9999-4999-8999-999999999999",
+			taskId: "unknown-kind",
+			goal: "bad kind",
+			startedAt: "2026-08-11T21:12:00.000Z",
+			events: [{ seq: 1, at: "2026-08-11T21:12:01.000Z", kind: "invented" as any }],
+		};
+		const evaluation = evaluateTrajectory(run, []);
+		expect(evaluation.ok).toBe(false);
+		expect(evaluation.status).toBe("invalid");
+	});
+
 });

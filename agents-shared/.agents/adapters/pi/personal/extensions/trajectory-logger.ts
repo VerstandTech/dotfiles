@@ -133,12 +133,30 @@ export function createTrajectoryLoggerExtensionV1(options: TrajectoryLoggerExten
 		let unsubscribeBus: (() => void) | undefined;
 		let activeGeneration = 0;
 
-		const dispose = async (): Promise<void> => {
+		const dispose = async (options: { recordShutdown?: boolean; reason?: string; context?: unknown } = {}): Promise<void> => {
 			const current = activeGeneration;
-			activeGeneration = 0;
 			const currentUnsubscribe = unsubscribeBus;
-			unsubscribeBus = undefined;
 			const currentRecorder = recorder;
+			const currentWriter = fileWriter;
+			if (options.recordShutdown && currentRecorder && current !== 0) {
+				const status =
+					options.reason === "quit" || options.reason === "reload" || options.reason === "new" || options.reason === "resume" || options.reason === "fork"
+						? options.reason === "quit"
+							? "shutdown"
+							: options.reason
+						: "shutdown";
+				try {
+					await currentRecorder.record({
+						schemaVersion: 1,
+						kind: "session",
+						data: { status },
+					});
+				} catch {
+					// Shutdown observation is best-effort before teardown.
+				}
+			}
+			activeGeneration = 0;
+			unsubscribeBus = undefined;
 			recorder = undefined;
 			fileWriter = undefined;
 			if (currentUnsubscribe) {
@@ -154,8 +172,14 @@ export function createTrajectoryLoggerExtensionV1(options: TrajectoryLoggerExten
 				} catch {
 					// Close failures are non-throwing for lifecycle teardown.
 				}
+			} else if (currentWriter) {
+				try {
+					await currentWriter.close();
+				} catch {
+					// Writer close is best-effort when no recorder owns it.
+				}
 			}
-			void current;
+			void options.context;
 		};
 
 		const recordSafe = async (candidate: PlainRecord, context: unknown): Promise<void> => {
@@ -192,9 +216,12 @@ export function createTrajectoryLoggerExtensionV1(options: TrajectoryLoggerExten
 								projectRoot: projectRootOf(context),
 								sessionId,
 							});
+							if (!fileWriter) setStatus(context, "trajectory-logger: sink-unavailable");
 						} catch {
 							setStatus(context, "trajectory-logger: sink-unavailable");
 						}
+					} else {
+						setStatus(context, "trajectory-logger: sink-unavailable");
 					}
 				}
 			}
@@ -292,8 +319,13 @@ export function createTrajectoryLoggerExtensionV1(options: TrajectoryLoggerExten
 			return undefined;
 		});
 
-		pi.on("session_shutdown", async (_event: unknown, context: unknown) => {
-			await dispose();
+		pi.on("session_shutdown", async (event: unknown, context: unknown) => {
+			const reason = eventData(event, "reason");
+			await dispose({
+				recordShutdown: true,
+				reason: typeof reason === "string" ? reason : "quit",
+				context,
+			});
 			setStatus(context, undefined);
 		});
 	};

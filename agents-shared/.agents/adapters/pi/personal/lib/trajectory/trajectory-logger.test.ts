@@ -179,3 +179,28 @@ describe("OBS-01 trajectory logger extension", () => {
 		expect(mock.statuses.join(" ")).not.toContain("credential-secret-value");
 	});
 });
+
+
+describe("OBS-01 trajectory logger review regressions", () => {
+	test("explicit file flag without factory reports sink-unavailable instead of silent session-only", async () => {
+		const { createTrajectoryLoggerExtensionV1 } = await loadExtension();
+		const mock = piMock(true);
+		createTrajectoryLoggerExtensionV1({ now: () => "2026-08-11T21:00:00.000Z" })(mock.pi as any);
+		await emit(mock, "session_start", { type: "session_start", reason: "startup" });
+		expect(mock.statuses.join(" ")).toContain("sink-unavailable");
+		expect(mock.statuses.join(" ")).not.toContain("session-only");
+	});
+
+	test("session_shutdown records one shutdown observation before dispose", async () => {
+		const { createTrajectoryLoggerExtensionV1 } = await loadExtension();
+		const mock = piMock();
+		createTrajectoryLoggerExtensionV1({ now: () => "2026-08-11T21:00:00.000Z" })(mock.pi as any);
+		await emit(mock, "session_start", { type: "session_start", reason: "startup" });
+		await emit(mock, "session_shutdown", { type: "session_shutdown", reason: "quit" });
+		const kinds = mock.appended.map((e) => e.data.kind);
+		const statuses = mock.appended.map((e) => e.data?.data?.status);
+		expect(kinds).toContain("session");
+		expect(statuses).toContain("startup");
+		expect(statuses).toContain("shutdown");
+	});
+});

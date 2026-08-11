@@ -321,3 +321,71 @@ describe("OBS-01 retention planner", () => {
 		}
 	});
 });
+
+
+describe("OBS-01 recorder close and file safety helpers", () => {
+	test("closes injected file writer even when prior history is invalid", async () => {
+		const { createTrajectoryRecorderV1, TRAJECTORY_CUSTOM_ENTRY_TYPE_V1 } = await loadRecord();
+		let closes = 0;
+		const writer = {
+			enqueue: async () => ({ ok: true }),
+			flush: async () => ({ ok: true }),
+			close: async () => {
+				closes++;
+				return { ok: true };
+			},
+		};
+		const prior = [
+			{
+				type: "custom",
+				customType: TRAJECTORY_CUSTOM_ENTRY_TYPE_V1,
+				data: { schemaVersion: 1, seq: 2, at: "2026-08-11T21:00:02.000Z", kind: "message" },
+			},
+		];
+		const recorder = createTrajectoryRecorderV1(
+			recorderOptions({ priorEntries: prior, fileWriter: writer }),
+		);
+		expect(await recorder.record(candidate())).toMatchObject({ ok: false, code: "sequence-invalid" });
+		expect((await recorder.close()).ok).toBe(true);
+		expect((await recorder.close()).ok).toBe(true);
+		expect(closes).toBe(1);
+	});
+
+	test("exports a pure file-target validator that refuses unsafe facts", async () => {
+		const { validateTrajectoryFileTargetV1 } = await loadRecord();
+		expect(typeof validateTrajectoryFileTargetV1).toBe("function");
+		const ok = validateTrajectoryFileTargetV1({
+			projectRoot: "/repo",
+			sessionId: "11111111-1111-4111-8111-111111111111",
+			segment: 0,
+			resolvedProjectRoot: "/repo",
+			resolvedTarget: "/repo/.pi/trajectories/11111111-1111-4111-8111-111111111111-0.ndjson",
+			kind: "file",
+			links: 1,
+			symlink: false,
+			exists: false,
+		});
+		expect(ok).toMatchObject({ ok: true, relativePath: ".pi/trajectories/11111111-1111-4111-8111-111111111111-0.ndjson" });
+		for (const bad of [
+			{ symlink: true },
+			{ links: 2 },
+			{ kind: "directory" },
+			{ resolvedTarget: "/tmp/escape.ndjson" },
+			{ sessionId: "../escape" },
+		]) {
+			const result = validateTrajectoryFileTargetV1({
+				projectRoot: "/repo",
+				sessionId: "11111111-1111-4111-8111-111111111111",
+				segment: 0,
+				resolvedProjectRoot: "/repo",
+				resolvedTarget: "/repo/.pi/trajectories/11111111-1111-4111-8111-111111111111-0.ndjson",
+				kind: "file",
+				links: 1,
+				symlink: false,
+				exists: true,
+				...bad,
+			});
+			expect(result.ok).toBe(false);
+		}
+	});
+});
