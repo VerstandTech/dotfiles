@@ -32,12 +32,15 @@ const SECRET_BASENAME_EXACT = new Set([
 ]);
 
 /**
- * Secret leaf policy:
+ * Secret leaf policy (basename only):
  * - deny exact credential basenames
  * - deny .env / .env.* / .envrc leaves
- * - deny credential-stem leaves with extra extensions (auth.json.bak, credentials.json.enc, private.pem.bak)
- * - deny private key basenames and id_* key leaves with extra suffixes
- * - do NOT deny directory segments named auth/secrets or source files like auth.ts / auth-model.md
+ * - deny credential-stem + recognized secret extension (+ optional further suffixes)
+ *   e.g. auth.json, auth.json.bak, credentials.yaml.enc, service-account.json
+ * - deny private/secret key and id_* key leaves (+ optional suffixes)
+ * - do NOT blanket-deny multi-dot source leaves (auth.module.ts, credentials.client.ts,
+ *   secrets.service.ts, auth.config.ts) — only a recognized secret ext after the stem counts
+ * - do NOT deny directory segments named auth/secrets or ordinary auth.ts / auth-model.md
  */
 function isSecretLeafBasename(name: string): boolean {
 	if (!name) return false;
@@ -55,11 +58,12 @@ function isSecretLeafBasename(name: string): boolean {
 		return true;
 	}
 
-	// Credential-stem leaves with any extension chain:
-	// auth.json, auth.json.bak, credentials.json.enc, service-account.json, secrets.json
-	// But NOT auth.ts, auth-model.md, readme.md under secrets/.
+	// Credential stem + recognized secret/config extension immediately after the stem.
+	// Optional further suffixes allowed (auth.json.bak, credentials.yaml.enc).
+	// Ordinary multi-dot source leaves (auth.module.ts, auth.config.ts, credentials.client.ts)
+	// do not match — "config" / "module" / "client" / "service" are not secret exts.
+	// Use a regex literal (not template new RegExp) so "\." stays a literal dot.
 	if (
-		/^(?:auth|credentials|secrets?|service-account)(?:\.[a-z0-9]+){2,}$/i.test(name) ||
 		/^(?:auth|credentials|secrets?|service-account)\.(?:json|ya?ml|toml|ini|conf|cfg|env|pem|key|p12|pfx|jks)(?:\..+)?$/i.test(
 			name,
 		)
