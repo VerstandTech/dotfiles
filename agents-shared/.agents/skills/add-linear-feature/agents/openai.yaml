@@ -1,0 +1,6 @@
+interface:
+  display_name: Add Linear Feature
+  short_description: Add verified Linear work to FEATURES.md
+  default_prompt: Use $add-linear-feature LIM-1234 to add the verified behavior to dataset/FEATURES.md.
+policy:
+  allow_implicit_invocation: false

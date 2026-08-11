@@ -1,0 +1,4 @@
+interface:
+  display_name: "QC User Story to Linear Issue"
+  short_description: "Draft and track UI/MCP QC coverage"
+  default_prompt: "Use $qc-user-story-to-linear-issue to audit UI and MCP coverage, update the appropriate tracker, draft one realistic QC User Story, and write to Linear only after my approval."

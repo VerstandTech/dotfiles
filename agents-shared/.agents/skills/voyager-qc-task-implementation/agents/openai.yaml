@@ -1,0 +1,4 @@
+interface:
+  display_name: "Voyager QC Task Implementation"
+  short_description: "Implement and validate Voyager QC tasks"
+  default_prompt: "Use $voyager-qc-task-implementation to implement and validate a Voyager QC task with deterministic grading and final-head reward evidence."
