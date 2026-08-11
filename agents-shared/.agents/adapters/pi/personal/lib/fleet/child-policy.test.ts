@@ -392,6 +392,42 @@ describe("SEC-00 R4 > blocks secret and path-escape inspection", () => {
 			).toMatch(/auth|outside child cwd|secret|denied|blocked|escape|symlink|pseudo|env/i);
 		}
 	});
+
+	test("denies CON-01 credential backup families without blocking ordinary source leaves", async () => {
+		const loaded = await loadChildPolicy();
+		const mod = requirePolicy(loaded);
+		const evaluate = requireFn(
+			mod,
+			"evaluateInspectionPath",
+			"evaluateInspectionPath must share the CON-01 credential-leaf boundary",
+		);
+		const root = tempDir("sec00-r4-secret-leaves-");
+		const cwd = join(root, "repo");
+		const home = join(root, "home");
+		mkdirSync(cwd, { recursive: true });
+		mkdirSync(home, { recursive: true });
+		const denied = [
+			".envrc",
+			"id_ed25519_sk",
+			"id_ed25519_sk.pub",
+			"private.pem.bak",
+			"auth.json.bak",
+			"credentials.yaml.enc",
+			"secrets.yaml",
+			"service-account.json.bak",
+			"id_ed25519.bak",
+			"id_ed25519.pub.bak",
+			"private.pem.old",
+		];
+		for (const basename of denied) {
+			writeFileSync(join(cwd, basename), SYNTHETIC_SECRET);
+			expect(evaluate({ cwd, tool: "read", target: basename, home })).toEqual(expect.objectContaining({ allowed: false }));
+		}
+		for (const basename of ["credentials.client.ts", "auth.module.ts", "secrets.service.ts", "auth.config.ts"]) {
+			writeFileSync(join(cwd, basename), "export const safe = true;\n");
+			expect(evaluate({ cwd, tool: "read", target: basename, home })).toEqual({ allowed: true });
+		}
+	});
 });
 
 // ---------------------------------------------------------------------------

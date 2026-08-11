@@ -1,0 +1,80 @@
+{
+  "schemaVersion": 1,
+  "defaultProfile": "interactive",
+  "profiles": {
+    "interactive": {
+      "trust": "interactive-untrusted",
+      "sandboxRequired": false,
+      "requiredSecurityGates": false
+    },
+    "strict": {
+      "trust": "strict",
+      "sandboxRequired": true,
+      "requiredSecurityGates": false
+    },
+    "overnight": {
+      "trust": "overnight",
+      "sandboxRequired": true,
+      "requiredSecurityGates": true
+    }
+  },
+  "backend": {
+    "provider": "sandbox-runtime",
+    "requiredFeatures": [
+      "processTree",
+      "denyRead",
+      "allowWrite",
+      "denyNetwork",
+      "redirectRecheck",
+      "dnsRebindingDefense",
+      "lifecycleReset",
+      "workspaceMountPolicy"
+    ]
+  },
+  "filesystem": {
+    "denyReadClasses": [
+      "repository-env",
+      "credential-leaf",
+      "home-secret-root",
+      "private-key",
+      "secret-alias"
+    ],
+    "allowWriteAuthorities": [
+      "canonical-worktree",
+      "task-session-temp"
+    ],
+    "denyLinkClasses": [
+      "symlink",
+      "multi-link-regular-file",
+      "unsafe-file-kind"
+    ]
+  },
+  "environment": {
+    "strictAllowNames": [
+      "HOME",
+      "LANG",
+      "LC_ALL",
+      "LC_CTYPE",
+      "PATH",
+      "TERM",
+      "TMPDIR",
+      "TZ"
+    ]
+  },
+  "egress": {
+    "default": "deny",
+    "providerOnlyRuntimes": [
+      "fleet-researcher",
+      "web-tool"
+    ],
+    "redirectRecheckRequired": true
+  },
+  "securityGates": {
+    "requiredOvernight": [
+      "secret",
+      "sast",
+      "sca",
+      "license"
+    ]
+  }
+}
