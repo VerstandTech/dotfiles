@@ -80,6 +80,12 @@ path=(
 # Add development tools only if actively used
 [[ -d "$HOME/.cargo/bin" ]] && path=("$HOME/.cargo/bin" $path)
 
+# Prefer Homebrew Python 3.12 over macOS /usr/bin/python3 (3.9).
+# Unversioned python/python3/pip3 live in libexec/bin for python@3.12.
+if [[ -d "/opt/homebrew/opt/python@3.12/libexec/bin" ]]; then
+  path=("/opt/homebrew/opt/python@3.12/libexec/bin" $path)
+fi
+
 # Java (OpenJDK via Homebrew)
 if [[ -d "/opt/homebrew/opt/openjdk" ]]; then
   path=("/opt/homebrew/opt/openjdk/bin" $path)
@@ -255,7 +261,6 @@ export PATH="$BUN_INSTALL/bin:$PATH"
 alias z="zellij"
 alias olhaminhabio='cd ~/workspace/verstand/olhaminha.bio'
 alias describe-clothes="python3 ~/workspace/verstand/quantum-store/clothes_descriptor/main.py"
-alias tunnel="cloudflared tunnel run --token=$(cloudflared tunnel token megazord)"
 
 alias claude-mem='bun "$HOME/.claude/plugins/marketplaces/thedotmack/plugin/scripts/worker-service.cjs"'
 
