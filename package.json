@@ -1,0 +1,13 @@
+{
+  "name": "dotfiles",
+  "private": true,
+  "description": "Personal dotfiles with Rulesync-governed always-on AI rules",
+  "scripts": {
+    "rules:generate": "bash scripts/generate-rules.sh",
+    "rules:check": "bash scripts/check-rulesync-drift.sh",
+    "test": "bash scripts/test-root.sh"
+  },
+  "devDependencies": {
+    "rulesync": "16.9.1"
+  }
+}

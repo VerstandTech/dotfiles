@@ -91,7 +91,7 @@ export const RESEARCH_PERSONAS: FleetPersona[] = [
 	{
 		id: "local-scout",
 		label: "Local codebase scout",
-		agent: "scout",
+		agent: "fleet-researcher",
 		angle:
 			"Inspect this repository for existing patterns, constraints, and files relevant to the topic. Cite paths.",
 	},
@@ -311,7 +311,7 @@ export function expandPersonas(
 					id: p.id,
 					label: p.label,
 					angle: p.angle,
-					agent: p.agent || "reviewer",
+					agent: p.agent || "fleet-reviewer",
 				}))
 			: [...personasForKind(kind), ...(custom ?? [])];
 
@@ -351,6 +351,6 @@ export function defaultAgentForKind(kind: FleetKind): string {
 		case "ux":
 			return "fleet-ux";
 		case "custom":
-			return "reviewer";
+			return "fleet-reviewer";
 	}
 }

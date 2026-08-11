@@ -5,13 +5,17 @@
  * - tools: fleet_plan, fleet_dispatch, fleet_status
  * - Raises pi-subagents parallel caps for agentic-heavy work
  * - Spawns via subagents RPC (async) when available; always returns a
- *   copy-pasteable subagent() payload the parent can run/synthesize
+ *   copy-pasteable WorkflowScript subagent() payload the parent can run/synthesize
  */
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { Type } from "@earendil-works/pi-ai";
 import { defineTool, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
+import {
+	preflightFleetContainment,
+	recordBlockedAttempt,
+} from "../lib/fleet/child-policy.ts";
 import {
 	ensureSubagentCaps,
 	loadFleetUserConfig,
@@ -202,6 +206,40 @@ async function dispatchPlan(
 			details: { ok: false, blocked: true, reason: blocked, plan },
 		};
 	}
+	const containment = preflightFleetContainment({
+		agents: plan.tasks.map((task) => task.agent),
+		agentScope: plan.subagentParams.agentScope,
+		env: process.env,
+	});
+	if (!containment.ok) {
+		const cwd = ctx?.cwd ?? process.cwd();
+		try {
+			recordBlockedAttempt(join(cwd, ".pi", "fleet-runs", "blocked-attempts.jsonl"), {
+				agent: "agentic-fleet",
+				tool: "dispatch",
+				action: "dispatch",
+				reason: containment.code,
+				args: {
+					agents: plan.tasks.map((task) => task.agent),
+					agentScope: plan.subagentParams.agentScope,
+				},
+			});
+		} catch {
+			// Audit failure never turns a denied launch into an allowed launch.
+		}
+		return {
+			ok: false,
+			text: `## Fleet dispatch blocked by SEC-00 containment\n\n${containment.reason ?? containment.code}`,
+			details: {
+				ok: false,
+				blocked: true,
+				containment: true,
+				code: containment.code,
+				reason: containment.reason,
+			},
+		};
+	}
+
 	const reply = await callSubagentRpc(pi.events, "spawn", plan.subagentParams, {
 		timeoutMs: 60_000,
 		source: "agentic-fleet",
@@ -210,7 +248,7 @@ async function dispatchPlan(
 	if (!reply.success) {
 		const msg =
 			reply.error?.message ??
-			"Fleet RPC spawn failed. Is `npm:pi-subagents` installed and loaded? You can still call the `subagent` tool with the payload below.";
+			"Fleet RPC spawn failed. Is `npm:pi-subagents` installed and loaded? You can still call the `subagent` tool with the WorkflowScript payload below.";
 		return {
 			ok: false,
 			text: [
@@ -219,12 +257,13 @@ async function dispatchPlan(
 				``,
 				formatPlanSummary(plan),
 				``,
-				`### subagent() payload`,
+				`### subagent() WorkflowScript payload`,
 				"```json",
 				JSON.stringify(plan.subagentParams, null, 2),
 				"```",
 				``,
-				`Call the **subagent** tool with that object (omit wrapping). Then synthesize results.`,
+				`Call the **subagent** tool with that WorkflowScript object (omit wrapping; do not use legacy top-level tasks). Then synthesize results.`,
+				`Do not claim live dispatch success; SEC-00 still blocks dogfood until containment is green.`,
 			].join("\n"),
 			details: { ok: false, error: reply.error, plan },
 		};
@@ -388,7 +427,7 @@ export default function agenticFleetExtension(pi: ExtensionAPI): void {
 				const text = [
 					formatPlanSummary(plan),
 					``,
-					`### subagent() payload`,
+					`### subagent() WorkflowScript payload`,
 					"```json",
 					JSON.stringify(plan.subagentParams, null, 2),
 					"```",

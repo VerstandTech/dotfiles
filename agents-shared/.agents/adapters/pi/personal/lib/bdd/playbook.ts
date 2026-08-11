@@ -1,6 +1,6 @@
 export const HIGH_ASSURANCE_PLAYBOOK = Object.freeze({
-	version: "1.0",
-	published: "July 2026",
+	version: "1.2",
+	published: "August 2026",
 	canonicalPath: "docs/high-assurance-playbook.md",
 	implementationPath: "docs/high-assurance-pi-implementation.md",
 });

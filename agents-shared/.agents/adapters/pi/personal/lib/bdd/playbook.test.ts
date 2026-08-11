@@ -10,28 +10,18 @@ const packageRoot = join(import.meta.dir, "../..");
 const readPackageFile = (path: string) => readFileSync(join(packageRoot, path), "utf8");
 
 describe("canonical high-assurance playbook", () => {
-	test("contains the complete July 2026 v1.0 structure", () => {
+	test("contains the complete August 2026 v1.2 structure", () => {
 		const playbook = readPackageFile("docs/high-assurance-playbook.md");
 		expect(playbook).toContain("# High-Assurance Multi-Agent Software Development Playbook");
 		expect(playbook).toContain("**Achieving Process Determinism with AI Coding Agents**");
-		expect(playbook).toContain("*Version 1.0 — July 2026*");
-		for (let section = 1; section <= 13; section += 1) {
+		expect(playbook).toContain("*Version 1.2 — August 2026*");
+		expect(playbook).toContain("## Changelog (1.0 → 1.2)");
+		for (let section = 1; section <= 20; section += 1) {
 			expect(playbook).toMatch(new RegExp(`^## ${section}\\. `, "m"));
 		}
-		for (const subsection of [
-			"### 13.1 Trajectory & Process Evaluation",
-			"### 13.2 Cost, Latency & Resource Budgets",
-			"### 13.3 Shared Persistent Context & Project Memory",
-			"### 13.4 Security & Supply-Chain Gates",
-			"### 13.5 Explicit Human-in-the-Loop Approval Seams",
-			"### 13.6 Documentation & Decision Artifacts as Pipeline Outputs",
-			"### 13.7 Chaos & Resilience Testing",
-			"### 13.8 Agent Skill, Prompt & Schema Regression Suite",
-		]) {
-			expect(playbook).toContain(subsection);
-		}
-		expect(playbook).toContain("The process itself becomes the primary source of determinism.");
-		expect(playbook).toContain("*Document generated and refined collaboratively, July 2026.*");
+		expect(playbook).toContain("## Closing");
+		expect(playbook).toContain("The process itself is the primary source of determinism.");
+		expect(playbook).toContain("*VerstandTech · Document refined collaboratively · August 2026 · v1.2*");
 	});
 
 	test("keeps Pi implementation claims separate from the normative playbook", () => {
@@ -45,15 +35,22 @@ describe("canonical high-assurance playbook", () => {
 });
 
 describe("playbook discovery surfaces", () => {
-	test("returns deterministic versioned paths and policy", () => {
+	test("reports the canonical v1.2 runtime metadata", () => {
+		expect(HIGH_ASSURANCE_PLAYBOOK.version).toBe("1.2");
+		expect(HIGH_ASSURANCE_PLAYBOOK.published).toBe("August 2026");
+		expect(HIGH_ASSURANCE_PLAYBOOK.canonicalPath).toBe("docs/high-assurance-playbook.md");
+		expect(HIGH_ASSURANCE_PLAYBOOK.implementationPath).toBe(
+			"docs/high-assurance-pi-implementation.md",
+		);
 		expect(HIGH_ASSURANCE_PLAYBOOK).toEqual({
-		version: "1.0",
-		published: "July 2026",
-		canonicalPath: "docs/high-assurance-playbook.md",
-		implementationPath: "docs/high-assurance-pi-implementation.md",
-	});
+			version: "1.2",
+			published: "August 2026",
+			canonicalPath: "docs/high-assurance-playbook.md",
+			implementationPath: "docs/high-assurance-pi-implementation.md",
+		});
 		const output = formatHighAssurancePlaybookReference();
-		expect(output).toContain("High-Assurance Multi-Agent Software Development Playbook v1.0");
+		expect(output).toContain("High-Assurance Multi-Agent Software Development Playbook v1.2");
+		expect(output).toContain("Published: August 2026");
 		expect(output).toContain(HIGH_ASSURANCE_PLAYBOOK.canonicalPath);
 		expect(output).toContain(HIGH_ASSURANCE_PLAYBOOK.implementationPath);
 		expect(output).toContain("never installs");
@@ -102,5 +99,42 @@ describe("bounded roles reflect the layered oracle model", () => {
 		}
 		expect(qa).toContain("bounded chaos");
 		expect(qa).toContain("human exploratory testing");
+	});
+});
+
+describe("secondary package operator docs", () => {
+	test("secondary package docs advertise only current canonical metadata", () => {
+		const cheatsheet = readPackageFile("docs/bdd-fleet-cheatsheet.md");
+		const exampleMap = readPackageFile("docs/high-assurance-example-map.md");
+		const roadmap = readPackageFile("docs/agentic-bdd-roadmap.md");
+		const canonicalPlaybook = readPackageFile("docs/high-assurance-playbook.md");
+
+		// Reject exact stale current-policy claims first (causal red signature).
+		expect(cheatsheet).not.toContain("Canonical v1.0 policy");
+		expect(roadmap).not.toContain("Canonical v1.0 policy");
+		expect(exampleMap).not.toContain(
+			"The July 2026 playbook is canonical and versioned",
+		);
+		expect(exampleMap).not.toContain("all thirteen numbered sections");
+		expect(exampleMap).not.toMatch(/sections 1[–-]13/);
+
+		// E14 — /bdd playbook row advertises current canonical policy only.
+		expect(cheatsheet).toMatch(
+			/\| `\/bdd playbook` \| Canonical v1\.2 policy \+ honest Pi implementation profile \|/
+		);
+
+		// E15 — package Example Map current canonical rule tracks August 2026 / v1.2 / 1–20.
+		expect(exampleMap).toMatch(/August 2026/);
+		expect(exampleMap).toMatch(/\bv1\.2\b/);
+		expect(exampleMap).toMatch(/sections 1[–-]20/);
+
+		// E16 — shipped roadmap layer advertises current canonical policy only.
+		expect(roadmap).toContain(
+			"Canonical v1.2 policy + separate enforced/configurable/roadmap implementation profile",
+		);
+
+		// Historical v1.0 remains allowed in the canonical changelog, not as current policy.
+		expect(canonicalPlaybook).toContain("## Changelog (1.0 → 1.2)");
+		expect(canonicalPlaybook).toContain("*Version 1.2 — August 2026*");
 	});
 });

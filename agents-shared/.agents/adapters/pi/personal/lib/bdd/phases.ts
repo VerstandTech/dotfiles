@@ -59,6 +59,10 @@ export function phaseLabel(phase: BddPhase): string {
 	}
 }
 
+export interface TransitionPolicy {
+	assuranceEnabled?: boolean;
+}
+
 /**
  * Can we move from `from` to `to` given current evidence?
  * Moving backward is always allowed (re-open red, etc.).
@@ -68,6 +72,7 @@ export function canTransition(
 	from: BddPhase,
 	to: BddPhase,
 	evidence: BddEvidence,
+	policy?: TransitionPolicy,
 ): PhaseTransitionResult {
 	if (to === "off") return { ok: true };
 	if (from === to) return { ok: true };
@@ -89,6 +94,15 @@ export function canTransition(
 				reason:
 					`Cannot enter ${to} without red evidence (a failing test run). ` +
 					`Stay in red, run the failing suite, call bdd_assert_red.`,
+			};
+		}
+		// E13 / R4 — legacy non-assurance red cannot progress under assurance
+		if (policy?.assuranceEnabled && evidence.red.assuranceEligible !== true) {
+			return {
+				ok: false,
+				reason:
+					`Cannot enter ${to} under assurance without causal expected-red evidence ` +
+					`(assurance-eligible contract with expectedTestId). Legacy interactive red is non-assurance.`,
 			};
 		}
 	}
@@ -206,7 +220,10 @@ export interface HandoffPolicy {
 	assuranceEnabled?: boolean;
 	expectedPlanFingerprint?: string;
 	expectedRequiredGateKinds?: readonly QualityGateKind[];
+	expectedConfigFingerprint?: string;
+	requireCausalRed?: boolean;
 	requireCommandBackedMutation?: boolean;
+	requireCommandBackedMatchedMutation?: boolean;
 	requireFleetDisposition?: boolean;
 	synthesisExists?: (path: string, runId: string) => boolean;
 }
@@ -256,6 +273,13 @@ export function handoffComplete(
 			enabled: policy.assuranceEnabled,
 			expectedPlanFingerprint: policy.expectedPlanFingerprint,
 			expectedRequiredGateKinds: policy.expectedRequiredGateKinds,
+			expectedConfigFingerprint: policy.expectedConfigFingerprint,
+			requireCausalRed: policy.requireCausalRed,
+			requireCommandBackedMatchedMutation:
+				policy.requireCommandBackedMatchedMutation ??
+				// When high-assurance asks for command-backed mutation, also require match sensitivity
+				// only when the stronger flag is set; keep legacy requireCommandBackedMutation separate.
+				undefined,
 		}),
 	);
 	// Soft requirements — listed but do not fail ok for tiny tech fixes

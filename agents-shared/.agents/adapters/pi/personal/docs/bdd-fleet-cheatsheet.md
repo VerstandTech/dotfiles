@@ -186,7 +186,7 @@ Copies `status.json` + `output-*.log` / artifact markdown into
 | Command | Effect |
 |---------|--------|
 | `/bdd status` | Phase + evidence |
-| `/bdd playbook` | Canonical v1.0 policy + honest Pi implementation profile |
+| `/bdd playbook` | Canonical v1.2 policy + honest Pi implementation profile |
 | `/bdd profile` | Detected stack/frameworks/package managers/commands + fingerprint |
 | `/bdd gates` | Deterministic required/advisory gate plan |
 | `/bdd on` / `/bdd off` | Enable (discovery) / disable |

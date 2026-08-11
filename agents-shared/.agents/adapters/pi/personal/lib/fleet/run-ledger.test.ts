@@ -79,6 +79,8 @@ describe("writePlanManifest", () => {
 	test("writes plan.json under run dir", () => {
 		const files: Record<string, string> = {};
 		const dirs: string[] = [];
+		// CMP-02 public payload is WorkflowScript-only; cast keeps the fixture compiling
+		// against the pre-cutover FleetPlan type without weakening identity assertions.
 		const plan = {
 			kind: "review",
 			topic: "t",
@@ -96,9 +98,13 @@ describe("writePlanManifest", () => {
 					output: "out.md",
 				},
 			],
-			subagentParams: { tasks: [], concurrency: 2, context: "fresh" as const, async: true as const },
+			subagentParams: {
+				workflowScript: "return [];",
+				context: "fresh" as const,
+				async: true as const,
+			},
 			warnings: [],
-		} satisfies FleetPlan;
+		} as FleetPlan;
 
 		const { planPath, dir } = writePlanManifest(
 			"/proj",

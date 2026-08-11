@@ -58,11 +58,11 @@ When assurance is enabled, `bdd_handoff` reports profile, plan fingerprint, gate
 - **R7-E1:** Unit green + acceptance recorded but no assurance run → incomplete handoff.
 - **R7-E2:** All required gates pass after green → assurance portion is complete.
 
-### R8 — The July 2026 playbook is canonical and versioned
+### R8 — The August 2026 playbook is canonical and versioned
 
-The complete “High-Assurance Multi-Agent Software Development Playbook” v1.0 is stored in the package, including all thirteen numbered sections and production-hardening subsections. Pi-specific implementation claims remain separate so the normative target is not confused with currently enforced behavior.
+The complete “High-Assurance Multi-Agent Software Development Playbook” v1.2 is stored in the package, including sections 1–20 and production-hardening subsections. Pi-specific implementation claims remain separate so the normative target is not confused with currently enforced behavior.
 
-- **R8-E1:** The canonical document contains the exact title, version, sections 1–13, priority order, closing, and attribution supplied by the human operator.
+- **R8-E1:** The canonical document contains the exact title, version, sections 1–20, priority order, closing, and attribution supplied by the human operator.
 - **R8-E2:** The BDD and ship skills plus the extension README link to the canonical playbook.
 - **R8-E3:** A separate Pi implementation profile maps implemented guarantees, configurable gates, limitations, and roadmap items without claiming that aspirational controls are already enforced.
 

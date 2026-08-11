@@ -1,0 +1,19 @@
+{
+  "id": "cli:worktree:create",
+  "result": {
+    "type": "worktree_created",
+    "workspace": {
+      "id": "wS"
+    },
+    "tab": {
+      "id": "wS:t9"
+    },
+    "root_pane": {
+      "pane_id": "wS:p9"
+    },
+    "worktree": {
+      "path": "/tmp/herdr-fixtures/repo-story-legacy",
+      "label": "story-legacy"
+    }
+  }
+}

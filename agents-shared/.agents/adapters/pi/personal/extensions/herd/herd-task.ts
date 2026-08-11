@@ -17,12 +17,12 @@ export interface TaskLaunchOptions {
 
 /**
  * Build argv for `herdr worktree create` (R3): one worktree per task,
- * labeled 1:1 with the agent name. Detach-safe by default (R7): herdr 0.7.5
- * create never steals focus unless `--focus` is passed, so we simply omit it;
- * stdout is a JSON envelope by default (there is no --json flag), and the
- * pane id is parsed from `result.root_pane.pane_id` — never derived.
- * Generic for any project: when `base` is omitted, no --base flag is
- * emitted — herdr/git resolve the repo's own default branch.
+ * labeled 1:1 with the agent name. Detach-safe by default (R7): Herdr 0.8
+ * supports `--focus` and `--no-focus`; we emit `--no-focus` explicitly and
+ * never `--focus`. JSON remains the default CLI envelope (never emit
+ * `--json`); the pane id is parsed from `result.root_pane.pane_id` — never
+ * derived. Generic for any project: when `base` is omitted, no --base flag
+ * is emitted — herdr/git resolve the repo's own default branch.
  * Throws on invalid names before producing any argv.
  */
 export function buildTaskLaunch(opts: TaskLaunchOptions): string[] {
@@ -39,6 +39,6 @@ export function buildTaskLaunch(opts: TaskLaunchOptions): string[] {
   if (opts.base !== undefined) {
     argv.push("--base", opts.base);
   }
-  argv.push("--label", opts.name);
+  argv.push("--label", opts.name, "--no-focus");
   return argv;
 }

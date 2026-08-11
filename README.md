@@ -74,3 +74,27 @@ tracked `.zshrc` sources it when present. Create it on each machine
 - **Never commit secrets.** Auth files, tokens, sessions, sqlite state stay
   machine-local; `.gitignore` is a second net, not the primary defense.
 - New tool = new package dir + add it to `PACKAGES` in `install.sh`.
+
+## AI rule governance (Rulesync)
+
+Always-on AI instructions are authored only in `rulesync.jsonc` and `.rulesync/**`.
+The root `AGENTS.md` is **generated** — do not edit it by hand.
+
+- **Reusable AI resources** (skills, adapters, scripts) stay under `agents-shared/.agents/**`.
+- **Generated always-on rules** are owned by Rulesync (`rulesync.jsonc` + `.rulesync/**`).
+
+Operator commands (pinned local Rulesync `16.9.1` via `node_modules/.bin/rulesync`):
+
+```sh
+bun install --frozen-lockfile   # once, after clone / lockfile change
+bun run rules:generate          # regenerate AGENTS.md
+bun run rules:check             # fail on drift (also: bash scripts/check-rulesync-drift.sh)
+bun run test                    # root assurance: contracts + AI resources + Pi and personal tests
+```
+
+Use `bun run test` or `bash scripts/test-root.sh` for root assurance. Bare
+`bun test` is Bun's file test runner and does not execute the root script.
+
+GOV-01 scope is project-root `agentsmd` rules only. Vendor stow-package outputs
+(`.codex/**`, `.claude/**`, `.cursor/**`, etc.) are not generated here yet.
+

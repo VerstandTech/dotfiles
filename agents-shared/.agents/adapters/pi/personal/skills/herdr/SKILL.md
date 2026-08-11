@@ -196,4 +196,4 @@ After that failed read, ask the agent to write its complete response as Markdown
 
 ---
 
-> **Vendored from** https://github.com/ogulcancelik/herdr/blob/master/SKILL.md (herdr 0.7.5, 2026-07-28). Local adaptation: agent-start examples use `--kind pi` (upstream uses codex). Refresh from upstream when herdr is upgraded.
+> **Vendored from** https://github.com/ogulcancelik/herdr/blob/master/SKILL.md (herdr 0.8.0, 2026-08-10). Local adaptation: agent-start examples use `--kind pi` (upstream uses codex). Refresh from upstream when herdr is upgraded.

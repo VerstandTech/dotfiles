@@ -1,0 +1,9 @@
+{
+  "$schema": "https:\/\/github.com\/dyoshikawa\/rulesync\/releases\/download\/v16.9.1\/config-schema.json",
+  "targets": ["agentsmd"],
+  "features": ["rules"],
+  "outputRoots": ["."],
+  "delete": true,
+  "verbose": false,
+  "global": false
+}

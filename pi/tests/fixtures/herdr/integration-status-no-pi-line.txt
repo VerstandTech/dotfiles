@@ -1,0 +1,2 @@
+omp: not installed (/tmp/herdr-fixtures/home/.omp/agent/extensions/herdr-omp-agent-state.ts)
+codex: current (v7) (/tmp/herdr-fixtures/home/.codex/herdr-agent-state.sh)

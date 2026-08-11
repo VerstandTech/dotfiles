@@ -2,10 +2,12 @@
 
 **Focus:** `pi-herdr-orchestration-tui`
 **Phase:** discovery (bdd-mode)
-**Date:** 2026-07-28
+**Date:** 2026-07-28 (compatibility rebaseline 2026-08-10)
 **Actor:** developer-orchestrator running multiple pi (and other) agents via herdr; secondarily, pi agents driving herdr themselves from inside a pane.
 
 **Story:** Transform pi into a beautiful, worktree-first, BDD+TDD-first TUI for agent orchestration and management, using herdr (agent multiplexer) as the session/process layer.
+
+**Compatibility (CMP-01):** Supported runtime is **Herdr 0.8.x** (tested **0.8.0**, protocol **19**, schema version **1**). Observed stack: Pi `0.84.1`, pi-subagents `0.45.2`, context-mode `1.0.169`, Rulesync `16.9.1`. Legacy **0.7.5** evidence below is historical parser/fixture context only — not current runtime support. Pi integration install is owned by HOST-01 (observed status: absent).
 
 ---
 
@@ -32,8 +34,8 @@
 
 ## Questions
 
-- **Q1 — pi hook install path.** ✅ **Resolved 2026-07-28.** `herdr agent start <name> --kind pi --pane <id> [-- args...]` — pi is a native kind in herdr 0.7.5. `agent start` blocks until the agent is detected ready (30s default timeout). Lifecycle states: `idle` (seen + ready), `done` (idle after unseen background work), `blocked` (approval/question UI), `unknown`. Command surface: `herdr agent list|get|read|prompt|wait|send-keys|rename|focus|attach|start|explain`.
-- **Q2 — Install approval.** ✅ **Resolved 2026-07-28.** User installed herdr manually; verified `herdr 0.7.5`.
+- **Q1 — pi hook install path.** ✅ **Resolved 2026-07-28** (rebaselined CMP-01 / 2026-08-10). `herdr agent start <name> --kind pi --pane <id> [-- args...]` — pi is a native kind on the supported Herdr **0.8.x** runtime (and was already present on legacy 0.7.5). `agent start` blocks until the agent is detected ready (30s default timeout). Lifecycle states: `idle` (seen + ready), `done` (idle after unseen background work), `blocked` (approval/question UI), `unknown`. Command surface: `herdr agent list|get|read|prompt|wait|send-keys|rename|focus|attach|start|explain`.
+- **Q2 — Install approval.** ✅ **Resolved 2026-07-28** (rebaselined CMP-01 / 2026-08-10). User installed herdr manually; current supported/tested runtime is **Herdr 0.8.0** (protocol 19, schema 1). Legacy 0.7.5 was an earlier discovery checkpoint only.
 - **Q3 — Widget data source.** Herd widget: shell out to `herdr agent list` (JSON) per render tick, or hold the socket? Polling interval + cache strategy to stay flicker-free? *Decide in formulation; CLI-per-tick with ~2s cache is the simple start.* **Amended 2026-07-28** (live flicker/perf evidence: CLI spawn 157–362ms; `setWidget` re-layout every poll; self row flapping working↔idle): TTL 2s→5s, self-filter (R5-E6), stale-while-revalidate (R5-E5), publish-on-change + serialized polls (R7-E2). Socket-direct polling (like `herdr-agent-state.ts`) is the follow-up if spawn cost still shows.
 - **Q4 — Test stack for dotfiles.** ✅ **Resolved 2026-07-28.** Adopt `bun:test` + minimal `package.json` in `~/dotfiles/pi`. Red/green commands: `bun test`.
 - **Q5 — Worktree-first scope.** All repos or only olhaminha.bio? Default branch to fork worktrees from (`develop`)?
@@ -42,10 +44,11 @@
 
 ## Fact base (verified this session)
 
-- herdr **0.7.5 installed** (`brew`); `ctrl+b q` detach, `herdr` reattach; survives over SSH.
+- **Current runtime (CMP-01):** Herdr **0.8.0** supported as **0.8.x** with socket protocol **19** and schema version **1** (`herdr --version`, `herdr api schema --json`). `ctrl+b q` detach, `herdr` reattach; survives over SSH.
+- **Legacy 0.7.5:** historical discovery checkpoint and parser-fixture era only — not current runtime support. Normalized 0.7.5 agent-list / worktree-created envelopes remain as dual-era fixtures.
 - **pi is a native agent kind** (`herdr agent start <name> --kind pi --pane <id>`); detection verified against the installed binary (`herdr agent` help).
-- State authorities: pi = **lifecycle hooks when installed**, else screen manifest (bottom-buffer, scroll-independent).
+- State authorities: pi = **lifecycle hooks when installed**, else screen manifest (bottom-buffer, scroll-independent). Observed Pi integration status may be **absent**; CMP-01 does not install hooks (HOST-01).
 - IDs: workspace `w1`, tab `w1:t1`, pane `w1:p1` (opaque, parse from JSON; never derive from sidebar). Caller context env: `HERDR_WORKSPACE_ID`, `HERDR_TAB_ID`, `HERDR_PANE_ID`.
-- Control: `herdr workspace create --cwd <dir> --label <x>` · `tab create` · `pane split --current --direction right --cwd "$PWD" --no-focus` · `pane run <id> "<cmd>"` · `pane wait-output <id> --match <text> --timeout ms` · `pane read <id> --source recent-unwrapped --lines N` · `agent prompt <name> "<text>" --wait --timeout ms` · `agent wait <name> --until blocked`.
-- Agent skill: vendored into dotfiles (Q7); agents act only when `HERDR_ENV=1`; skill is explicit-invocation only (not ambient).
-- Sources: herdr.dev (home, /docs/agents/, /docs/quick-start/, /docs/agent-skill/, /agent-guide.md), github.com/ogulcancelik/herdr (SKILL.md), installed binary 0.7.5.
+- Control: `herdr workspace create --cwd <dir> --label <x>` · `tab create` · `pane split --current --direction right --cwd "$PWD" --no-focus` · `worktree create ... --no-focus` (Herdr 0.8 supports `--focus` / `--no-focus`; task launches emit `--no-focus` explicitly; JSON remains the default CLI envelope — never emit `--json`) · `pane run <id> "<cmd>"` · `pane wait-output <id> --match <text> --timeout ms` · `pane read <id> --source recent-unwrapped --lines N` · `agent prompt <name> "<text>" --wait --timeout ms` · `agent wait <name> --until blocked`.
+- Agent skill: vendored into dotfiles (Q7); agents act only when `HERDR_ENV=1`; skill is explicit-invocation only (not ambient). Footer records Herdr 0.8.0; local `--kind pi` adaptation remains.
+- Sources: herdr.dev (home, /docs/agents/, /docs/quick-start/, /docs/agent-skill/, /agent-guide.md), github.com/ogulcancelik/herdr (SKILL.md), installed binary 0.8.0 (legacy 0.7.5 docs/fixtures retained for parser history).

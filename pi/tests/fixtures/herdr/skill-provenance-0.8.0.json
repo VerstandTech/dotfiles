@@ -1,0 +1,21 @@
+{
+  "source": "herdr --skill",
+  "herdrVersion": "0.8.0",
+  "capturedAt": "2026-08-10",
+  "algorithm": "sha-256",
+  "normalization": {
+    "stripLocalFooterMarker": "\n---\n\n> **Vendored from**",
+    "reverseKindAdaptation": {
+      "local": "--kind pi",
+      "upstream": "--kind codex",
+      "note": "Only the documented local agent-start adaptation is reversed before hashing."
+    }
+  },
+  "normalizedSha256": "0786182f02ebf92708e09d82d79e4614d1a9c30bfc337643cc2af1d0fb9db29f",
+  "sensitivity": {
+    "liveSessionIds": false,
+    "livePaths": false,
+    "secrets": false,
+    "note": "Provenance locks a content hash only; no live session ids, home paths, tokens, or auth material are stored."
+  }
+}

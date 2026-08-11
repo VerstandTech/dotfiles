@@ -144,7 +144,7 @@ Critique fleet (2026-07-22): architecture, BDD purity, fleet ops, safety, oracle
 - Existing synthesis path must resolve under the matching run directory; blocker disposition required in assurance mode
 - Note-only mutation claims cannot satisfy command-backed assurance
 - `/bdd playbook`, `/bdd profile`, `/bdd gates`, and five model tools
-- Canonical v1.0 policy + separate enforced/configurable/roadmap implementation profile
+- Canonical v1.2 policy + separate enforced/configurable/roadmap implementation profile
 - Example Map: [`high-assurance-example-map.md`](./high-assurance-example-map.md)
 
 ### P2 later

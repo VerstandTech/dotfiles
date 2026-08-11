@@ -3,10 +3,24 @@
  */
 
 import {
+	CANONICAL_FLEET_AGENTS,
+} from "./child-policy.ts";
+import {
 	preferNativeModels,
 	type ModelResolveContext,
 } from "./model-resolve.ts";
 import { expandPersonas, type FleetKind, type FleetPersona } from "./personas.ts";
+
+const CANONICAL_AGENT_SET = new Set<string>(CANONICAL_FLEET_AGENTS);
+
+function assertCanonicalFleetAgent(agent: string): void {
+	const name = agent.trim();
+	if (!CANONICAL_AGENT_SET.has(name)) {
+		throw new Error(
+			`uncontained-agent: ${name || agent} is not a canonical fleet role (scout/worker/reviewer overrides rejected)`,
+		);
+	}
+}
 
 export interface FleetModelPolicy {
 	/**
@@ -62,6 +76,19 @@ export interface FleetTask {
 	personaId: string;
 }
 
+/** Public pi-subagents 0.45.2 execution shape (WorkflowScript-only). */
+export interface FleetSubagentParams {
+	/** Statement body executed as `async (runs) => { ... }` */
+	workflowScript: string;
+	context: "fresh" | "fork";
+	async: true;
+	/**
+	 * SEC-00: bind discovery to user/package agents so project checkouts cannot
+	 * shadow reviewed fleet-researcher / fleet-reviewer / fleet-ux definitions.
+	 */
+	agentScope: "user";
+}
+
 export interface FleetPlan {
 	kind: FleetKind;
 	topic: string;
@@ -69,19 +96,74 @@ export interface FleetPlan {
 	concurrency: number;
 	context: "fresh" | "fork";
 	async: boolean;
+	/** Internal display/persona model — not the public RPC spawn shape. */
 	tasks: FleetTask[];
-	subagentParams: {
-		tasks: Array<{
-			agent: string;
-			task: string;
-			model?: string;
-			output?: string;
-		}>;
-		concurrency: number;
-		context: "fresh" | "fork";
-		async: true;
-	};
+	subagentParams: FleetSubagentParams;
 	warnings: string[];
+}
+
+/** pi-subagents stable-key contract for runs.run / runs.all. */
+const RUN_KEY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+
+type WorkflowChild = {
+	key: string;
+	agent: string;
+	task: string;
+	model?: string;
+	output?: string;
+};
+
+/**
+ * Deterministic unique key independent of persona ids (which may collide).
+ * Matches /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.
+ */
+export function fleetChildKey(index: number): string {
+	const key = `m${String(index + 1).padStart(2, "0")}`;
+	if (!RUN_KEY_PATTERN.test(key)) {
+		throw new Error(`generated fleet child key is invalid: ${key}`);
+	}
+	return key;
+}
+
+/**
+ * Build a WorkflowScript body that:
+ * - embeds children as JSON data (no string interpolation of prompts),
+ * - batches with sequential `runs.all` calls of size `concurrency`,
+ * - returns all results in original persona order.
+ */
+export function buildFleetWorkflowScript(
+	tasks: FleetTask[],
+	concurrency: number,
+): string {
+	// Finite positive integer only — NaN/±Infinity/0/negative/fractional must not serialize as null
+	// or drive a non-advancing `for` loop step.
+	const batchSize = normalizeConcurrency(concurrency, 1);
+	const children: WorkflowChild[] = tasks.map((t, index) => {
+		const child: WorkflowChild = {
+			key: fleetChildKey(index),
+			agent: t.agent,
+			task: t.task,
+			output: t.output,
+		};
+		if (t.model) child.model = t.model;
+		return child;
+	});
+
+	// JSON.stringify keeps backticks / ${} / quotes / Unicode inert data.
+	const childrenJson = JSON.stringify(children);
+	const batchJson = JSON.stringify(batchSize);
+
+	return [
+		`const __children = ${childrenJson};`,
+		`const __batchSize = ${batchJson};`,
+		`const __results = [];`,
+		`for (let __i = 0; __i < __children.length; __i += __batchSize) {`,
+		`  const __batch = __children.slice(__i, __i + __batchSize);`,
+		`  const __batchResults = await runs.all(__batch);`,
+		`  __results.push(...__batchResults);`,
+		`}`,
+		`return __results;`,
+	].join("\n");
 }
 
 const DEFAULT_MAX_TASKS = 48;
@@ -229,8 +311,74 @@ function buildTaskPrompt(options: {
 
 function normalizeConcurrency(value: unknown, fallback: number): number {
 	const n = typeof value === "number" ? value : Number(value);
-	if (!Number.isInteger(n) || n < 1) return fallback;
+	if (!Number.isFinite(n) || !Number.isInteger(n) || n < 1) return fallback;
 	return n;
+}
+
+/**
+ * Repository-relative outputDir contract (enforced before task build).
+ * Rejects empty, absolute POSIX/Windows, NUL, `.`/`..`, and traversal segments.
+ */
+export function assertSafeOutputDir(raw: string | undefined): string {
+	const fallback = ".pi/fleet-runs";
+	if (raw === undefined) return fallback;
+	if (typeof raw !== "string") {
+		throw new Error("outputDir must be a repository-relative path string");
+	}
+	if (raw.includes("\0")) {
+		throw new Error("outputDir must not contain NUL bytes");
+	}
+	const trimmed = raw.trim();
+	if (!trimmed) {
+		throw new Error("outputDir must not be empty");
+	}
+	const noTrail = trimmed.replace(/[/\\]+$/, "");
+	if (!noTrail || noTrail === "." || noTrail === "..") {
+		throw new Error(`outputDir is not a safe repository-relative path: ${JSON.stringify(raw)}`);
+	}
+	// Absolute POSIX or root-ish backslash
+	if (noTrail.startsWith("/") || noTrail.startsWith("\\")) {
+		throw new Error(`outputDir must be repository-relative (got absolute): ${JSON.stringify(raw)}`);
+	}
+	// Absolute Windows drive (C:\... or C:/...)
+	if (/^[A-Za-z]:([/\\]|$)/.test(noTrail)) {
+		throw new Error(`outputDir must be repository-relative (got Windows absolute): ${JSON.stringify(raw)}`);
+	}
+	const segments = noTrail.split(/[/\\]+/);
+	for (const seg of segments) {
+		if (!seg || seg === "." || seg === "..") {
+			throw new Error(
+				`outputDir must not contain empty or traversal segments: ${JSON.stringify(raw)}`,
+			);
+		}
+		if (seg.includes("\0")) {
+			throw new Error("outputDir must not contain NUL bytes");
+		}
+	}
+	return segments.join("/");
+}
+
+/**
+ * Deterministic single filename segment from a persona id.
+ * Preserves enough identity for humans; index already supplies uniqueness.
+ * Never emits separators, NUL, or `.` / `..` traversal.
+ */
+export function safeOutputFilenameSegment(raw: string): string {
+	const cleaned = String(raw ?? "")
+		.replace(/\0/g, "")
+		.replace(/[/\\]+/g, "-")
+		.replace(/[\p{Cc}\p{Cf}]+/gu, "")
+		.replace(/[^\p{L}\p{N}._-]+/gu, "-")
+		.replace(/-+/g, "-")
+		.replace(/^[.-]+/, "")
+		.replace(/[.-]+$/, "")
+		.slice(0, 80);
+	if (!cleaned || cleaned === "." || cleaned === "..") {
+		return "persona";
+	}
+	// Guard residual dot-only / traversal after slice
+	if (/^\.+$/.test(cleaned)) return "persona";
+	return cleaned;
 }
 
 export function buildFleetPlan(input: FleetPlanInput): FleetPlan {
@@ -263,15 +411,24 @@ export function buildFleetPlan(input: FleetPlanInput): FleetPlan {
 	if (input.async === false) {
 		warnings.push("async:false is not supported by pi-subagents RPC spawn; forcing async:true.");
 	}
-	const outputDir = (input.outputDir ?? ".pi/fleet-runs").replace(/\/+$/, "");
+	// Enforce outputDir contract before building tasks / public spawn payload.
+	const outputDir = assertSafeOutputDir(input.outputDir);
 
 	const modelOpts = {
 		preferNativeProviders: input.preferNativeProviders !== false,
 		modelResolveContext: input.modelResolveContext,
 	};
 
+	// Reject uncontained agent overrides before any WorkflowScript is generated.
+	const overrideAgent = input.agent?.trim();
+	if (overrideAgent) assertCanonicalFleetAgent(overrideAgent);
+	for (const persona of personas) {
+		assertCanonicalFleetAgent(overrideAgent || persona.agent);
+	}
+
 	const tasks: FleetTask[] = personas.map((persona, index) => {
-		const agent = input.agent?.trim() || persona.agent;
+		const agent = overrideAgent || persona.agent;
+		assertCanonicalFleetAgent(agent);
 		const model = pickModel(index, input.kind, input.modelPolicy, modelOpts);
 		const task = buildTaskPrompt({
 			kind: input.kind,
@@ -282,8 +439,9 @@ export function buildFleetPlan(input: FleetPlanInput): FleetPlan {
 			index,
 			total: personas.length,
 		});
-		// Unique path even if persona ids collide
-		const output = `${outputDir}/${input.kind}-${String(index + 1).padStart(2, "0")}-${persona.id}.md`;
+		// Unique path even if persona ids collide; filename segment is sanitized (identity kept on personaId).
+		const fileSeg = safeOutputFilenameSegment(persona.id);
+		const output = `${outputDir}/${input.kind}-${String(index + 1).padStart(2, "0")}-${fileSeg}.md`;
 		return {
 			agent,
 			task,
@@ -294,16 +452,11 @@ export function buildFleetPlan(input: FleetPlanInput): FleetPlan {
 		};
 	});
 
-	const subagentParams = {
-		tasks: tasks.map((t) => ({
-			agent: t.agent,
-			task: t.task,
-			...(t.model ? { model: t.model } : {}),
-			output: t.output,
-		})),
-		concurrency,
+	const subagentParams: FleetSubagentParams = {
+		workflowScript: buildFleetWorkflowScript(tasks, concurrency),
 		context,
-		async: true as const,
+		async: true,
+		agentScope: "user",
 	};
 
 	return {
@@ -342,9 +495,10 @@ export function formatPlanSummary(plan: FleetPlan): string {
 		``,
 		`## Next`,
 		`1. Ensure agents exist (\`fleet-researcher\`, \`fleet-reviewer\`, \`fleet-ux\`, or overrides).`,
-		`2. Launch with the \`subagent\` tool using the tasks payload (or \`fleet_dispatch\` / \`/fleet\`).`,
+		`2. Launch with the \`subagent\` tool using the WorkflowScript payload (or \`fleet_dispatch\` / \`/fleet\`).`,
 		`3. When complete, synthesize: **Agreements / Disagreements / Blockers / Actions / Residual risks**.`,
 		`4. Inspect live fleet: \`/subagents-fleet\` or Ctrl+Alt+F.`,
+		`5. Do not claim live dispatch success until SEC-00 containment is green.`,
 	);
 	return lines.join("\n");
 }
