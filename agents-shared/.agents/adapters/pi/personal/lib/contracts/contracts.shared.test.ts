@@ -74,7 +74,7 @@ export const ROLE_WRITE_SCOPE_MATRIX: Record<
 	breaker: {
 		writeScope: "none",
 		allowedPhases: ["verify"],
-		tools: ["read", "grep", "find", "ls", "bash"],
+		tools: ["read", "grep", "find", "ls"],
 	},
 	"fitness-guardian": {
 		writeScope: "none",
@@ -89,7 +89,7 @@ export const ROLE_WRITE_SCOPE_MATRIX: Record<
 	qa: {
 		writeScope: "none",
 		allowedPhases: ["verify"],
-		tools: ["read", "grep", "find", "ls", "bash"],
+		tools: ["read", "grep", "find", "ls"],
 	},
 };
 

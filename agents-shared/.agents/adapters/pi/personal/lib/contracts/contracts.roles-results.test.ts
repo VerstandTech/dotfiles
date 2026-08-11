@@ -2,6 +2,7 @@
  * CON-01 — RoleRequestV1 matrix (R5) and RoleResultV1 honesty (R6).
  */
 import { describe, expect, test } from "bun:test";
+import { ROLE_WRITE_SCOPE_MATRIX as LIVE_ROLE_WRITE_SCOPE_MATRIX } from "./limits.ts";
 import {
 	ASSURANCE_ROLES_V1,
 	CON01_P0_FAILURE_SIGNATURE,
@@ -18,6 +19,15 @@ import {
 } from "./contracts.shared.test.ts";
 
 describe("CON-01 role requests", () => {
+	test("ROLE01_ROLE_MATRIX_DRIFT: read-only breaker and QA tool matrices stay exact", () => {
+		for (const role of ["breaker", "qa"] as const) {
+			expect(
+				LIVE_ROLE_WRITE_SCOPE_MATRIX[role].tools,
+				`ROLE01_ROLE_MATRIX_DRIFT: ${role}`,
+			).toEqual(["read", "grep", "find", "ls"]);
+		}
+	});
+
 	test("valid requests for every assurance role and every allowed phase round-trip", async () => {
 		const mod = requireContracts(await loadContractsModule());
 		const parse = requireFn(mod, "parseRoleRequestV1", "parseRoleRequestV1");

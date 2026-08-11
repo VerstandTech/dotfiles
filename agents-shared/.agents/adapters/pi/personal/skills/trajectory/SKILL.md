@@ -12,6 +12,12 @@ Outcome-only metrics hide unsafe paths. This skill scores **how** agents reach
 green: tool sequences, phase order, false completion, collusion signals — and
 records observations only after RED-01 succeeds.
 
+## Role contract boundary (V1)
+
+Record a role launch/handoff only from a validated CON-01 `RoleRequestV1` / `RoleResultV1` pair with `schemaVersion: 1`. The request locks task/focus, artifact refs, owned/forbidden paths, tools/model/thinking, and budget; the result preserves exact status, SHA/dirty state, changed files or finding refs, commands/evidence, blockers, residual risks/questions, and usage. High-risk ambiguity, mismatch, or unvalidated legacy Markdown blocks a completion event rather than being normalized.
+
+Persist only bounded references after RED-01 succeeds; never copy raw role transcripts into trajectory data. A trajectory event or valid role result does not grant approval, a writer lease, a BDD phase transition, assurance, cleanup, PR, merge, or release authority. No role may delegate unless a separate validated orchestrator contract and actual capability explicitly allow it; default is none.
+
 ## Library
 
 | Path | Purpose |
