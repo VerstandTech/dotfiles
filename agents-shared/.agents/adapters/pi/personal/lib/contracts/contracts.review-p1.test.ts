@@ -959,11 +959,26 @@ describe("CON-01 review P1", () => {
 		const isSafe = requireFn(mod, "isSafeRepoRelativePath", "isSafeRepoRelativePath");
 		const parse = requireFn(mod, "parseRoleRequestV1", "parseRoleRequestV1");
 
+		// R4/E12 + Q11: ordinary multi-dot source leaves with auth/credentials/secrets stems
+		// must pass; a credential stem alone never makes every multi-dot filename secret.
+		const multiDotSourcePositives = [
+			"src/auth.module.ts",
+			"src/credentials.client.ts",
+			"src/secrets.service.ts",
+			"lib/auth.config.ts",
+			"lib/auth-model.ts",
+			"docs/auth-model.md",
+			"auth.module.ts",
+			"credentials.client.ts",
+			"secrets.service.ts",
+		] as const;
+
 		const positives = [
 			"lib/auth/index.ts",
 			"lib/xai-web-search/auth.ts",
 			"docs/auth-model.md",
 			"docs/secrets/readme.md",
+			...multiDotSourcePositives,
 		] as const;
 		const secretLeaves = [
 			".envrc",
@@ -972,6 +987,7 @@ describe("CON-01 review P1", () => {
 			"auth.json",
 			"auth.json.bak",
 			"credentials.json.enc",
+			"credentials.yaml.enc",
 			"service-account.json",
 			"id_rsa",
 			"private.pem",
@@ -980,16 +996,18 @@ describe("CON-01 review P1", () => {
 			"config/auth.json.bak",
 			"keys/private.pem.bak",
 			"ops/credentials.json.enc",
+			"ops/credentials.yaml.enc",
 		] as const;
 
 		const overDenied = positives.filter((p) => !isSafe(p));
 		const underDenied = secretLeaves.filter((p) => isSafe(p));
+		const multiDotFalsePositives = multiDotSourcePositives.filter((p) => !isSafe(p));
 		expect(
-			{ overDenied, underDenied },
+			{ overDenied, underDenied, multiDotFalsePositives },
 			sig(
-				`auth-path positive / secret-leaf negative matrix; overDenied=${JSON.stringify(overDenied)} underDenied=${JSON.stringify(underDenied)}`,
+				`E12 multi-dot source leaves must pass (auth.module.ts/credentials.client.ts/secrets.service.ts); false-positive over-denial=${JSON.stringify(multiDotFalsePositives)}; full overDenied=${JSON.stringify(overDenied)} underDenied=${JSON.stringify(underDenied)}`,
 			),
-		).toEqual({ overDenied: [], underDenied: [] });
+		).toEqual({ overDenied: [], underDenied: [], multiDotFalsePositives: [] });
 
 		for (const p of positives) {
 			if (!isSafe(p)) continue;
@@ -1012,6 +1030,26 @@ describe("CON-01 review P1", () => {
 				`artifact secret leaf ${p}`,
 				/unsafe_path|secret|path/i,
 			);
+		}
+
+		// Explicit E12 controls: multi-dot source accept vs secret multi-dot deny.
+		for (const p of [
+			"src/auth.module.ts",
+			"src/credentials.client.ts",
+			"src/secrets.service.ts",
+		] as const) {
+			expect(
+				isSafe(p),
+				sig(
+					`E12 false-positive: ordinary multi-dot source leaf must be accepted, got deny for ${JSON.stringify(p)}`,
+				),
+			).toBe(true);
+		}
+		for (const p of ["auth.json", "auth.json.bak", "credentials.yaml.enc", "private.pem.bak"] as const) {
+			expect(
+				isSafe(p),
+				sig(`E12 secret leaf must remain denied: ${JSON.stringify(p)}`),
+			).toBe(false);
 		}
 	});
 
