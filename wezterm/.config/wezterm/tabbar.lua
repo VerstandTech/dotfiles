@@ -39,6 +39,7 @@ local process_icons = {
 	["bash"] = wezterm.nerdfonts.cod_terminal_bash,
 	["zsh"] = wezterm.nerdfonts.dev_terminal,
 	["fish"] = wezterm.nerdfonts.dev_terminal,
+	["herdr"] = wezterm.nerdfonts.md_view_dashboard,
 	["claude"] = wezterm.nerdfonts.md_robot,
 	["pi"] = wezterm.nerdfonts.md_robot,
 }
