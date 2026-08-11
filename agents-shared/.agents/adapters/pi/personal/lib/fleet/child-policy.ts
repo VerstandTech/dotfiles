@@ -30,6 +30,7 @@ import {
 } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { isSecretLeafBasenameV1 } from "../security/secret-leaf.ts";
 
 /** Runtime acknowledgement id for pi-subagents `subagent:acknowledge-extension`. */
 export const FLEET_CHILD_POLICY_ACK_ID = "fleet-child-policy-v1" as const;
@@ -183,9 +184,6 @@ const SECRET_BASENAMES = new Set([
 	"credentials.json",
 	"service-account.json",
 ]);
-
-const SECRET_BASENAME_RE =
-	/^\.env(\..+)?$|\.pem$|\.key$|^id_(rsa|dsa|ecdsa|ed25519)(\.pub)?$/i;
 
 const PSEUDO_PATH_RE =
 	/^\/proc(\/|$)|^\/dev\/(?:fd|stdin|stdout|stderr)(\/|$)|^\/dev\/null$|^\/sys(\/|$)/i;
@@ -413,8 +411,7 @@ function isSecretPath(candidate: string, home: string): string | undefined {
 	if (
 		SECRET_BASENAMES.has(base) ||
 		SECRET_BASENAMES.has(baseLower) ||
-		SECRET_BASENAME_RE.test(base) ||
-		SECRET_BASENAME_RE.test(baseLower)
+		isSecretLeafBasenameV1(baseLower)
 	) {
 		return "secret path denied";
 	}
