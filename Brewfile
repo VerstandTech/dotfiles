@@ -1,5 +1,6 @@
 # macOS tools — `brew bundle` reads this
 brew "stow"
+brew "herdr"
 brew "git"
 brew "zsh"
 brew "neovim"
