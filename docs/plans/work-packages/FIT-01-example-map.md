@@ -1,8 +1,8 @@
 # FIT-01 Example Map — fitness-gate integration and guardian status
 
-**Package:** FIT-01  
-**Dependencies:** BDD-01, OBS-01, DEC-01, BUD-01, and SEC-01 are merged at base `ef28155ad9cb70f0251eddd422635852f8c07e26`.  
-**Personas:** [`docs/bdd/TARGET_PUBLIC.md`](../../bdd/TARGET_PUBLIC.md) — Leo (exact local authority), Maya (concise current evidence), Nikhil (fail-closed typed trust), Sofia (actionable recovery), and André (one portable canonical contract).  
+**Package:** FIT-01
+**Dependencies:** BDD-01, OBS-01, DEC-01, BUD-01, and SEC-01 are merged at base `ef28155ad9cb70f0251eddd422635852f8c07e26`.
+**Personas:** [`docs/bdd/TARGET_PUBLIC.md`](../../bdd/TARGET_PUBLIC.md) — Leo (exact local authority), Maya (concise current evidence), Nikhil (fail-closed typed trust), Sofia (actionable recovery), and André (one portable canonical contract).
 **Story:** As those operators and reviewers, we need one deterministic quality-gate model to compose command exits and typed trajectory, decision, budget, and security evidence, so required assurance cannot pass on missing, stale, untrusted, timed-out, prose-derived, or internally failed evidence while advisory findings remain visible.
 
 ## Observed baseline
