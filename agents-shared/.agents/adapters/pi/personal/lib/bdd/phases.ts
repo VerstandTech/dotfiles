@@ -219,11 +219,13 @@ export function formatHandoff(evidence: BddEvidence, phase: BddPhase): string {
 export interface HandoffPolicy {
 	assuranceEnabled?: boolean;
 	expectedPlanFingerprint?: string;
+	expectedProfileFingerprint?: string;
 	expectedRequiredGateKinds?: readonly QualityGateKind[];
 	expectedConfigFingerprint?: string;
 	requireCausalRed?: boolean;
 	requireCommandBackedMutation?: boolean;
 	requireCommandBackedMatchedMutation?: boolean;
+	requireResultsFingerprint?: boolean;
 	requireFleetDisposition?: boolean;
 	synthesisExists?: (path: string, runId: string) => boolean;
 }
@@ -272,6 +274,7 @@ export function handoffComplete(
 		...assuranceHandoffGaps(evidence, {
 			enabled: policy.assuranceEnabled,
 			expectedPlanFingerprint: policy.expectedPlanFingerprint,
+			expectedProfileFingerprint: policy.expectedProfileFingerprint,
 			expectedRequiredGateKinds: policy.expectedRequiredGateKinds,
 			expectedConfigFingerprint: policy.expectedConfigFingerprint,
 			requireCausalRed: policy.requireCausalRed,
@@ -280,6 +283,7 @@ export function handoffComplete(
 				// When high-assurance asks for command-backed mutation, also require match sensitivity
 				// only when the stronger flag is set; keep legacy requireCommandBackedMutation separate.
 				undefined,
+			requireResultsFingerprint: policy.requireResultsFingerprint,
 		}),
 	);
 	// Soft requirements — listed but do not fail ok for tiny tech fixes

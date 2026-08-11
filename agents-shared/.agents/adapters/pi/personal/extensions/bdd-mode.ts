@@ -40,7 +40,6 @@ import {
 	type ProjectProfile,
 } from "../lib/bdd/project-profile.ts";
 import {
-	assuranceHandoffGaps,
 	buildQualityGatePlan,
 	formatAssuranceHandoff,
 	formatQualityGatePlan,
@@ -215,6 +214,7 @@ export default function bddModeExtension(pi: ExtensionAPI): void {
 		return {
 			assuranceEnabled: highAssurance,
 			expectedPlanFingerprint: highAssurance ? plan.fingerprint : undefined,
+			expectedProfileFingerprint: highAssurance ? plan.profileFingerprint : undefined,
 			expectedConfigFingerprint: highAssurance ? fingerprintConfig(config) : undefined,
 			expectedRequiredGateKinds: highAssurance
 				? plan.gates.filter((gate) => gate.required).map((gate) => gate.kind)
@@ -231,12 +231,7 @@ export default function bddModeExtension(pi: ExtensionAPI): void {
 	}
 
 	function completeHandoff(cwd: string): { ok: boolean; missing: string[] } {
-		const policy = handoffPolicy(cwd);
-		const base = handoffComplete(state.evidence, policy);
-		const exact = assuranceHandoffGaps(state.evidence, policy);
-		const hard = [...new Set([...base.missing.filter((item) => !item.startsWith("(soft)")), ...exact])];
-		const soft = base.missing.filter((item) => item.startsWith("(soft)"));
-		return { ok: base.ok && exact.length === 0, missing: [...hard, ...soft] };
+		return handoffComplete(state.evidence, handoffPolicy(cwd));
 	}
 
 	function formatExactHandoff(): string {

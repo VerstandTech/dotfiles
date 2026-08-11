@@ -38,6 +38,7 @@ export function fingerprintGateResults(results: readonly GateResult[]): string {
 export interface AssuranceHandoffPolicy {
 	enabled?: boolean;
 	expectedPlanFingerprint?: string;
+	expectedProfileFingerprint?: string;
 	expectedRequiredGateKinds?: readonly QualityGateKind[];
 	expectedConfigFingerprint?: string;
 	requireCausalRed?: boolean;
@@ -68,6 +69,12 @@ export function assuranceHandoffGaps(
 	}
 	if (policy.expectedPlanFingerprint && run.planFingerprint !== policy.expectedPlanFingerprint) {
 		gaps.push("assurance plan fingerprint is stale");
+	}
+	if (
+		policy.expectedProfileFingerprint &&
+		run.profileFingerprint !== policy.expectedProfileFingerprint
+	) {
+		gaps.push("assurance profile fingerprint is stale");
 	}
 	if (
 		policy.expectedConfigFingerprint &&
@@ -102,7 +109,9 @@ export function assuranceHandoffGaps(
 	if (policy.requireResultsFingerprint) {
 		const expectedResultsFingerprint = fingerprintGateResults(run.results);
 		if (!run.resultsFingerprint) {
-			gaps.push("assurance results fingerprint is missing from exact result evidence");
+			gaps.push(
+				"FIT01_RESULTS_FINGERPRINT_MISSING: assurance results fingerprint is missing from exact result evidence",
+			);
 		} else if (run.resultsFingerprint !== expectedResultsFingerprint) {
 			gaps.push("assurance results fingerprint does not match exact result evidence");
 		}

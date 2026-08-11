@@ -205,7 +205,9 @@ describe("handoff", () => {
 
 		const missing = handoffComplete(exactEvidence(), policy);
 		expect(missing.ok).toBe(false);
-		expect(missing.missing).toContain("FIT01_RESULTS_FINGERPRINT_MISSING");
+		expect(
+			missing.missing.some((item) => item.startsWith("FIT01_RESULTS_FINGERPRINT_MISSING")),
+		).toBe(true);
 
 		const forgedEvidence = exactEvidence();
 		forgedEvidence.assurance!.resultsFingerprint = "f".repeat(64);

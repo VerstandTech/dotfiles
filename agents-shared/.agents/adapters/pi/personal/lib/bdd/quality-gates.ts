@@ -104,14 +104,13 @@ function resolveExecutor(
 	assurance: AssuranceConfig,
 	shellCommand: string | undefined,
 ): { executor?: GateExecutorSpec; executorKind: ExecutorKind; trustTier: TrustTier | string } {
-	const trustProfile: TrustProfile = assurance.trustProfile ?? "interactive";
 	const fromConfig = assurance.executors?.[kind];
 
 	if (fromConfig?.kind === "argv") {
 		return {
 			executor: fromConfig,
 			executorKind: "argv",
-			trustTier: trustProfile === "interactive" ? "trusted" : "trusted",
+			trustTier: "trusted",
 		};
 	}
 	if (fromConfig?.kind === "internal") {
