@@ -8,6 +8,7 @@ import {
 	parsePhase,
 	suggestedNextPhase,
 } from "./phases.ts";
+import { fingerprintGateResults } from "./assurance-handoff.ts";
 import type { BddEvidence } from "./types.ts";
 
 const empty: BddEvidence = {};
@@ -164,6 +165,72 @@ describe("handoff", () => {
 		};
 		expect(handoffComplete(e, policy).ok).toBe(true);
 		expect(handoffComplete(redGreen, policy).ok).toBe(false);
+	});
+
+	test("FIT01_RESULTS_FINGERPRINT_MISSING blocks missing forged or stale exact handoff evidence", () => {
+		const exactEvidence = (): BddEvidence => {
+			const results = [
+				{
+					id: "quality:unit",
+					kind: "unit" as const,
+					required: true,
+					status: "passed" as const,
+					summary: "PASS",
+					executorKind: "argv" as const,
+					trustTier: "trusted" as const,
+					planFingerprint: "plan-current",
+					profileFingerprint: "profile-current",
+					evidenceFingerprint: "a".repeat(64),
+				},
+			];
+			return {
+				...redGreen,
+				assurance: {
+					profileFingerprint: "profile-current",
+					planFingerprint: "plan-current",
+					startedAt: "2099-01-01T00:00:01.000Z",
+					completedAt: "2099-01-01T00:00:02.000Z",
+					ok: true,
+					results,
+				},
+			};
+		};
+		const policy = {
+			assuranceEnabled: true,
+			expectedPlanFingerprint: "plan-current",
+			expectedProfileFingerprint: "profile-current",
+			expectedRequiredGateKinds: ["unit" as const],
+			requireResultsFingerprint: true,
+		};
+
+		const missing = handoffComplete(exactEvidence(), policy);
+		expect(missing.ok).toBe(false);
+		expect(missing.missing).toContain("FIT01_RESULTS_FINGERPRINT_MISSING");
+
+		const forgedEvidence = exactEvidence();
+		forgedEvidence.assurance!.resultsFingerprint = "f".repeat(64);
+		const forged = handoffComplete(forgedEvidence, policy);
+		expect(forged.ok).toBe(false);
+		expect(forged.missing.join(" ")).toMatch(/results fingerprint.*(?:match|exact)/i);
+
+		const staleEvidence = exactEvidence();
+		staleEvidence.assurance!.results[0]!.planFingerprint = "plan-stale";
+		staleEvidence.assurance!.resultsFingerprint = fingerprintGateResults(
+			staleEvidence.assurance!.results,
+		);
+		const stale = handoffComplete(staleEvidence, policy);
+		expect(stale.ok).toBe(false);
+		expect(stale.missing.join(" ")).toMatch(/stale plan binding/i);
+
+		const staleProfileEvidence = exactEvidence();
+		staleProfileEvidence.assurance!.profileFingerprint = "profile-stale";
+		staleProfileEvidence.assurance!.results[0]!.profileFingerprint = "profile-stale";
+		staleProfileEvidence.assurance!.resultsFingerprint = fingerprintGateResults(
+			staleProfileEvidence.assurance!.results,
+		);
+		const staleProfile = handoffComplete(staleProfileEvidence, policy);
+		expect(staleProfile.ok).toBe(false);
+		expect(staleProfile.missing.join(" ")).toMatch(/profile fingerprint.*stale/i);
 	});
 
 	test("high-assurance mutation cannot be proven by note alone", () => {
