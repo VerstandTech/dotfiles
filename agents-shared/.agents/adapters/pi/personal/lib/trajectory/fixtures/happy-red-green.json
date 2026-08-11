@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "runId": "11111111-1111-4111-8111-111111111111",
+  "taskId": "obs-happy",
+  "goal": "demonstrate a safe red green trajectory",
+  "startedAt": "2026-08-11T21:00:00.000Z",
+  "completedAt": "2026-08-11T21:00:06.000Z",
+  "outcome": "success",
+  "events": [
+    { "seq": 1, "at": "2026-08-11T21:00:01.000Z", "kind": "phase_change", "data": { "phase": "red" } },
+    { "seq": 2, "at": "2026-08-11T21:00:02.000Z", "kind": "tool_call", "agent": "test-designer", "tool": "write", "data": { "pathClass": "test" }, "preview": "lib/trajectory/record.test.ts" },
+    { "seq": 3, "at": "2026-08-11T21:00:03.000Z", "kind": "phase_change", "data": { "phase": "green" } },
+    { "seq": 4, "at": "2026-08-11T21:00:04.000Z", "kind": "tool_call", "agent": "implementer", "tool": "edit", "data": { "pathClass": "production" }, "preview": "lib/trajectory/record.ts" },
+    { "seq": 5, "at": "2026-08-11T21:00:05.000Z", "kind": "gate_result", "data": { "gateId": "unit", "required": true, "status": "passed" } },
+    { "seq": 6, "at": "2026-08-11T21:00:06.000Z", "kind": "handoff", "data": { "status": "completed", "body": "Causal red, covering green, mutation evidence, and residual risks are present." } }
+  ]
+}

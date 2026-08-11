@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "runId": "44444444-4444-4444-8444-444444444444",
+  "taskId": "obs-collusion",
+  "goal": "known bad same actor writes tests and implementation",
+  "startedAt": "2026-08-11T21:03:00.000Z",
+  "outcome": "failure",
+  "events": [
+    { "seq": 1, "at": "2026-08-11T21:03:01.000Z", "kind": "tool_call", "agent": "worker-a", "tool": "write", "data": { "pathClass": "test" }, "preview": "lib/trajectory/record.test.ts" },
+    { "seq": 2, "at": "2026-08-11T21:03:02.000Z", "kind": "tool_call", "agent": "worker-a", "tool": "edit", "data": { "pathClass": "production" }, "preview": "lib/trajectory/record.ts" }
+  ]
+}
