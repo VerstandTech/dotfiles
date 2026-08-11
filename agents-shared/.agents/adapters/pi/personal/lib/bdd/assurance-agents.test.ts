@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { ROLE_WRITE_SCOPE_MATRIX } from "../contracts/limits.ts";
+import { roleContract } from "./assurance-cycle.ts";
 
 const roles = [
 	"specifier",
@@ -30,14 +32,15 @@ const role01Skills = [
 ] as const;
 
 const ROLE01_FAILURE = "ROLE01_ROLE_CONTRACT_MISSING";
+const ROLE01_MATRIX_FAILURE = "ROLE01_ROLE_MATRIX_DRIFT";
 
 const launchProfiles = {
-	specifier: { tools: "read, grep, find, ls", maxTokens: 120_000, maxCostUsd: 3, maxDurationMs: 600_000 },
-	"test-designer": { tools: "read, grep, find, ls, edit, write, bash", maxTokens: 180_000, maxCostUsd: 5, maxDurationMs: 900_000 },
-	implementer: { tools: "read, grep, find, ls, edit, write, bash", maxTokens: 180_000, maxCostUsd: 5, maxDurationMs: 900_000 },
-	breaker: { tools: "read, grep, find, ls", maxTokens: 120_000, maxCostUsd: 3, maxDurationMs: 600_000 },
-	refactorer: { tools: "read, grep, find, ls, edit, write, bash", maxTokens: 120_000, maxCostUsd: 3, maxDurationMs: 600_000 },
-	qa: { tools: "read, grep, find, ls", maxTokens: 120_000, maxCostUsd: 3, maxDurationMs: 600_000 },
+	specifier: { tools: ["read", "grep", "find", "ls"], maxTokens: 120_000, maxCostUsd: 3, maxDurationMs: 600_000 },
+	"test-designer": { tools: ["read", "grep", "find", "ls", "edit", "write", "bash"], maxTokens: 180_000, maxCostUsd: 5, maxDurationMs: 900_000 },
+	implementer: { tools: ["read", "grep", "find", "ls", "edit", "write", "bash"], maxTokens: 180_000, maxCostUsd: 5, maxDurationMs: 900_000 },
+	breaker: { tools: ["read", "grep", "find", "ls"], maxTokens: 120_000, maxCostUsd: 3, maxDurationMs: 600_000 },
+	refactorer: { tools: ["read", "grep", "find", "ls", "edit", "write", "bash"], maxTokens: 120_000, maxCostUsd: 3, maxDurationMs: 600_000 },
+	qa: { tools: ["read", "grep", "find", "ls"], maxTokens: 120_000, maxCostUsd: 3, maxDurationMs: 600_000 },
 } as const;
 
 function agent(role: (typeof roles)[number]): string {
@@ -50,6 +53,34 @@ function skill(name: (typeof role01Skills)[number]): string {
 
 function frontmatter(text: string): string {
 	return text.split("---")[1] ?? "";
+}
+
+function frontmatterValue(text: string, key: string): string {
+	const matches = [...frontmatter(text).matchAll(new RegExp(`^${key}:\\s*(.+)$`, "gm"))];
+	if (matches.length !== 1 || !matches[0]?.[1]) {
+		throw new Error(`${ROLE01_MATRIX_FAILURE}: expected exactly one ${key} field`);
+	}
+	return matches[0][1].trim();
+}
+
+function parseBudgetCeiling(text: string): {
+	maxTokens: number;
+	maxCostUsd: number;
+	maxDurationMs: number;
+} {
+	const matches = [
+		...text.matchAll(
+			/budget ceiling maxTokens=(\d+), maxCostUsd=(\d+(?:\.\d+)?), maxDurationMs=(\d+)/g,
+		),
+	];
+	if (matches.length !== 1) {
+		throw new Error(`${ROLE01_MATRIX_FAILURE}: expected exactly one numeric budget ceiling`);
+	}
+	return {
+		maxTokens: Number(matches[0]![1]),
+		maxCostUsd: Number(matches[0]![2]),
+		maxDurationMs: Number(matches[0]![3]),
+	};
 }
 
 /** Strip markdown emphasis so isolation checks match plain carrier text. */
@@ -100,8 +131,6 @@ describe("packaged high-assurance agents", () => {
 	test(`${ROLE01_FAILURE}: owned roles require bounded V1 request and result contracts`, () => {
 		for (const role of role01OwnedRoles) {
 			const text = agent(role);
-			const metadata = frontmatter(text);
-			const expected = launchProfiles[role];
 			const message = `${ROLE01_FAILURE}: bdd-${role}`;
 
 			expect(text, `${message} missing version`).toMatch(/Role contract v1/i);
@@ -128,16 +157,45 @@ describe("packaged high-assurance agents", () => {
 				"Do not run, launch, or delegate to subagents or fleets",
 			);
 
-			expect(metadata, `${message} model`).toContain("model: xai/grok-4.5");
-			expect(metadata, `${message} thinking`).toContain("thinking: high");
-			expect(metadata, `${message} tools`).toContain(`tools: ${expected.tools}`);
-			expect(metadata, `${message} timeout`).toContain(`timeoutMs: ${expected.maxDurationMs}`);
-			expect(text, `${message} token ceiling`).toContain(`maxTokens=${expected.maxTokens}`);
-			expect(text, `${message} cost ceiling`).toContain(`maxCostUsd=${expected.maxCostUsd}`);
-			expect(text, `${message} duration ceiling`).toContain(
-				`maxDurationMs=${expected.maxDurationMs}`,
-			);
+			expect(frontmatterValue(text, "model"), `${message} model`).toBe("xai/grok-4.5");
+			expect(frontmatterValue(text, "thinking"), `${message} thinking`).toBe("high");
 		}
+	});
+
+	test(`${ROLE01_MATRIX_FAILURE}: frontmatter launch profiles and live role matrices stay exact`, () => {
+		for (const role of role01OwnedRoles) {
+			const expected = launchProfiles[role];
+			const text = agent(role);
+			const message = `${ROLE01_MATRIX_FAILURE}: bdd-${role}`;
+			const actualTools = frontmatterValue(text, "tools").split(",").map((tool) => tool.trim());
+			const timeoutMs = Number(frontmatterValue(text, "timeoutMs"));
+			const budget = parseBudgetCeiling(text);
+
+			expect(actualTools, `${message} frontmatter tools`).toEqual(expected.tools);
+			expect(timeoutMs, `${message} timeoutMs`).toBe(expected.maxDurationMs);
+			expect(Number.isSafeInteger(timeoutMs), `${message} timeout must be an integer`).toBe(true);
+			expect(budget, `${message} budget ceiling`).toEqual({
+				maxTokens: expected.maxTokens,
+				maxCostUsd: expected.maxCostUsd,
+				maxDurationMs: expected.maxDurationMs,
+			});
+			expect(budget.maxDurationMs, `${message} timeout/budget drift`).toBe(timeoutMs);
+		}
+
+		for (const role of ["breaker", "qa"] as const) {
+			const expected = ["read", "grep", "find", "ls"];
+			expect(roleContract(role).tools, `${ROLE01_MATRIX_FAILURE}: ${role} roleContract`).toEqual(expected);
+			expect(
+				ROLE_WRITE_SCOPE_MATRIX[role].tools,
+				`${ROLE01_MATRIX_FAILURE}: ${role} contract matrix`,
+			).toEqual(expected);
+		}
+	});
+
+	test(`${ROLE01_MATRIX_FAILURE}: specifier request declares no-write scope`, () => {
+		const text = agent("specifier");
+		expect(text, `${ROLE01_MATRIX_FAILURE}: missing no-write`).toMatch(/no-write/i);
+		expect(text, `${ROLE01_MATRIX_FAILURE}: missing exact write scope`).toContain("writeScope: none");
 	});
 
 	test(`${ROLE01_FAILURE}: role separation and reviewer no-mutation rules are explicit`, () => {
