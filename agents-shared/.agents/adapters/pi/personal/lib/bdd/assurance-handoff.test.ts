@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import * as qualityGateApi from "./quality-gates.ts";
 import { assuranceHandoffGaps } from "./quality-gates.ts";
 import type { BddEvidence } from "./types.ts";
 
@@ -333,5 +334,136 @@ describe("assuranceHandoffGaps", () => {
 		const gapsForged = assuranceHandoffGaps(missingKindForgedTier, policy as never);
 		expect(gapsForged.join(" ")).toMatch(/executor|trust|kind/i);
 		expect(gapsForged.length).toBeGreaterThan(0);
+	});
+});
+
+describe("FIT-01 exact assurance result handoff and guardian status", () => {
+	const fitApi = qualityGateApi as unknown as {
+		fingerprintGateResults: (results: NonNullable<BddEvidence["assurance"]>["results"]) => string;
+		formatAssuranceHandoff: (run: NonNullable<BddEvidence["assurance"]>) => string;
+		formatGuardianStatus: (run: NonNullable<BddEvidence["assurance"]>) => string;
+	};
+
+	const exactResult = () => ({
+		...passedUnit,
+		planFingerprint: "plan-1",
+		profileFingerprint: "profile-1",
+		reasonCode: "FIT01_GATE_PASSED",
+		evidenceFingerprint: "a".repeat(64),
+	});
+
+	const exactEvidence = (): BddEvidence => {
+		const value = evidence();
+		const results = [exactResult()];
+		value.assurance = {
+			profileFingerprint: "profile-1",
+			planFingerprint: "plan-1",
+			startedAt: "2026-07-26T10:01:00.000Z",
+			completedAt: "2026-07-26T10:02:00.000Z",
+			ok: true,
+			results,
+			resultsFingerprint: fitApi.fingerprintGateResults(results),
+		} as NonNullable<BddEvidence["assurance"]>;
+		return value;
+	};
+
+	test("requires an exact recomputable results fingerprint under FIT-01 strict completeness", () => {
+		const missing = evidence();
+		missing.assurance = {
+			profileFingerprint: "profile-1",
+			planFingerprint: "plan-1",
+			startedAt: "2026-07-26T10:01:00.000Z",
+			completedAt: "2026-07-26T10:02:00.000Z",
+			ok: true,
+			results: [exactResult()],
+		};
+		const missingGaps = assuranceHandoffGaps(missing, {
+			...policy,
+			requireResultsFingerprint: true,
+		} as never);
+		expect(missingGaps.join(" ")).toMatch(/results fingerprint|result evidence/i);
+
+		const forged = exactEvidence();
+		forged.assurance!.resultsFingerprint = "f".repeat(64);
+		const forgedGaps = assuranceHandoffGaps(forged, {
+			...policy,
+			requireResultsFingerprint: true,
+		} as never);
+		expect(forgedGaps.join(" ")).toMatch(/results fingerprint|result evidence/i);
+	});
+
+	test("rejects stale per-result plan or profile binding despite current top-level fingerprints", () => {
+		for (const staleField of ["planFingerprint", "profileFingerprint"] as const) {
+			const value = exactEvidence();
+			const result = value.assurance!.results[0] as typeof passedUnit & Record<string, unknown>;
+			result[staleField] = `old-${staleField}`;
+			value.assurance!.resultsFingerprint = fitApi.fingerprintGateResults(value.assurance!.results);
+			const gaps = assuranceHandoffGaps(value, {
+				...policy,
+				requireResultsFingerprint: true,
+			} as never);
+			expect(gaps.join(" ")).toMatch(/result.*(?:plan|profile)|stale.*result|binding/i);
+		}
+	});
+
+	test("accepts exact current result evidence from trusted argv and internal executors", () => {
+		for (const executorKind of ["argv", "internal"] as const) {
+			const value = exactEvidence();
+			value.assurance!.results[0] = {
+				...exactResult(),
+				executorKind,
+			};
+			value.assurance!.resultsFingerprint = fitApi.fingerprintGateResults(value.assurance!.results);
+			expect(
+				assuranceHandoffGaps(value, {
+					...policy,
+					requireResultsFingerprint: true,
+				} as never),
+			).toEqual([]);
+		}
+	});
+
+	test("renders every canonical result with exact plan profile and result fingerprints", () => {
+		const run = exactEvidence().assurance!;
+		const output = fitApi.formatAssuranceHandoff(run);
+		expect(output).toContain("plan-1");
+		expect(output).toContain("profile-1");
+		expect(output).toContain(run.resultsFingerprint!);
+		expect(output).toContain("quality:unit");
+		expect(output).toContain("FIT01_GATE_PASSED");
+		expect(output).toContain("argv/trusted");
+	});
+
+	test("guardian report separates concise required blockers from advisory findings", () => {
+		const base = exactEvidence().assurance!;
+		const results = [
+			{
+				...exactResult(),
+				status: "timeout" as never,
+				reasonCode: "FIT01_COMMAND_TIMEOUT",
+			},
+			{
+				...exactResult(),
+				id: "quality:trajectory",
+				kind: "trajectory" as never,
+				required: false,
+				status: "failed" as const,
+				reasonCode: "FIT01_TRAJECTORY_FAILED",
+				executorKind: "internal" as const,
+			},
+		];
+		const run = {
+			...base,
+			ok: false,
+			results,
+			resultsFingerprint: fitApi.fingerprintGateResults(results as never),
+		} as NonNullable<BddEvidence["assurance"]>;
+		const output = fitApi.formatGuardianStatus(run);
+		expect(output).toMatch(/required blockers.*1/i);
+		expect(output).toContain("quality:unit");
+		expect(output).toContain("FIT01_COMMAND_TIMEOUT");
+		expect(output).toMatch(/advisory findings.*1/i);
+		expect(output).toContain("quality:trajectory");
+		expect(output).not.toMatch(/install|auto.?merge|rewrite evidence/i);
 	});
 });

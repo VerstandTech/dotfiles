@@ -41,6 +41,7 @@ import {
 } from "../lib/bdd/project-profile.ts";
 import {
 	buildQualityGatePlan,
+	formatAssuranceHandoff,
 	formatQualityGatePlan,
 	formatQualityGateRun,
 	runQualityGatePlan,
@@ -85,7 +86,13 @@ import {
 	validateRedResult,
 } from "../lib/bdd/run-command.ts";
 import { callSubagentRpc } from "../lib/fleet/rpc.ts";
-import type { BddConfig, BddEvidence, BddPhase, BddState } from "../lib/bdd/types.ts";
+import type {
+	BddConfig,
+	BddEvidence,
+	BddPhase,
+	BddState,
+	InternalGateEvidence,
+} from "../lib/bdd/types.ts";
 
 const CUSTOM_TYPE = BDD_STATE_CUSTOM_TYPE;
 const CONTEXT_TYPE = "bdd-mode-context";
@@ -182,12 +189,32 @@ export default function bddModeExtension(pi: ExtensionAPI): void {
 		return validateFleetSynthesisEvidence({ cwd, synthesisPath: path, runId }).ok;
 	}
 
+	function collectInternalGateEvidence(plan: QualityGatePlan): Readonly<Record<string, InternalGateEvidence>> {
+		const collected: Record<string, InternalGateEvidence> = {};
+		const provide = (id: string, evidence: InternalGateEvidence): void => {
+			if (typeof id !== "string" || !id || Object.hasOwn(collected, id)) return;
+			collected[id] = evidence;
+		};
+		try {
+			pi.events.emit("assurance:gate-evidence-request", {
+				version: 1,
+				planFingerprint: plan.fingerprint,
+				profileFingerprint: plan.profileFingerprint,
+				provide,
+			});
+		} catch {
+			// A missing/failed provider stays absent and therefore fails closed.
+		}
+		return Object.freeze({ ...collected });
+	}
+
 	function handoffPolicy(cwd: string) {
 		const { plan } = currentAssurance(cwd);
 		const highAssurance = config.assurance?.enabled === true;
 		return {
 			assuranceEnabled: highAssurance,
 			expectedPlanFingerprint: highAssurance ? plan.fingerprint : undefined,
+			expectedProfileFingerprint: highAssurance ? plan.profileFingerprint : undefined,
 			expectedConfigFingerprint: highAssurance ? fingerprintConfig(config) : undefined,
 			expectedRequiredGateKinds: highAssurance
 				? plan.gates.filter((gate) => gate.required).map((gate) => gate.kind)
@@ -195,11 +222,20 @@ export default function bddModeExtension(pi: ExtensionAPI): void {
 			requireCausalRed: highAssurance,
 			requireCommandBackedMutation: highAssurance,
 			requireCommandBackedMatchedMutation: highAssurance,
+			requireResultsFingerprint: highAssurance,
 			requireFleetDisposition: highAssurance,
 			synthesisExists: highAssurance
 				? (path: string, runId: string) => synthesisExists(cwd, path, runId)
 				: undefined,
 		};
+	}
+
+	function completeHandoff(cwd: string): { ok: boolean; missing: string[] } {
+		return handoffComplete(state.evidence, handoffPolicy(cwd));
+	}
+
+	function formatExactHandoff(): string {
+		return `${formatHandoff(state.evidence, state.phase)}\n${formatAssuranceHandoff(state.evidence.assurance)}\n`;
 	}
 
 	function persist(): void {
@@ -777,8 +813,8 @@ export default function bddModeExtension(pi: ExtensionAPI): void {
 			const extCtx = ctx as ExtensionContext;
 			reloadConfig(cwdOf(extCtx));
 			syncFleetRunsFromBranch(extCtx);
-			const { ok, missing } = handoffComplete(state.evidence, handoffPolicy(cwdOf(extCtx)));
-			const body = formatHandoff(state.evidence, state.phase);
+			const { ok, missing } = completeHandoff(cwdOf(extCtx));
+			const body = formatExactHandoff(); // includes formatAssuranceHandoff exact results
 			const fleetLines =
 				(state.evidence.fleetRuns ?? [])
 					.map(
@@ -1066,7 +1102,9 @@ export default function bddModeExtension(pi: ExtensionAPI): void {
 					details: { ok: false, blocked: true, profile, plan },
 				};
 			}
-			const run = await runQualityGatePlan({ cwd, plan });
+			// Synchronous process-local seam: assurance:gate-evidence-request (no timers/polling).
+			const internalEvidence = collectInternalGateEvidence(plan);
+			const run = await runQualityGatePlan({ cwd, plan, internalEvidence });
 			run.configFingerprint = fingerprintConfig(config);
 			state.evidence.assurance = run;
 			persist();
@@ -1077,6 +1115,7 @@ export default function bddModeExtension(pi: ExtensionAPI): void {
 				profileFingerprint: profile.fingerprint,
 				planFingerprint: plan.fingerprint,
 				configFingerprint: run.configFingerprint,
+				resultsFingerprint: run.resultsFingerprint,
 				ok: run.ok,
 			});
 			return {
@@ -1463,8 +1502,8 @@ export default function bddModeExtension(pi: ExtensionAPI): void {
 			if (cmd === "handoff") {
 				reloadConfig(cwdOf(ctx));
 				syncFleetRunsFromBranch(ctx);
-				const { ok, missing } = handoffComplete(state.evidence, handoffPolicy(cwdOf(ctx)));
-				const body = formatHandoff(state.evidence, state.phase);
+				const { ok, missing } = completeHandoff(cwdOf(ctx));
+				const body = formatExactHandoff(); // includes formatAssuranceHandoff exact results
 				const asPr = /\bpr\b/i.test(tail);
 				let text = ok ? body : `${body}\nMissing: ${missing.join(", ")}`;
 				if (asPr) {

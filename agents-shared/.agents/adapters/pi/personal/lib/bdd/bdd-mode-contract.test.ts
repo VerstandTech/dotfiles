@@ -92,3 +92,28 @@ describe("bdd-mode expected-red contract wiring (BDD-01 R4/R10)", () => {
 		expect(region).not.toMatch(/assuranceEligible\s*===\s*true\s*\|\|\s*failCheck\.ok/);
 	});
 });
+
+describe("bdd-mode FIT-01 thin integration contract", () => {
+	test("requests typed internal evidence synchronously without a model-supplied pass parameter", () => {
+		const source = extensionSource();
+		const runIdx = source.indexOf('name: "bdd_run_quality_gates"');
+		expect(runIdx).toBeGreaterThanOrEqual(0);
+		const region = source.slice(runIdx, runIdx + 8_000);
+		expect(region).toContain("assurance:gate-evidence-request");
+		expect(region).toContain("planFingerprint");
+		expect(region).toContain("profileFingerprint");
+		expect(region).toMatch(/internalEvidence/);
+		expect(region).not.toMatch(/Type\.(?:Any|Unknown).*internalEvidence|internalEvidence.*Type\.(?:Any|Unknown)/);
+		expect(region).not.toMatch(/setTimeout|setInterval/);
+	});
+
+	test("uses exact FIT-01 handoff gaps and canonical result rendering", () => {
+		const source = extensionSource();
+		expect(source).toContain("requireResultsFingerprint");
+		expect(source).toContain("formatAssuranceHandoff");
+		const toolIdx = source.indexOf('name: "bdd_handoff"');
+		const commandIdx = source.indexOf('if (cmd === "handoff")');
+		expect(source.slice(toolIdx, toolIdx + 4_000)).toMatch(/formatAssuranceHandoff/);
+		expect(source.slice(commandIdx, commandIdx + 3_000)).toMatch(/formatAssuranceHandoff/);
+	});
+});

@@ -1,18 +1,34 @@
 import { createHash } from "node:crypto";
 import { runCommand } from "./run-command.ts";
 import {
+	assuranceHandoffGaps,
+	fingerprintGateResults,
+	formatAssuranceHandoff,
+	formatGuardianStatus,
+} from "./assurance-handoff.ts";
+import {
+	FIT_INTERNAL_GATE_IDS,
 	QUALITY_GATE_KINDS,
 	type AssuranceConfig,
 	type AssuranceEvidence,
 	type AssuranceGateResult,
-	type BddEvidence,
 	type ExecutorKind,
 	type GateExecutorSpec,
+	type GateStatus,
+	type InternalGateEvidence,
 	type QualityGateKind,
+	type SecurityGateSlotStatusV1,
 	type TrustProfile,
 	type TrustTier,
 } from "./types.ts";
 import type { ProjectCommands, ProjectProfile } from "./project-profile.ts";
+
+export {
+	assuranceHandoffGaps,
+	fingerprintGateResults,
+	formatAssuranceHandoff,
+	formatGuardianStatus,
+} from "./assurance-handoff.ts";
 
 export type GateAvailability = "ready" | "unavailable";
 export type GateSource = "config" | "detected";
@@ -50,7 +66,7 @@ export interface GateCommandResult {
 	trustTier?: TrustTier | string;
 }
 
-const COMMAND_KEYS: Record<QualityGateKind, keyof ProjectCommands> = {
+const COMMAND_KEYS: Partial<Record<QualityGateKind, keyof ProjectCommands>> = {
 	format: "format",
 	static: "staticAnalysis",
 	types: "typecheck",
@@ -88,14 +104,13 @@ function resolveExecutor(
 	assurance: AssuranceConfig,
 	shellCommand: string | undefined,
 ): { executor?: GateExecutorSpec; executorKind: ExecutorKind; trustTier: TrustTier | string } {
-	const trustProfile: TrustProfile = assurance.trustProfile ?? "interactive";
 	const fromConfig = assurance.executors?.[kind];
 
 	if (fromConfig?.kind === "argv") {
 		return {
 			executor: fromConfig,
 			executorKind: "argv",
-			trustTier: trustProfile === "interactive" ? "trusted" : "trusted",
+			trustTier: "trusted",
 		};
 	}
 	if (fromConfig?.kind === "internal") {
@@ -157,7 +172,8 @@ export function buildQualityGatePlan(input: {
 	const gates: QualityGate[] = [];
 	for (const kind of QUALITY_GATE_KINDS) {
 		const override = assurance.commands?.[kind]?.trim();
-		const detected = input.profile.commands[COMMAND_KEYS[kind]]?.trim();
+		const commandKey = COMMAND_KEYS[kind];
+		const detected = commandKey ? input.profile.commands[commandKey]?.trim() : undefined;
 		const shellCommand = override || detected;
 		const execInfo = resolveExecutor(kind, assurance, shellCommand);
 		const hasExecutor = Boolean(execInfo.executor);
@@ -238,7 +254,356 @@ function policyRejectedResult(gate: QualityGate, reason: string): AssuranceGateR
 		executorKind: gate.executorKind ?? "shell",
 		trustTier: "policy_rejected",
 		policyRejected: true,
+		reasonCode: "FIT01_POLICY_REJECTED",
 	};
+}
+
+function evidenceFingerprint(value: Record<string, unknown>): string {
+	return createHash("sha256").update(JSON.stringify(value)).digest("hex");
+}
+
+function bindResultToPlan(
+	plan: QualityGatePlan,
+	result: AssuranceGateResult,
+): AssuranceGateResult {
+	return {
+		...result,
+		planFingerprint: plan.fingerprint,
+		profileFingerprint: plan.profileFingerprint,
+		evidenceFingerprint:
+			result.evidenceFingerprint ??
+			evidenceFingerprint({
+				id: result.id,
+				kind: result.kind,
+				status: result.status,
+				executorKind: result.executorKind ?? null,
+				trustTier: result.trustTier ?? null,
+				exitCode: result.exitCode ?? null,
+				reasonCode: result.reasonCode ?? null,
+				summary: result.summary,
+			}),
+	};
+}
+
+const INTERNAL_ADAPTER_BY_ID: Readonly<Record<string, InternalGateEvidence["adapter"]>> =
+	Object.freeze({
+		[FIT_INTERNAL_GATE_IDS.trajectory]: "trajectory",
+		[FIT_INTERNAL_GATE_IDS.decision]: "decision",
+		[FIT_INTERNAL_GATE_IDS.budget]: "budget",
+		[FIT_INTERNAL_GATE_IDS.security]: "security",
+	});
+
+function internalResult(
+	gate: QualityGate,
+	input: {
+		status: GateStatus;
+		reasonCode: string;
+		summary: string;
+		startedAt: string;
+		completedAt: string;
+		observedAt?: string;
+		evidenceFacts?: Record<string, unknown>;
+	},
+): AssuranceGateResult {
+	return {
+		id: gate.id,
+		kind: gate.kind,
+		required: gate.required,
+		status: input.status,
+		command: gate.command,
+		summary: input.summary,
+		startedAt: input.startedAt,
+		completedAt: input.completedAt,
+		observedAt: input.observedAt,
+		executorKind: "internal",
+		trustTier: "trusted",
+		policyRejected: false,
+		reasonCode: input.reasonCode,
+		evidenceFingerprint: evidenceFingerprint({
+			id: gate.id,
+			status: input.status,
+			reasonCode: input.reasonCode,
+			observedAt: input.observedAt ?? null,
+			...(input.evidenceFacts ?? {}),
+		}),
+	};
+}
+
+function securityStatus(
+	statuses: readonly SecurityGateSlotStatusV1[],
+): { status: GateStatus; reasonCode: string } | undefined {
+	if (statuses.includes("timeout")) {
+		return { status: "timeout", reasonCode: "FIT01_SECURITY_TIMEOUT" };
+	}
+	if (statuses.includes("stale")) {
+		return { status: "stale", reasonCode: "FIT01_SECURITY_STALE" };
+	}
+	if (statuses.some((status) => status === "failed" || status === "aborted" || status === "untrusted")) {
+		return { status: "failed", reasonCode: "FIT01_SECURITY_FAILED" };
+	}
+	if (statuses.some((status) => status === "unknown" || status === "unavailable")) {
+		return { status: "unavailable", reasonCode: "FIT01_SECURITY_UNAVAILABLE" };
+	}
+	return undefined;
+}
+
+/**
+ * Pure typed adapter for the four FIT-01 internal gate sources. All currentness
+ * facts are explicit; no dependency prose or ambient state is inspected.
+ */
+export function adaptInternalGateEvidence(input: {
+	gate: QualityGate;
+	plan: QualityGatePlan;
+	evidence?: InternalGateEvidence;
+	startedAt: string;
+	completedAt: string;
+}): AssuranceGateResult {
+	const id =
+		input.gate.executor?.kind === "internal" ? input.gate.executor.id : "unknown";
+	const expectedAdapter = INTERNAL_ADAPTER_BY_ID[id];
+	const base = {
+		startedAt: input.startedAt,
+		completedAt: input.completedAt,
+		observedAt: input.evidence?.observedAt,
+	};
+	if (!expectedAdapter) {
+		return internalResult(input.gate, {
+			...base,
+			status: "unavailable",
+			reasonCode: "FIT01_INTERNAL_GATE_UNKNOWN",
+			summary: `Unknown internal gate id '${id}'`,
+			evidenceFacts: { id },
+		});
+	}
+	if (!input.evidence) {
+		return internalResult(input.gate, {
+			...base,
+			status: "unavailable",
+			reasonCode: "FIT01_REQUIRED_INTERNAL_GATE_MISSING",
+			summary: "Typed internal gate evidence is unavailable",
+			evidenceFacts: { id, adapter: expectedAdapter },
+		});
+	}
+	const observedAtMs = Date.parse(input.evidence.observedAt);
+	const completedAtMs = Date.parse(input.completedAt);
+	if (
+		input.evidence.version !== 1 ||
+		!Number.isFinite(observedAtMs) ||
+		!Number.isFinite(completedAtMs)
+	) {
+		return internalResult(input.gate, {
+			...base,
+			status: "failed",
+			reasonCode: "FIT01_INTERNAL_EVIDENCE_INVALID",
+			summary: "Internal evidence envelope is invalid",
+			evidenceFacts: { id, adapter: input.evidence.adapter },
+		});
+	}
+	if (observedAtMs > completedAtMs) {
+		return internalResult(input.gate, {
+			...base,
+			status: "stale",
+			reasonCode: "FIT01_INTERNAL_EVIDENCE_STALE",
+			summary: "Internal evidence observation is not current for this run",
+			evidenceFacts: { id, adapter: input.evidence.adapter },
+		});
+	}
+	if (
+		input.evidence.planFingerprint !== input.plan.fingerprint ||
+		input.evidence.profileFingerprint !== input.plan.profileFingerprint
+	) {
+		return internalResult(input.gate, {
+			...base,
+			status: "stale",
+			reasonCode: "FIT01_INTERNAL_EVIDENCE_STALE",
+			summary: "Internal evidence is bound to another plan or profile",
+			evidenceFacts: {
+				id,
+				adapter: input.evidence.adapter,
+				planFingerprint: input.evidence.planFingerprint,
+				profileFingerprint: input.evidence.profileFingerprint,
+			},
+		});
+	}
+	if (input.evidence.adapter !== expectedAdapter) {
+		return internalResult(input.gate, {
+			...base,
+			status: "failed",
+			reasonCode: "FIT01_INTERNAL_ADAPTER_MISMATCH",
+			summary: "Internal evidence adapter does not match the configured id",
+			evidenceFacts: { id, adapter: input.evidence.adapter },
+		});
+	}
+
+	const evidence = input.evidence;
+	if (evidence.adapter === "trajectory") {
+		if (evidence.result.runId !== evidence.expectedRunId) {
+			return internalResult(input.gate, {
+				...base,
+				status: "stale",
+				reasonCode: "FIT01_TRAJECTORY_STALE",
+				summary: "Trajectory evaluation is for another run",
+				evidenceFacts: { id, runId: evidence.result.runId, expectedRunId: evidence.expectedRunId },
+			});
+		}
+		if (evidence.result.status === "unavailable") {
+			return internalResult(input.gate, {
+				...base,
+				status: "unavailable",
+				reasonCode: "FIT01_TRAJECTORY_UNAVAILABLE",
+				summary: "Trajectory evaluation is unavailable",
+				evidenceFacts: { id, runId: evidence.result.runId, status: evidence.result.status },
+			});
+		}
+		const passed = evidence.result.status === "pass" && evidence.result.ok === true;
+		return internalResult(input.gate, {
+			...base,
+			status: passed ? "passed" : "failed",
+			reasonCode: passed ? "FIT01_TRAJECTORY_PASSED" : "FIT01_TRAJECTORY_FAILED",
+			summary: passed ? "Typed trajectory evaluation passed" : "Typed trajectory evaluation did not pass",
+			evidenceFacts: { id, runId: evidence.result.runId, status: evidence.result.status ?? null, ok: evidence.result.ok },
+		});
+	}
+
+	if (evidence.adapter === "decision") {
+		if (!evidence.result.ok) {
+			return internalResult(input.gate, {
+				...base,
+				status: "failed",
+				reasonCode: "FIT01_DECISION_REFUSED",
+				summary: "Decision handoff evidence was refused",
+				evidenceFacts: { id, code: evidence.result.code },
+			});
+		}
+		const decision = evidence.result.evidence;
+		if (decision.approvalFingerprint === null) {
+			return internalResult(input.gate, {
+				...base,
+				status: "failed",
+				reasonCode: "FIT01_DECISION_APPROVAL_MISSING",
+				summary: "Current human-approved decision fingerprint is missing",
+				evidenceFacts: { id, storeFingerprint: decision.storeFingerprint },
+			});
+		}
+		if (
+			evidence.expectedStoreFingerprint !== evidence.expectedApprovalFingerprint ||
+			decision.storeFingerprint !== evidence.expectedStoreFingerprint ||
+			decision.approvalFingerprint !== evidence.expectedApprovalFingerprint
+		) {
+			return internalResult(input.gate, {
+				...base,
+				status: "stale",
+				reasonCode: "FIT01_DECISION_STALE",
+				summary: "Decision store or human approval fingerprint is stale",
+				evidenceFacts: {
+					id,
+					storeFingerprint: decision.storeFingerprint,
+					approvalFingerprint: decision.approvalFingerprint,
+					expectedStoreFingerprint: evidence.expectedStoreFingerprint,
+					expectedApprovalFingerprint: evidence.expectedApprovalFingerprint,
+				},
+			});
+		}
+		const trusted =
+			decision.executorKind === "internal" &&
+			decision.trustTier === "trusted" &&
+			decision.status === "passed";
+		return internalResult(input.gate, {
+			...base,
+			status: trusted ? "passed" : "failed",
+			reasonCode: trusted ? "FIT01_DECISION_PASSED" : "FIT01_DECISION_FAILED",
+			summary: trusted ? "Current human-approved decision evidence passed" : "Decision handoff evidence did not pass",
+			evidenceFacts: { id, status: decision.status, storeFingerprint: decision.storeFingerprint, approvalFingerprint: decision.approvalFingerprint },
+		});
+	}
+
+	if (evidence.adapter === "budget") {
+		if ("code" in evidence.result) {
+			return internalResult(input.gate, {
+				...base,
+				status: "failed",
+				reasonCode: "FIT01_BUDGET_REFUSED",
+				summary: "Budget evidence was refused",
+				evidenceFacts: { id, code: evidence.result.code },
+			});
+		}
+		if (evidence.result.status === "unknown") {
+			return internalResult(input.gate, {
+				...base,
+				status: "unavailable",
+				reasonCode: "FIT01_BUDGET_USAGE_UNKNOWN",
+				summary: `Budget usage is unknown under ${input.plan.trustProfile ?? "interactive"} profile`,
+				evidenceFacts: { id, status: evidence.result.status, trustProfile: input.plan.trustProfile ?? "interactive" },
+			});
+		}
+		const passed =
+			!evidence.result.circuitBroken &&
+			(evidence.result.status === "ok" || evidence.result.status === "warn");
+		return internalResult(input.gate, {
+			...base,
+			status: passed ? "passed" : "failed",
+			reasonCode: passed ? "FIT01_BUDGET_PASSED" : "FIT01_BUDGET_EXCEEDED",
+			summary: passed ? `Typed budget status is ${evidence.result.status}` : "Budget circuit is broken or exceeded",
+			evidenceFacts: { id, status: evidence.result.status, circuitBroken: evidence.result.circuitBroken },
+		});
+	}
+
+	if (
+		evidence.candidateSha !== evidence.expectedCandidateSha ||
+		evidence.inventoryFingerprint !== evidence.expectedInventoryFingerprint
+	) {
+		return internalResult(input.gate, {
+			...base,
+			status: "stale",
+			reasonCode: "FIT01_SECURITY_STALE",
+			summary: "Security candidate or inventory fingerprint is stale",
+			evidenceFacts: {
+				id,
+				candidateSha: evidence.candidateSha,
+				expectedCandidateSha: evidence.expectedCandidateSha,
+				inventoryFingerprint: evidence.inventoryFingerprint,
+				expectedInventoryFingerprint: evidence.expectedInventoryFingerprint,
+			},
+		});
+	}
+	if (!evidence.result.ok) {
+		return internalResult(input.gate, {
+			...base,
+			status: "failed",
+			reasonCode: "FIT01_SECURITY_REFUSED",
+			summary: "Security slot evidence was refused",
+			evidenceFacts: { id, code: evidence.result.code },
+		});
+	}
+	if (evidence.requiredSlots.length === 0) {
+		return internalResult(input.gate, {
+			...base,
+			status: "unavailable",
+			reasonCode: "FIT01_SECURITY_REQUIRED_SLOTS_MISSING",
+			summary: "A required security gate has no required slots",
+			evidenceFacts: { id },
+		});
+	}
+	const requiredStatuses = evidence.requiredSlots.map(
+		(slot) => evidence.result.slots.find((item) => item.slot === slot)?.status ?? "unknown",
+	);
+	const nonPassing = securityStatus(requiredStatuses);
+	if (nonPassing) {
+		return internalResult(input.gate, {
+			...base,
+			...nonPassing,
+			summary: "One or more required security slots are non-passing",
+			evidenceFacts: { id, slots: evidence.requiredSlots.map((slot, index) => [slot, requiredStatuses[index]]) },
+		});
+	}
+	const passed = evidence.result.available === true && evidence.result.evidence != null;
+	return internalResult(input.gate, {
+		...base,
+		status: passed ? "passed" : "unavailable",
+		reasonCode: passed ? "FIT01_SECURITY_PASSED" : "FIT01_SECURITY_UNAVAILABLE",
+		summary: passed ? "Current required security slots passed" : "Security evidence is unavailable",
+		evidenceFacts: { id, candidateSha: evidence.candidateSha, inventoryFingerprint: evidence.inventoryFingerprint, requiredSlots: evidence.requiredSlots },
+	});
 }
 
 export async function runQualityGatePlan(input: {
@@ -251,6 +616,8 @@ export async function runQualityGatePlan(input: {
 		executor?: GateExecutorSpec;
 		executorKind?: ExecutorKind;
 	}) => Promise<GateCommandResult>;
+	/** Process-local typed results keyed by configured internal executor id. */
+	internalEvidence?: Readonly<Record<string, InternalGateEvidence | undefined>>;
 	now?: () => string;
 }): Promise<AssuranceEvidence> {
 	const now = input.now ?? (() => new Date().toISOString());
@@ -281,40 +648,57 @@ export async function runQualityGatePlan(input: {
 			return result satisfies GateCommandResult;
 		});
 	const results: AssuranceGateResult[] = [];
+	const push = (result: AssuranceGateResult): void => {
+		results.push(bindResultToPlan(input.plan, result));
+	};
 	let halted = false;
 	for (const gate of input.plan.gates) {
 		if (halted) {
-			results.push(skipped(gate, "Skipped after required gate failure"));
+			push({
+				...skipped(gate, "Skipped after required gate failure"),
+				reasonCode: "FIT01_SKIPPED_AFTER_REQUIRED_GATE",
+			});
 			continue;
 		}
 		if (gate.availability === "unavailable" && gate.executorKind !== "internal") {
-			results.push(resultForUnavailable(gate));
-			if (gate.required) halted = true;
-			continue;
-		}
-
-		// R7 / E23 — unknown internal checks fail closed (no FIT-01 adapters in BDD-01)
-		if (gate.executorKind === "internal") {
-			const id =
-				gate.executor && gate.executor.kind === "internal" ? gate.executor.id : "unknown";
-			results.push({
-				id: gate.id,
-				kind: gate.kind,
-				required: gate.required,
-				status: "unavailable",
-				summary: `Unknown internal check id '${id}' — FIT-01 adapter not available (fail closed)`,
-				executorKind: "internal",
-				trustTier: gate.trustTier ?? "trusted",
-				startedAt: now(),
-				completedAt: now(),
+			push({
+				...resultForUnavailable(gate),
+				reasonCode: "FIT01_GATE_UNAVAILABLE",
 			});
 			if (gate.required) halted = true;
 			continue;
 		}
 
+		if (gate.executorKind === "internal") {
+			const id = gate.executor?.kind === "internal" ? gate.executor.id : "unknown";
+			const gateStartedAt = now();
+			let adapted: AssuranceGateResult;
+			try {
+				adapted = adaptInternalGateEvidence({
+					gate,
+					plan: input.plan,
+					evidence: input.internalEvidence?.[id],
+					startedAt: gateStartedAt,
+					completedAt: now(),
+				});
+			} catch {
+				adapted = internalResult(gate, {
+					status: "failed",
+					reasonCode: "FIT01_INTERNAL_ADAPTER_FAILED",
+					summary: "Typed internal adapter failed closed",
+					startedAt: gateStartedAt,
+					completedAt: now(),
+					evidenceFacts: { id },
+				});
+			}
+			push(adapted);
+			if (gate.required && adapted.status !== "passed") halted = true;
+			continue;
+		}
+
 		// R6 / E21 — strict/overnight reject shell before spawn
 		if ((gate.executorKind === "shell" || !gate.executorKind) && strictish) {
-			results.push(
+			push(
 				policyRejectedResult(
 					gate,
 					`policy rejected: shell commands are untrusted under ${trustProfile} profile`,
@@ -332,7 +716,7 @@ export async function runQualityGatePlan(input: {
 			Boolean(gate.executor.file.trim()) &&
 			Array.isArray(gate.executor.args);
 		if (gate.executorKind === "argv" && !hasValidArgv) {
-			results.push(
+			push(
 				policyRejectedResult(
 					gate,
 					`policy rejected: argv executor kind requires a valid matching argv executor (no shell fallthrough)`,
@@ -343,7 +727,7 @@ export async function runQualityGatePlan(input: {
 		}
 
 		if (!gate.command && gate.executorKind !== "argv") {
-			results.push(resultForUnavailable(gate));
+			push({ ...resultForUnavailable(gate), reasonCode: "FIT01_GATE_UNAVAILABLE" });
 			if (gate.required) halted = true;
 			continue;
 		}
@@ -357,7 +741,7 @@ export async function runQualityGatePlan(input: {
 			executorKind: gate.executorKind,
 		});
 		if (result.policyRejected) {
-			results.push({
+			push({
 				id: gate.id,
 				kind: gate.kind,
 				required: gate.required,
@@ -370,24 +754,42 @@ export async function runQualityGatePlan(input: {
 				executorKind: gate.executorKind ?? result.executorKind,
 				trustTier: "policy_rejected",
 				policyRejected: true,
+				reasonCode: "FIT01_POLICY_REJECTED",
 			});
 			if (gate.required) halted = true;
 			continue;
 		}
-		const passed = result.exitCode === 0 && !result.timedOut && !result.spawnError;
-		results.push({
+		const commandPassed = result.exitCode === 0 && !result.timedOut && !result.spawnError;
+		const executorKind = gate.executorKind ?? result.executorKind;
+		const trustTier = gate.trustTier ?? result.trustTier;
+		const trustedRequiredExecutor =
+			executorKind === "argv" || executorKind === "internal"
+				? trustTier === "trusted"
+				: false;
+		const passed = commandPassed && (!gate.required || trustedRequiredExecutor);
+		const status: GateStatus = result.timedOut ? "timeout" : passed ? "passed" : "failed";
+		push({
 			id: gate.id,
 			kind: gate.kind,
 			required: gate.required,
-			status: passed ? "passed" : "failed",
+			status,
 			command: gate.command,
 			exitCode: result.exitCode,
 			summary: result.summary,
 			startedAt: gateStartedAt,
 			completedAt: now(),
-			executorKind: gate.executorKind ?? result.executorKind,
-			trustTier: gate.trustTier ?? result.trustTier,
+			executorKind,
+			trustTier,
 			policyRejected: false,
+			reasonCode: result.timedOut
+				? "FIT01_COMMAND_TIMEOUT"
+				: result.spawnError
+					? "FIT01_COMMAND_SPAWN_FAILED"
+					: !commandPassed
+						? "FIT01_COMMAND_NONZERO"
+						: gate.required && !trustedRequiredExecutor
+							? "FIT01_REQUIRED_EXECUTOR_UNTRUSTED"
+							: "FIT01_GATE_PASSED",
 		});
 		if (!passed && gate.required) halted = true;
 	}
@@ -398,115 +800,8 @@ export async function runQualityGatePlan(input: {
 		completedAt: now(),
 		ok: results.every((result) => !result.required || result.status === "passed"),
 		results,
+		resultsFingerprint: fingerprintGateResults(results),
 	};
-}
-
-export function assuranceHandoffGaps(
-	evidence: BddEvidence,
-	policy: {
-		enabled?: boolean;
-		expectedPlanFingerprint?: string;
-		expectedRequiredGateKinds?: readonly QualityGateKind[];
-		expectedConfigFingerprint?: string;
-		requireCausalRed?: boolean;
-		requireCommandBackedMatchedMutation?: boolean;
-	},
-): string[] {
-	if (!policy.enabled) return [];
-	const run = evidence.assurance;
-	if (!run) return ["assurance gate run"];
-	const gaps: string[] = [];
-	if (!run.ok || run.results.some((result) => result.required && result.status !== "passed")) {
-		gaps.push("assurance required gates are not green");
-	}
-	const expectedRequired = policy.expectedRequiredGateKinds?.length
-		? policy.expectedRequiredGateKinds
-		: (["unit"] as const);
-	for (const kind of expectedRequired) {
-		const passed = run.results.some(
-			(result) => result.kind === kind && result.required && result.status === "passed",
-		);
-		if (!passed) gaps.push(`assurance required gate ${kind} lacks current passing evidence`);
-	}
-	if (policy.expectedPlanFingerprint && run.planFingerprint !== policy.expectedPlanFingerprint) {
-		gaps.push("assurance plan fingerprint is stale");
-	}
-	if (
-		policy.expectedConfigFingerprint &&
-		run.configFingerprint !== policy.expectedConfigFingerprint
-	) {
-		gaps.push("assurance config fingerprint is stale (stale-config)");
-	}
-	if (evidence.green?.at && run.completedAt <= evidence.green.at) {
-		gaps.push("assurance gate run is older than the latest green evidence");
-	}
-
-	// E28 / E43 / E48 — required passing results are trusted only when executorKind is
-	// explicitly argv|internal and tier is not untrusted/policy-rejected. Shell, missing,
-	// and unknown kinds always create an executor/trust gap (no missing-kind legacy exception).
-	for (const result of run.results) {
-		if (!result.required || result.status !== "passed") continue;
-		const tier = `${result.trustTier ?? ""}`;
-		const kind = `${result.executorKind ?? ""}`;
-		const trustedKind = /^(argv|internal)$/i.test(kind);
-		if (!trustedKind) {
-			gaps.push(
-				`required gate ${result.kind} has untrusted or missing executor kind (${kind || "missing"}) and cannot satisfy assurance`,
-			);
-			continue;
-		}
-		if (/interactive_untrusted|untrusted|legacy|policy_rejected/i.test(tier)) {
-			gaps.push(
-				`required gate ${result.kind} result is untrusted (${tier}) and cannot satisfy assurance`,
-			);
-		}
-	}
-
-	// Non-causal / legacy red under assurance
-	if (policy.requireCausalRed) {
-		const red = evidence.red;
-		if (!red || red.assuranceEligible !== true) {
-			gaps.push(
-				"non-causal red: assurance-eligible expected-red evidence required under assurance",
-			);
-		}
-	}
-
-	// E41 — red/green config fingerprints must bind current expected config
-	if (policy.expectedConfigFingerprint) {
-		const expected = policy.expectedConfigFingerprint;
-		if (evidence.red?.configFingerprint && evidence.red.configFingerprint !== expected) {
-			gaps.push(
-				`stale red config fingerprint (red=${evidence.red.configFingerprint}, expected=${expected})`,
-			);
-		}
-		if (evidence.green?.configFingerprint && evidence.green.configFingerprint !== expected) {
-			gaps.push(
-				`stale green config fingerprint (green=${evidence.green.configFingerprint}, expected=${expected})`,
-			);
-		}
-		// Missing fingerprints on red/green also gap when current expected fingerprint is required
-		if (evidence.red && !evidence.red.configFingerprint) {
-			gaps.push("red config fingerprint missing (must bind current config)");
-		}
-		if (evidence.green && !evidence.green.configFingerprint) {
-			gaps.push("green config fingerprint missing (must bind current config)");
-		}
-	}
-
-	// E29 / E40 — command-backed matched mutation requires explicit matched === true
-	if (policy.requireCommandBackedMatchedMutation) {
-		const mutation = evidence.mutation;
-		const hasCommands = Boolean(mutation?.failCommand?.trim() && mutation?.passCommand?.trim());
-		const matched = mutation?.matched === true && hasCommands;
-		if (!mutation?.proven || !matched) {
-			gaps.push(
-				"command-backed matched mutation / sensitivity evidence required (matched must be true; note-only or undefined matched is insufficient)",
-			);
-		}
-	}
-
-	return gaps;
 }
 
 export function formatQualityGatePlan(plan: QualityGatePlan): string {
@@ -535,9 +830,12 @@ export function formatQualityGateRun(run: AssuranceEvidence): string {
 		`# Assurance gates — ${run.ok ? "PASS" : "FAIL"}`,
 		``,
 		`- plan: \`${run.planFingerprint}\``,
+		`- results: \`${run.resultsFingerprint ?? "missing"}\``,
 		`- passed: ${counts("passed")}`,
 		`- failed: ${counts("failed")}`,
 		`- unavailable: ${counts("unavailable")}`,
+		`- timeout: ${counts("timeout")}`,
+		`- stale: ${counts("stale")}`,
 		`- skipped: ${counts("skipped")}`,
 		``,
 		...run.results.map(

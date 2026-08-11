@@ -2,6 +2,10 @@
  * Cross-project BDD/TDD types for the Pi bdd-mode extension.
  */
 
+import type { DecisionHandoffResultV1 } from "../decisions/evidence.ts";
+import type { TrajectoryEvaluation } from "../trajectory/types.ts";
+import type { EvaluateCostBudgetResult } from "./cost-budget.ts";
+
 export const BDD_PHASES = [
 	"off",
 	"discovery",
@@ -27,6 +31,9 @@ export const QUALITY_GATE_KINDS = [
 	"mutation",
 	"architecture",
 	"doctor",
+	"trajectory",
+	"decision",
+	"budget",
 	"security",
 	"performance",
 ] as const;
@@ -92,7 +99,7 @@ export interface ShellCommandSpec {
 	trustTier?: TrustTier;
 }
 
-/** Internal check id — unknown ids fail closed until FIT-01 adapters exist. */
+/** Internal check id — only registered FIT-01 ids have typed adapters. */
 export interface InternalCommandSpec {
 	kind: "internal";
 	id: string;
@@ -140,23 +147,47 @@ export interface AssuranceConfig {
 	gateTimeoutMs?: Partial<Record<QualityGateKind, number>>;
 }
 
-export interface AssuranceGateResult {
+export type GateStatus =
+	| "passed"
+	| "failed"
+	| "unavailable"
+	| "skipped"
+	| "timeout"
+	| "stale";
+
+/**
+ * The sole canonical quality-gate result. Dependency-native statuses are
+ * adapted into this shape and never form a parallel gate vocabulary.
+ */
+export interface GateResult {
 	id: string;
 	kind: QualityGateKind;
 	required: boolean;
-	status: "passed" | "failed" | "unavailable" | "skipped";
+	status: GateStatus;
 	command?: string;
 	exitCode?: number;
 	summary: string;
 	startedAt?: string;
 	completedAt?: string;
+	/** Source observation time for typed internal evidence. */
+	observedAt?: string;
 	/** shell | argv | internal */
 	executorKind?: ExecutorKind;
 	/** trusted | interactive_untrusted | … */
 	trustTier?: TrustTier | string;
 	/** True when policy rejected before spawn. */
 	policyRejected?: boolean;
+	/** Stable package-owned classification; never parsed from command prose. */
+	reasonCode?: string;
+	/** Exact run policy bindings added by the canonical runner. */
+	planFingerprint?: string;
+	profileFingerprint?: string;
+	/** SHA-256 over bounded typed source facts for this result. */
+	evidenceFingerprint?: string;
 }
+
+/** BDD-01 compatibility name; GateResult is the canonical FIT-01 model. */
+export type AssuranceGateResult = GateResult;
 
 export interface AssuranceEvidence {
 	profileFingerprint: string;
@@ -166,8 +197,84 @@ export interface AssuranceEvidence {
 	startedAt: string;
 	completedAt: string;
 	ok: boolean;
-	results: AssuranceGateResult[];
+	results: GateResult[];
+	/** SHA-256 over the exact canonical result array. */
+	resultsFingerprint?: string;
 }
+
+export const FIT_INTERNAL_GATE_IDS = Object.freeze({
+	trajectory: "fit.trajectory.v1",
+	decision: "fit.decision.v1",
+	budget: "fit.budget.v1",
+	security: "fit.security.v1",
+} as const);
+
+export type FitInternalGateAdapter = keyof typeof FIT_INTERNAL_GATE_IDS;
+
+interface InternalGateEvidenceBase {
+	version: 1;
+	adapter: FitInternalGateAdapter;
+	planFingerprint: string;
+	profileFingerprint: string;
+	observedAt: string;
+}
+
+export interface TrajectoryInternalGateEvidence extends InternalGateEvidenceBase {
+	adapter: "trajectory";
+	expectedRunId: string;
+	result: TrajectoryEvaluation;
+}
+
+export interface DecisionInternalGateEvidence extends InternalGateEvidenceBase {
+	adapter: "decision";
+	expectedStoreFingerprint: string;
+	expectedApprovalFingerprint: string;
+	result: DecisionHandoffResultV1;
+}
+
+export interface BudgetInternalGateEvidence extends InternalGateEvidenceBase {
+	adapter: "budget";
+	result: EvaluateCostBudgetResult;
+}
+
+export type SecurityGateSlotStatusV1 =
+	| "successful"
+	| "failed"
+	| "timeout"
+	| "aborted"
+	| "unavailable"
+	| "unknown"
+	| "stale"
+	| "untrusted";
+
+export type SecurityGateSlotsResultV1 =
+	| Readonly<{
+			ok: true;
+			available: boolean;
+			slots: readonly Readonly<{
+				slot: "secret" | "sast" | "sca" | "license";
+				status: SecurityGateSlotStatusV1;
+			}>[];
+			evidence?: object;
+	  }>
+	| Readonly<{ ok: false; code: string }>;
+
+export interface SecurityInternalGateEvidence extends InternalGateEvidenceBase {
+	adapter: "security";
+	candidateSha: string;
+	expectedCandidateSha: string;
+	inventoryFingerprint: string;
+	expectedInventoryFingerprint: string;
+	requiredSlots: readonly ("secret" | "sast" | "sca" | "license")[];
+	result: SecurityGateSlotsResultV1;
+}
+
+/** Typed process-local evidence accepted by the four FIT-01 adapters. */
+export type InternalGateEvidence =
+	| TrajectoryInternalGateEvidence
+	| DecisionInternalGateEvidence
+	| BudgetInternalGateEvidence
+	| SecurityInternalGateEvidence;
 
 export interface BddConfig {
 	version: 1;
