@@ -28,6 +28,12 @@ For high-assurance, multi-agent, or production-critical work, read both package 
 
 Operationalize the playbook through deterministic phase control, **CAID isolation** (skill `caid`), independent test design, one writer, fresh role contexts, least-privilege tools, schema-constrained handoffs, trajectory evaluation (skill `trajectory`), cost budgets (`lib/bdd/cost-budget.ts`), current hard-gate evidence, and explicit human approvals. **Human merge authority** is final. Do not claim a roadmap control is enforced, and do not auto-install or synthesize an unpinned command for a named tool.
 
+## Role contract boundary (V1)
+
+Before `bdd_delegate_role`, validate one CON-01 `RoleRequestV1` with `schemaVersion: 1`: `taskId`/`goal`, phase/write scope, locked artifact refs, `ownedPaths`/`forbiddenPaths`, exact tools, model/thinking, and bounded budget. Missing or contradictory scope and high-risk product, security, data, architecture, public-API, destructive-action, or authority ambiguity blocks before delegation. Every role defaults to no nested delegation.
+
+Before recording role completion or advancing from it, validate `RoleResultV1`: exact status, SHA/dirty state, changed files or finding refs, commands/evidence, blockers, residual risks/questions, and usage. Unknown, failed, blocked, dirty, or out-of-scope results remain so. `RoleRequestV1` and `RoleResultV1` are evidence contracts; validation does not grant approval, a writer lease, a BDD phase transition, assurance, cleanup, PR, merge, or release authority. Prompt rules are defense in depth; CON, ISO, SEC, and BDD runtime controls enforce their own boundaries.
+
 ## When to load
 
 - User asks for BDD, TDD, Example Map, Gherkin, red-green-refactor, or acceptance tests

@@ -12,6 +12,12 @@ description: >
 
 Coordinate; do not duplicate worker implementation. Keep one writer per checkout/worktree and one owner per shared resource.
 
+## Role contract boundary (V1)
+
+Before pane creation or prompt, validate a CON-01 `RoleRequestV1` with `schemaVersion: 1`: task/focus, phase/write scope, locked artifact refs, repository-relative `ownedPaths`/`forbiddenPaths`, exact tools/model/thinking, and bounded token/cost/duration budget. Missing, contradictory, out-of-scope, over-budget, or high-risk product/security/data/architecture/public-API/destructive-action/authority ambiguity blocks before spawn. Delegation inside the worker defaults to none.
+
+After wait → get → read, accept completion only through a validated `RoleResultV1` preserving exact status, SHA/dirty state, changed files or finding refs, command/evidence claims, blockers, residual risks/questions, and usage. Invalid, unknown, blocked, failed, dirty, or out-of-scope results remain non-passing. Request/result validation does not grant approval, a writer lease, a BDD phase transition, assurance, cleanup, PR, merge, or release authority; ISO/runtime/human authorities remain separate.
+
 ## Preconditions
 
 1. Load the **`herdr`** skill and follow its safety rules.
@@ -21,19 +27,19 @@ Coordinate; do not duplicate worker implementation. Keep one writer per checkout
 
 ## Budget before spawning
 
-Write a worker contract before creating a pane:
+Render the validated `RoleRequestV1` into a concise worker contract before creating a pane; the structured envelope remains source of truth:
 
 ```text
-objective: one bounded deliverable
-owned paths/worktree: exact scope
-forbidden: unrelated paths, merge, shared-main cleanup, destructive git
-model: <provider/model>
-thinking: <off|minimal|low|medium|high|xhigh|max>
-tool scope: minimum needed
-context budget: checkpoint at 60%, stop/compact before 80%
-wall timeout: <milliseconds>
+schemaVersion: 1
+task/focus: <taskId + role-specific goal>
+locked inputs: <bounded artifact refs>
+ownedPaths / forbiddenPaths: <exact repository-relative lists>
+model / thinking / tools: <validated explicit launch profile>
+budget: <maxTokens, maxCostUsd, maxDurationMs at or below role ceiling>
+context checkpoint: report near 60%; stop/compact before 80%
 max follow-up resumes: 2
-report: commands, changed paths, tests, SHA/evidence, blockers, residual risks
+authority: no merge, approval, lease transfer, cleanup, or destructive git
+result: validated RoleResultV1 with status, commands/evidence, changed files or findings, blockers, residual risks/questions, and usage
 ```
 
 Start Pi with the chosen model/thinking flags after Herdr's `--` separator, for example:

@@ -11,6 +11,12 @@ description: >
 
 **Not a second phase engine.** Call existing tools; stop on failed asserts.
 
+## Role contract boundary (V1)
+
+Before each role delegation, validate a CON-01 `RoleRequestV1` with `schemaVersion: 1`, task/focus, locked artifact refs, `ownedPaths`/`forbiddenPaths`, exact tools/model/thinking, and bounded budget. Default role delegation depth is zero. Missing, contradictory, out-of-scope, or high-risk ambiguous input blocks; the parent asks rather than guessing.
+
+Before accepting a role handoff or using it for a later step, validate `RoleResultV1` and preserve exact status, SHA/dirty state, changed files or finding refs, command/evidence claims, blockers, residual risks/questions, and usage. A valid request/result does not grant approval, a writer lease, a BDD phase transition, assurance, cleanup, PR, merge, or release authority; the relevant parent/runtime/human authority must still act.
+
 ## Preconditions
 
 1. `/reload` if package just updated  
@@ -80,8 +86,9 @@ Reply A, B, or C (and edit names if you want).
 /bdd discovery
 bdd_assurance_plan                    # compiled local gate + role blueprint
 # Optional isolated specifier (one bounded role):
+# validate RoleRequestV1, then delegate exactly that locked request
 bdd_delegate_role role=specifier workspaceConfirmed=true task="..."
-# Parent/human writes and approves Example Map (Rules / Examples / Questions)
+# validate RoleResultV1; parent/human writes and approves Example Map
 bdd_record_evidence exampleMapRef=... exampleMapRules=N exampleMapExamples=N
 ```
 Optional: `/fleet research 3 <open questions>` if unknowns remain.
@@ -90,8 +97,9 @@ Optional: `/fleet research 3 <open questions>` if unknowns remain.
 ```text
 /bdd formulation
 # Optional isolated test designer; never show it implementation internals unnecessarily:
+# validate RoleRequestV1; owned tests/specs and forbidden production paths are exact
 bdd_delegate_role role=test-designer workspaceConfirmed=true task="locked specs + expected red"
-# Gherkin and/or unit test skeletons only — no production impl
+# validate RoleResultV1; Gherkin/tests only — no production impl
 ```
 
 ### 3. Red
@@ -104,8 +112,9 @@ bdd_assert_red   # must FAIL (not timeout/127)
 ```text
 /bdd green
 # Parent or one isolated implementer; tests remain locked:
+# validate RoleRequestV1; owned production and forbidden test/spec paths are exact
 bdd_delegate_role role=implementer workspaceConfirmed=true task="locked red command + contracts"
-# minimum implementation
+# validate RoleResultV1; minimum implementation only
 bdd_assert_green   # must PASS and cover red; invalidates prior assurance evidence
 ```
 
@@ -144,6 +153,7 @@ bdd_handoff asPr=true title="<PR title>"
 - Fleet blocked in green → you skipped verify  
 - Required gate failed/unavailable → configure/fix it; never soften the threshold in green
 - Gate evidence predates green or plan fingerprint changed → rerun gates
+- Invalid `RoleRequestV1` or `RoleResultV1`, path drift, high-risk ambiguity, or non-completed status → block; never normalize it into completion
 - Handoff missing synthesis/disposition → finish collect + synthesis.md and record no-blocker/accepted/deferred disposition
 
 ## Defaults
