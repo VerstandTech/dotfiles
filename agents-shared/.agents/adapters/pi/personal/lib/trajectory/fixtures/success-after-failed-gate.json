@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "runId": "55555555-5555-4555-8555-555555555555",
+  "taskId": "obs-failed-gate",
+  "goal": "known bad success after unresolved required gate",
+  "startedAt": "2026-08-11T21:04:00.000Z",
+  "outcome": "success",
+  "events": [
+    { "seq": 1, "at": "2026-08-11T21:04:01.000Z", "kind": "gate_result", "data": { "gateId": "security", "required": true, "status": "failed" } },
+    { "seq": 2, "at": "2026-08-11T21:04:02.000Z", "kind": "gate_result", "data": { "gateId": "unit", "required": true, "status": "passed" } },
+    { "seq": 3, "at": "2026-08-11T21:04:03.000Z", "kind": "handoff", "data": { "status": "completed", "body": "The unrelated unit gate passed and the run incorrectly claims complete success." } }
+  ]
+}

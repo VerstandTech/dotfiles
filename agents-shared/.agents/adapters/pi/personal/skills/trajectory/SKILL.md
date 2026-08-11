@@ -1,15 +1,16 @@
 ---
 name: trajectory
 description: >-
-  Trajectory and process supervision for multi-agent runs: anti-pattern
-  detection, assertion evaluation, golden suite stubs. Use when scoring agent
-  paths, adding process gates, or /skill:trajectory.
+  Trajectory and process supervision for multi-agent runs: redacted recording,
+  anti-pattern detection, assertion evaluation, golden suite fixtures. Use when
+  scoring agent paths, adding process gates, or /skill:trajectory.
 ---
 
 # Trajectory / process supervision
 
 Outcome-only metrics hide unsafe paths. This skill scores **how** agents reach
-green: tool sequences, phase order, false completion, collusion signals.
+green: tool sequences, phase order, false completion, collusion signals — and
+records observations only after RED-01 succeeds.
 
 ## Library
 
@@ -17,29 +18,38 @@ green: tool sequences, phase order, false completion, collusion signals.
 |------|---------|
 | `lib/trajectory/types.ts` | Run, event, assertion, golden suite types |
 | `lib/trajectory/anti-patterns.ts` | Deterministic anti-pattern detectors |
-| `lib/trajectory/evaluate.ts` | Metrics, assertions, golden suite eval |
-| `lib/trajectory/golden-suite.stub.json` | Starter golden suite (replace fixtures with real runs) |
+| `lib/trajectory/evaluate.ts` | Metrics, assertions, golden suite eval, run validation |
+| `lib/trajectory/record.ts` | Pure recorder, buffer, sequence restore, retention planner |
+| `lib/trajectory/golden-suite.v1.json` | Committed positive/negative golden suite |
+| `lib/trajectory/fixtures/**` | Exact accepted and rejected run fixtures |
+| `extensions/trajectory-logger.ts` | Thin Pi adapter (session/tool/event-bus) |
 
 ## Record a run
 
-Append-only event log (never store secrets in `preview` / `data`):
+Use the pure recorder (or the Pi extension). RED-01 runs before every sink and
+digest. Callers never supply persisted `seq`.
 
-```json
-{
-  "version": 1,
-  "runId": "…",
-  "taskId": "billing-round",
-  "goal": "…",
-  "startedAt": "…",
-  "events": [
-    { "seq": 1, "at": "…", "kind": "phase_change", "data": { "phase": "red" } },
-    { "seq": 2, "at": "…", "kind": "tool_call", "tool": "bdd_assert_red", "agent": "test-designer" }
-  ],
-  "outcome": "success"
-}
+```ts
+import { createTrajectoryRecorderV1 } from "../lib/trajectory/record.ts";
+
+const recorder = createTrajectoryRecorderV1({
+  now: () => "2026-08-11T21:00:00.000Z",
+  appendSessionEntry: (type, value) => pi.appendEntry(type, value),
+});
+await recorder.record({
+  schemaVersion: 1,
+  kind: "phase_change",
+  data: { phase: "red" },
+});
 ```
 
-Suggested path: `.pi/trajectories/<date>/<taskId>-<runId>.json`.
+Optional file NDJSON persistence is **disabled by default** and requires an
+explicit trusted-project flag (`--trajectory-file`) plus a safe fixed-root
+writer. Session custom entry type: `assurance-trajectory-event-v1`.
+Event-bus channel: `assurance:trajectory`.
+
+Suggested path when file persistence is approved:
+`.pi/trajectories/<session-id>-<segment>.ndjson`.
 
 ## Evaluate
 
@@ -57,32 +67,37 @@ const evaluation = evaluateTrajectory(run, [
 ]);
 ```
 
-`ok` is false if any assertion fails **or** any **error**-severity anti-pattern hits.
+`ok` is false if any assertion fails, the run is invalid, **or** any
+**error**-severity anti-pattern hits. Invalid runs report `status: "invalid"`
+and `INVALID_TRAJECTORY`.
 
 ## Anti-patterns (error-level)
 
 | Code | Meaning |
 |------|---------|
-| `SUCCESS_AFTER_FAILED_GATE` | Outcome success with failed gate events |
+| `SUCCESS_AFTER_FAILED_GATE` | Success with unresolved required gate failure (same gate id can recover) |
 | `FALSE_COMPLETION` | Handoff/done before later gate failure resolved |
-| `TEST_AND_IMPL_SAME_AGENT` | Same agent writes tests and production paths |
+| `TEST_AND_IMPL_SAME_AGENT` | Same actor writes test and production path classes |
 | `MISSING_RED_BEFORE_GREEN` | Green phase without prior red |
-| `SECRET_IN_PREVIEW` | Secret-shaped payload in trajectory |
+| `SECRET_IN_PREVIEW` | Secret-shaped payload in trajectory (markers stripped first) |
+| `INVALID_TRAJECTORY` | Non-contiguous/hostile/malformed run envelope |
 
 Warnings include unbounded loops, empty handoffs, impl-before-tests, bypass without reason.
 
 ## Golden suite
 
-1. Copy `golden-suite.stub.json` → project `.pi/trajectory-golden.json`.
-2. Record successful (and known-bad) runs under `fixtures/`.
-3. On prompt/skill/role changes, re-run `evaluateGoldenSuite`.
+1. Committed suite: `golden-suite.v1.json` + `fixtures/*.json`.
+2. Entries may set `expectedOk` and `requiredAntiPatterns`.
+3. On prompt/skill/role changes, re-run `bun test lib/trajectory`.
 4. Fail CI when error-level regressions appear.
+5. E2E-01 may read fixtures; it must not rewrite them.
 
 ## Pair with
 
-- Fitness Guardian / verify phase
+- Fitness Guardian / verify phase (FIT-01 owns canonical gate integration)
 - Overnight rhythm re-runs (`docs/overnight-rhythm.md`)
 - CAID handoff events (`kind: "handoff"`)
+- RED-01 before every sink
 
 ## Tests
 

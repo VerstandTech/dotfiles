@@ -12,6 +12,93 @@ import type {
 	TrajectoryMetrics,
 	TrajectoryRun,
 } from "./types.ts";
+import { TRAJECTORY_EVENT_KINDS } from "./types.ts";
+
+const KNOWN_KINDS = new Set<string>(TRAJECTORY_EVENT_KINDS);
+
+const MAX_EVENTS = 10_000;
+const MAX_ASSERTIONS = 256;
+
+function emptyMetrics(): TrajectoryMetrics {
+	return { toolCalls: 0, errors: 0, phaseChanges: 0, gateFailures: 0 };
+}
+
+function invalidEvaluation(runId: string, message: string): TrajectoryEvaluation {
+	return Object.freeze({
+		runId,
+		ok: false,
+		status: "invalid",
+		results: Object.freeze([
+			Object.freeze({ id: "invalid-run", ok: false, summary: message }),
+		]),
+		metrics: Object.freeze(emptyMetrics()),
+		antiPatterns: Object.freeze([`INVALID_TRAJECTORY: ${message}`]),
+	});
+}
+
+function isTimestamp(value: unknown): value is string {
+	return typeof value === "string" && value.length > 0 && value.length <= 64;
+}
+
+function timestampMs(value: string): number | undefined {
+	// Strict ordering is enforced only for parseable timestamps (ISO-like).
+	// Legacy short fixture stamps such as "t" remain accepted for compatibility.
+	if (!/\d{4}-\d{2}-\d{2}/.test(value)) return undefined;
+	const ms = Date.parse(value);
+	return Number.isFinite(ms) ? ms : undefined;
+}
+
+export function validateTrajectoryRunV1(run: unknown): { ok: true; value: TrajectoryRun } | { ok: false; code: string; message: string } {
+	if (!run || typeof run !== "object" || Array.isArray(run)) {
+		return { ok: false, code: "invalid-run", message: "Run must be a plain object" };
+	}
+	const candidate = run as Record<string, unknown>;
+	if (candidate.version !== 1) {
+		return { ok: false, code: "unsupported-version", message: "Unsupported run version" };
+	}
+	if (typeof candidate.runId !== "string" || candidate.runId.length === 0) {
+		return { ok: false, code: "invalid-run", message: "Missing runId" };
+	}
+	if (typeof candidate.taskId !== "string" || candidate.taskId.length === 0) {
+		return { ok: false, code: "invalid-run", message: "Missing taskId" };
+	}
+	if (!isTimestamp(candidate.startedAt)) {
+		return { ok: false, code: "invalid-run", message: "Invalid startedAt" };
+	}
+	if (!Array.isArray(candidate.events)) {
+		return { ok: false, code: "invalid-run", message: "Missing events" };
+	}
+	if (candidate.events.length > MAX_EVENTS) {
+		return { ok: false, code: "bound-exceeded", message: "Too many events" };
+	}
+	let previousSeq = 0;
+	let previousAt = 0;
+	for (let i = 0; i < candidate.events.length; i++) {
+		const event = candidate.events[i];
+		if (!event || typeof event !== "object" || Array.isArray(event)) {
+			return { ok: false, code: "invalid-event", message: `Invalid event at index ${i}` };
+		}
+		const row = event as TrajectoryEvent;
+		if (!Number.isSafeInteger(row.seq) || row.seq !== previousSeq + 1) {
+			return { ok: false, code: "sequence-invalid", message: "Event sequence must be contiguous from 1" };
+		}
+		previousSeq = row.seq;
+		if (!isTimestamp(row.at)) {
+			return { ok: false, code: "invalid-event", message: `Invalid timestamp at seq ${row.seq}` };
+		}
+		const atMs = timestampMs(row.at);
+		if (atMs !== undefined) {
+			if (previousAt > 0 && atMs < previousAt) {
+				return { ok: false, code: "invalid-event", message: `Decreasing timestamp at seq ${row.seq}` };
+			}
+			previousAt = atMs;
+		}
+		if (typeof row.kind !== "string" || row.kind.length === 0 || !KNOWN_KINDS.has(row.kind)) {
+			return { ok: false, code: "invalid-event-kind", message: `Unknown or missing event kind at seq ${row.seq}` };
+		}
+	}
+	return { ok: true, value: candidate as unknown as TrajectoryRun };
+}
 
 export function computeTrajectoryMetrics(run: TrajectoryRun): TrajectoryMetrics {
 	const events = run.events ?? [];
@@ -77,6 +164,29 @@ function assertRequiredTools(
 			summary: ok ? "Unordered tool multiset match" : "Unordered tool multiset mismatch",
 		};
 	}
+	if (mode === "superset") {
+		// Required tools must appear in order; extra tools are allowed (true superset of the required sequence).
+		let i = 0;
+		for (const t of tools) {
+			if (t === required[i]) i++;
+			if (i >= required.length) break;
+		}
+		const ok = i >= required.length;
+		return {
+			id: assertion.id,
+			ok,
+			summary: ok
+				? `Superset tool sequence contains required tools in order (${required.join(" → ")})`
+				: `Missing required tools in order for superset match; matched ${i}/${required.length}`,
+		};
+	}
+	if (mode !== "subset") {
+		return {
+			id: assertion.id,
+			ok: false,
+			summary: `Unknown assertion match mode: ${String(mode)}`,
+		};
+	}
 	// subset (default): all required appear in order (not necessarily contiguous)
 	let i = 0;
 	for (const t of tools) {
@@ -129,12 +239,12 @@ export function evaluateAssertion(
 	}
 
 	if (assertion.forbidSuccessAfterFailedGate) {
-		const metrics = computeTrajectoryMetrics(run);
-		if (run.outcome === "success" && metrics.gateFailures > 0) {
+		const anti = detectTrajectoryAntiPatterns(run);
+		if (anti.some((hit) => hit.code === "SUCCESS_AFTER_FAILED_GATE")) {
 			return {
 				id: assertion.id,
 				ok: false,
-				summary: "Success outcome with gate failures",
+				summary: "Success outcome with unresolved required gate failures",
 			};
 		}
 	}
@@ -169,18 +279,26 @@ export function evaluateTrajectory(
 	run: TrajectoryRun,
 	assertions: TrajectoryAssertion[] = [],
 ): TrajectoryEvaluation {
-	const metrics = computeTrajectoryMetrics(run);
-	const results = assertions.map((a) => evaluateAssertion(run, a));
-	const anti = detectTrajectoryAntiPatterns(run);
+	if (assertions.length > MAX_ASSERTIONS) {
+		return invalidEvaluation(typeof run?.runId === "string" ? run.runId : "invalid", "Too many assertions");
+	}
+	const validated = validateTrajectoryRunV1(run);
+	if (!validated.ok) {
+		return invalidEvaluation(typeof run?.runId === "string" ? run.runId : "invalid", validated.message);
+	}
+	const metrics = computeTrajectoryMetrics(validated.value);
+	const results = assertions.map((a) => evaluateAssertion(validated.value, a));
+	const anti = detectTrajectoryAntiPatterns(validated.value);
 	const errorAnti = anti.filter((h) => h.severity === "error");
 	const ok = results.every((r) => r.ok) && errorAnti.length === 0;
-	return {
-		runId: run.runId,
+	return Object.freeze({
+		runId: validated.value.runId,
 		ok,
-		results,
-		metrics,
-		antiPatterns: anti.map((h) => `${h.code}: ${h.message}`),
-	};
+		status: ok ? "pass" : "fail",
+		results: Object.freeze(results.map((r) => Object.freeze(r))),
+		metrics: Object.freeze(metrics),
+		antiPatterns: Object.freeze(anti.map((h) => `${h.code}: ${h.message}`)),
+	});
 }
 
 export function formatTrajectoryEvaluation(ev: TrajectoryEvaluation): string {
@@ -188,6 +306,7 @@ export function formatTrajectoryEvaluation(ev: TrajectoryEvaluation): string {
 		`# Trajectory evaluation — ${ev.ok ? "PASS" : "FAIL"}`,
 		``,
 		`- run: \`${ev.runId}\``,
+		`- status: ${ev.status ?? (ev.ok ? "pass" : "fail")}`,
 		`- toolCalls: ${ev.metrics.toolCalls}`,
 		`- errors: ${ev.metrics.errors}`,
 		`- gateFailures: ${ev.metrics.gateFailures}`,
@@ -205,20 +324,56 @@ export function formatTrajectoryEvaluation(ev: TrajectoryEvaluation): string {
 	return lines.join("\n");
 }
 
+function entryMatchesExpectation(
+	entry: GoldenTrajectorySuite["entries"][number],
+	evaluation: TrajectoryEvaluation,
+): boolean {
+	const expectedOk = entry.expectedOk ?? true;
+	if (evaluation.ok !== expectedOk) return false;
+	const required = entry.requiredAntiPatterns ?? [];
+	return required.every((code) => evaluation.antiPatterns.some((item) => item.startsWith(`${code}:`)));
+}
+
 /** Evaluate every entry in a golden suite against provided runs keyed by entry id. */
 export function evaluateGoldenSuite(
 	suite: GoldenTrajectorySuite,
 	runsByEntryId: Record<string, TrajectoryRun>,
-): { ok: boolean; results: Array<{ entryId: string; evaluation: TrajectoryEvaluation }> } {
-	const results: Array<{ entryId: string; evaluation: TrajectoryEvaluation }> = [];
+): { ok: boolean; results: Array<{ entryId: string; evaluation: TrajectoryEvaluation; matched: boolean }> } {
+	if (!suite || suite.version !== 1 || !Array.isArray(suite.entries)) {
+		return {
+			ok: false,
+			results: [
+				{
+					entryId: "suite",
+					matched: false,
+					evaluation: invalidEvaluation("suite", "Unsupported or invalid golden suite"),
+				},
+			],
+		};
+	}
+	const ids = new Set<string>();
+	const paths = new Set<string>();
+	const results: Array<{ entryId: string; evaluation: TrajectoryEvaluation; matched: boolean }> = [];
 	for (const entry of suite.entries) {
+		if (ids.has(entry.id) || paths.has(entry.runPath)) {
+			results.push({
+				entryId: entry.id,
+				matched: false,
+				evaluation: invalidEvaluation(entry.id, "Duplicate golden entry id or run path"),
+			});
+			continue;
+		}
+		ids.add(entry.id);
+		paths.add(entry.runPath);
 		const run = runsByEntryId[entry.id];
 		if (!run) {
 			results.push({
 				entryId: entry.id,
+				matched: false,
 				evaluation: {
 					runId: "missing",
 					ok: false,
+					status: "unavailable",
 					results: [
 						{
 							id: "missing-run",
@@ -226,24 +381,21 @@ export function evaluateGoldenSuite(
 							summary: `No run provided for golden entry ${entry.id}`,
 						},
 					],
-					metrics: {
-						toolCalls: 0,
-						errors: 0,
-						phaseChanges: 0,
-						gateFailures: 0,
-					},
+					metrics: emptyMetrics(),
 					antiPatterns: [],
 				},
 			});
 			continue;
 		}
+		const evaluation = evaluateTrajectory(run, entry.assertions);
 		results.push({
 			entryId: entry.id,
-			evaluation: evaluateTrajectory(run, entry.assertions),
+			evaluation,
+			matched: entryMatchesExpectation(entry, evaluation),
 		});
 	}
 	return {
-		ok: results.every((r) => r.evaluation.ok),
+		ok: results.every((r) => r.matched),
 		results,
 	};
 }

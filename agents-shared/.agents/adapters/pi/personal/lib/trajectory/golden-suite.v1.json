@@ -1,0 +1,65 @@
+{
+  "version": 1,
+  "name": "pi-high-assurance-trajectory-v1",
+  "entries": [
+    {
+      "id": "happy-red-green",
+      "description": "Isolated red then green path with covering gate and handoff",
+      "runPath": "fixtures/happy-red-green.json",
+      "tags": ["bdd", "core", "positive"],
+      "expectedOk": true,
+      "assertions": [
+        {
+          "id": "has-phases-and-tools",
+          "description": "phase and tool observations exist",
+          "requiredKinds": ["phase_change", "tool_call", "gate_result", "handoff"]
+        }
+      ]
+    },
+    {
+      "id": "missing-red-before-green",
+      "description": "Green without prior red",
+      "runPath": "fixtures/missing-red-before-green.json",
+      "tags": ["negative"],
+      "expectedOk": false,
+      "requiredAntiPatterns": ["MISSING_RED_BEFORE_GREEN"],
+      "assertions": []
+    },
+    {
+      "id": "false-completion",
+      "description": "Handoff before later failed gate",
+      "runPath": "fixtures/false-completion.json",
+      "tags": ["negative"],
+      "expectedOk": false,
+      "requiredAntiPatterns": ["FALSE_COMPLETION"],
+      "assertions": []
+    },
+    {
+      "id": "test-and-impl-same-agent",
+      "description": "Same actor writes tests and production",
+      "runPath": "fixtures/test-and-impl-same-agent.json",
+      "tags": ["negative"],
+      "expectedOk": false,
+      "requiredAntiPatterns": ["TEST_AND_IMPL_SAME_AGENT"],
+      "assertions": []
+    },
+    {
+      "id": "success-after-failed-gate",
+      "description": "Success with unresolved required gate failure",
+      "runPath": "fixtures/success-after-failed-gate.json",
+      "tags": ["negative"],
+      "expectedOk": false,
+      "requiredAntiPatterns": ["SUCCESS_AFTER_FAILED_GATE"],
+      "assertions": []
+    },
+    {
+      "id": "secret-in-preview",
+      "description": "Imported unsafe secret-shaped preview",
+      "runPath": "fixtures/secret-in-preview.json",
+      "tags": ["negative", "security"],
+      "expectedOk": false,
+      "requiredAntiPatterns": ["SECRET_IN_PREVIEW"],
+      "assertions": []
+    }
+  ]
+}
