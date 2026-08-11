@@ -192,6 +192,10 @@ config.keys = {
 	{ key = "p", mods = "LEADER", action = act.ActivateTabRelative(-1) },
 	{ key = "n", mods = "LEADER", action = act.ActivateTabRelative(1) },
 
+	-- Explicit local Herdr attach. WezTerm remains the outer shell; Herdr owns
+	-- durable workspaces and session state. SpawnCommandInNewTab inherits cwd.
+	{ key = "a", mods = "LEADER", action = act.SpawnCommandInNewTab({ args = { "herdr" } }) },
+
 	-- Copy mode & search (great for reading logs / grabbing output)
 	{ key = "[", mods = "LEADER", action = act.ActivateCopyMode },
 	{ key = "f", mods = "CMD", action = act.Search({ CaseInSensitiveString = "" }) },
