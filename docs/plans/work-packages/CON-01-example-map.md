@@ -36,7 +36,7 @@ Authoritative artifact/path references use normalized NFC, `/`-separated reposit
 
 - **E10:** `docs/plans/work-packages/CON-01.feature` and `agents-shared/.agents/adapters/pi/personal/lib/contracts/index.ts` pass.
 - **E11:** `../x`, `a/../../x`, `/tmp/x`, `C:\\x`, `~/x`, `file:///tmp/x`, `https://x`, `a\\b`, NUL/control input, and duplicate/empty segments fail.
-- **E12:** Absolute credential references and secret-shaped artifact basenames such as `.env`, `.npmrc`, `auth.json`, private-key files, or credential stores fail structural path policy; RED-01 still owns secret-content detection and redaction.
+- **E12:** Ordinary multi-dot source leaves such as `auth.module.ts`, `credentials.client.ts`, and `secrets.service.ts` pass. Absolute credential references and secret-shaped artifact basenames such as `.env`, `.npmrc`, `auth.json`, `auth.json.bak`, private-key files, or credential stores fail structural path policy; a credential stem alone never makes every multi-dot source filename secret. RED-01 still owns secret-content detection and redaction.
 
 ### R5 — RoleRequestV1 is bounded and spawn-ready without granting runtime authority
 
@@ -108,6 +108,7 @@ A bounded legacy Markdown adapter may preserve migration display data, but it al
 8. **Q8 — Should CON-01 import BDD runtime logic?** Only type-level semantics or a pure field bridge; it must not duplicate `validateRedResult`, trust policy, or gate execution.
 9. **Q9 — File I/O or `.pi/handoffs` persistence?** No. CON-01 is pure; ORC-01/OBS-01 add sinks only after RED-01.
 10. **Q10 — Raw JSON duplicate-key detection?** Canonical serializers never emit duplicates. The authoritative unknown-value validator cannot observe duplicates already lost by `JSON.parse`; any future raw-text adapter must reject duplicate keys before parsing and is tested with its owning I/O package.
+11. **Q11 — Does an `auth`, `credentials`, or `secrets` stem make every multi-dot leaf secret?** No. Structural denial requires an exact secret basename, a recognized credential/key extension immediately after the stem (with optional backup/encryption suffixes), or another explicitly secret-shaped leaf. Ordinary source names such as `auth.module.ts` remain valid.
 
 ## ValidationContractV1 for CON-01
 

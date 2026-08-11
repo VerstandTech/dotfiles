@@ -45,6 +45,9 @@ Feature: Versioned contracts fail closed before structured handoff
       | path                                                        | result  |
       | docs/plans/work-packages/CON-01.feature                     | valid   |
       | agents-shared/.agents/adapters/pi/personal/lib/contracts/x  | valid   |
+      | src/auth.module.ts                                          | valid   |
+      | src/credentials.client.ts                                   | valid   |
+      | src/secrets.service.ts                                      | valid   |
       | ../outside                                                  | invalid |
       | a/../../outside                                             | invalid |
       | /tmp/outside                                                | invalid |
@@ -54,6 +57,7 @@ Feature: Versioned contracts fail closed before structured handoff
       | https://example.invalid/a                                   | invalid |
       | .env                                                        | invalid |
       | auth.json                                                   | invalid |
+      | auth.json.bak                                               | invalid |
 
   Scenario: Role requests obey the assurance role and write-scope matrix
     Given bounded requests for every existing assurance role
