@@ -2,7 +2,7 @@
   "lastChangelogVersion": "0.84.0",
   "defaultProvider": "xai",
   "defaultModel": "grok-4.5",
-  "defaultThinkingLevel": "high",
+  "defaultThinkingLevel": "medium",
   "packages": [
     "npm:pi-subagents",
     "npm:context-mode",
