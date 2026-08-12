@@ -1,23 +1,68 @@
 {
   "version": 1,
   "canonicalSkills": "skills",
+  "packages": {
+    "piPersonal": {
+      "path": "agents-shared/.agents/adapters/pi/personal",
+      "version": "0.7.3",
+      "manifestFingerprint": "40efc56e94532c20e79546b2273f5292291abeee9e374748dc8a3862a889484e",
+      "compatibility": {
+        "pi": "0.84.1",
+        "pi-subagents": "0.45.2",
+        "context-mode": "1.0.169",
+        "rulesync": "16.9.1"
+      },
+      "resourceRoots": [
+        "agents-shared/.agents/adapters/claude",
+        "agents-shared/.agents/adapters/codex",
+        "agents-shared/.agents/adapters/pi/personal",
+        "agents-shared/.agents/skills",
+        "grok/.grok/config.toml",
+        "pi/.pi/agent/settings.json"
+      ],
+      "resourceFingerprint": "a1c9bd99aaccfd44fde936f915be387f7a627c1bd84bf5135f1fc97226a537b4",
+      "runtimePackages": [
+        "npm:pi-subagents@0.45.2",
+        "npm:context-mode@1.0.169",
+        "npm:pi-markdown-preview@0.13.1",
+        "./personal",
+        "npm:pi-web-access@0.13.0"
+      ],
+      "targets": [
+        ".pi/agent/personal",
+        ".pi/agent/settings.json"
+      ]
+    }
+  },
   "skillStandard": "https://agentskills.io/specification",
   "resources": {
     "skills": {
       "portability": "cross-harness",
-      "consumers": ["claude", "codex", "grok", "opencode", "pi"]
+      "consumers": [
+        "claude",
+        "codex",
+        "grok",
+        "opencode",
+        "pi"
+      ]
     },
     "adapters/claude": {
       "portability": "claude-specific",
-      "consumers": ["claude"]
+      "consumers": [
+        "claude"
+      ]
     },
     "adapters/codex": {
       "portability": "codex-specific",
-      "consumers": ["codex"]
+      "consumers": [
+        "codex"
+      ]
     },
     "adapters/pi/personal": {
       "portability": "pi-package",
-      "consumers": ["pi"]
+      "consumers": [
+        "pi"
+      ]
     }
   },
   "discovery": {

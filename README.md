@@ -52,6 +52,9 @@ Claude's documented per-skill links while preserving local/native entries in
 `~/.claude/skills`. Vendor-specific formats stay namespaced under `adapters/`;
 they are centrally owned but are not claimed to be cross-harness standards.
 
+For frozen Pi assurance package pins, temporary-HOME validation, conservative migration,
+disable, and rollback procedures, see [`docs/pi-assurance-package.md`](docs/pi-assurance-package.md).
+
 ## Day to day
 
 Configs in `$HOME` are symlinks into this repo — edit them in place, then:

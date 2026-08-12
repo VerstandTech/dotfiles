@@ -10,6 +10,8 @@ import re
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
 NAME_PATTERN = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
 VENDOR_SKILL_PATHS = (
     "~/.claude/skills",
@@ -58,6 +60,7 @@ DEPLOYED_LINKS = {
     ".codex/RTK.md": "agents-shared/.agents/adapters/codex/RTK.md",
     ".grok/config.toml": "grok/.grok/config.toml",
     ".pi/agent/personal": "agents-shared/.agents/adapters/pi/personal",
+    ".pi/agent/settings.json": "pi/.pi/agent/settings.json",
 }
 
 
@@ -291,6 +294,7 @@ def validate_grok_config(repo: Path, errors: list[str]) -> None:
 
 
 def validate_manifest(repo: Path, errors: list[str]) -> None:
+    from package_evidence import package_manifest_fingerprint, resource_fingerprint
     path = repo / "agents-shared/.agents/manifest.json"
     try:
         manifest = json.loads(path.read_text(encoding="utf-8"))
@@ -298,10 +302,96 @@ def validate_manifest(repo: Path, errors: list[str]) -> None:
         errors.append(f"{path}: invalid or missing manifest: {exc}")
         return
 
+    if not isinstance(manifest, dict):
+        errors.append("PKG01_PACKAGE_MANIFEST_MISSING: invalid-manifest")
+        return
     if manifest.get("version") != 1:
         errors.append(f"{path}: expected manifest version 1")
     if manifest.get("canonicalSkills") != "skills":
         errors.append(f"{path}: canonicalSkills must be 'skills'")
+
+    expected_pins = {
+        "pi": "0.84.1",
+        "pi-subagents": "0.45.2",
+        "context-mode": "1.0.169",
+        "rulesync": "16.9.1",
+    }
+    packages = manifest.get("packages")
+    if not isinstance(packages, dict):
+        errors.append("PKG01_PACKAGE_MANIFEST_MISSING: invalid-manifest")
+        return
+    package = packages.get("piPersonal")
+    if not isinstance(package, dict):
+        errors.append("PKG01_PACKAGE_MANIFEST_MISSING: missing-package")
+        return
+    package_relative = package.get("path")
+    canonical_relative = "agents-shared/.agents/adapters/pi/personal"
+    if package_relative != canonical_relative:
+        errors.append("PKG01_PACKAGE_MANIFEST_MISSING: unsafe-path")
+        return
+    try:
+        package_root = (repo / canonical_relative).resolve(strict=True)
+        package_root.relative_to(repo.resolve(strict=True))
+    except (OSError, RuntimeError, ValueError):
+        errors.append("PKG01_PACKAGE_MANIFEST_MISSING: unsafe-path")
+        return
+    if package.get("compatibility") != expected_pins:
+        errors.append("PKG01_PACKAGE_MANIFEST_MISSING: pin-mismatch")
+        return
+    if package.get("version") != "0.7.3":
+        errors.append("PKG01_PACKAGE_MANIFEST_MISSING: version-mismatch")
+        return
+    required_package_keys = {
+        "path", "version", "compatibility", "runtimePackages", "targets", "resourceRoots",
+        "resourceFingerprint", "manifestFingerprint",
+    }
+    if set(package) != required_package_keys:
+        errors.append("PKG01_PACKAGE_MANIFEST_MISSING: invalid-manifest")
+        return
+    if package.get("targets") != [".pi/agent/personal", ".pi/agent/settings.json"]:
+        errors.append("PKG01_PACKAGE_MANIFEST_MISSING: invalid-manifest")
+        return
+    expected_runtime_packages = [
+        "npm:pi-subagents@0.45.2",
+        "npm:context-mode@1.0.169",
+        "npm:pi-markdown-preview@0.13.1",
+        "./personal",
+        "npm:pi-web-access@0.13.0",
+    ]
+    if package.get("runtimePackages") != expected_runtime_packages:
+        errors.append("PKG01_PACKAGE_MANIFEST_MISSING: pin-mismatch")
+        return
+    try:
+        settings = json.loads((repo / "pi/.pi/agent/settings.json").read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        errors.append("PKG01_PACKAGE_MANIFEST_MISSING: invalid-package")
+        return
+    if not isinstance(settings, dict) or settings.get("packages") != expected_runtime_packages:
+        errors.append("PKG01_PACKAGE_MANIFEST_MISSING: pin-mismatch")
+        return
+    try:
+        if package.get("manifestFingerprint") != package_manifest_fingerprint(package):
+            errors.append("PKG01_PACKAGE_MANIFEST_MISSING: fingerprint-mismatch")
+            return
+        roots = package.get("resourceRoots")
+        if not isinstance(roots, list) or package.get("resourceFingerprint") != resource_fingerprint(repo, roots):
+            errors.append("PKG01_PACKAGE_MANIFEST_MISSING: resource-mismatch")
+            return
+    except (OSError, RuntimeError, ValueError, TypeError):
+        errors.append("PKG01_PACKAGE_MANIFEST_MISSING: resource-mismatch")
+        return
+    try:
+        package_json = json.loads(
+            (package_root / "package.json").read_text(encoding="utf-8")
+        )
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        errors.append("PKG01_PACKAGE_MANIFEST_MISSING: invalid-package")
+        return
+    if not isinstance(package_json, dict):
+        errors.append("PKG01_PACKAGE_MANIFEST_MISSING: invalid-package")
+        return
+    if package_json.get("version") != package.get("version"):
+        errors.append("PKG01_PACKAGE_MANIFEST_MISSING: version-mismatch")
 
 
 def validate_repo_links(repo: Path, errors: list[str]) -> int:
