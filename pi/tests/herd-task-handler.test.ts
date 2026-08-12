@@ -52,9 +52,8 @@ describe("runHerdTask", () => {
   test("R3-E3: invalid name fails before any exec", async () => {
     const { exec, calls } = scriptedExec([]);
     const res = await runHerdTask("Bad Name", { cwd: "/r", exec });
-    expect(res.ok).toBe(false);
+    expect(res).toEqual({ ok: false, code: "invalid-name", message: "⚠ herd-task: invalid-name" });
     expect(calls).toHaveLength(0);
-    expect(res.message).toContain("⚠");
   });
 
   test("R3-E4: worktree create argv → pane id → agent start argv", async () => {
@@ -85,18 +84,31 @@ describe("runHerdTask", () => {
   });
 
   test("R3-E5: create exec failure → failure result, no agent start", async () => {
-    const { exec, calls } = scriptedExec([new Error("boom")]);
+    const { exec, calls } = scriptedExec([new Error("synthetic provider detail")]);
     const res = await runHerdTask("story-1", { cwd: "/r", exec });
-    expect(res.ok).toBe(false);
-    expect(res.message).toContain("boom");
+    expect(res).toEqual({ ok: false, code: "create-failed", message: "⚠ herd-task: create-failed" });
+    expect(JSON.stringify(res)).not.toContain("synthetic provider detail");
     expect(calls).toHaveLength(1);
   });
 
   test("R3-E5: envelope without pane id → failure result, no agent start", async () => {
     const { exec, calls } = scriptedExec([{ stdout: "{}" }]);
     const res = await runHerdTask("story-1", { cwd: "/r", exec });
-    expect(res.ok).toBe(false);
+    expect(res).toEqual({ ok: false, code: "missing-pane", message: "⚠ herd-task: missing-pane" });
     expect(calls).toHaveLength(1);
+  });
+
+  test("OPS01_START_RECOVERY: start failure retains the safe pane id without raw errors", async () => {
+    const { exec, calls } = scriptedExec([{ stdout: CREATE_OK }, new Error("synthetic startup detail")]);
+    const res = await runHerdTask("story-123", { cwd: "/r", exec });
+    expect(res).toEqual({
+      ok: false,
+      code: "start-failed",
+      paneId: "w1:p2",
+      message: "⚠ herd-task: start-failed",
+    });
+    expect(JSON.stringify(res)).not.toContain("synthetic startup detail");
+    expect(calls).toHaveLength(2);
   });
 
   test("R6-E2: messages are plain text with icon, no ANSI", async () => {

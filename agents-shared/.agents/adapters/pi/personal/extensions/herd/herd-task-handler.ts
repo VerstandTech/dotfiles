@@ -5,9 +5,11 @@
 import { buildTaskLaunch, isValidAgentName } from "./herd-task.ts";
 import type { ExecFn } from "./herd-source.ts";
 
+export type TaskFailureCode = "invalid-name" | "create-failed" | "missing-pane" | "start-failed";
+
 export type TaskResult =
   | { ok: true; paneId: string; message: string }
-  | { ok: false; message: string };
+  | { ok: false; code: TaskFailureCode; paneId?: string; message: string };
 
 /**
  * Extract the pane id from a `herdr worktree create` envelope (0.7.5 emits the
@@ -31,8 +33,13 @@ export function extractPaneId(createJson: unknown): string | null {
   return null;
 }
 
-function fail(message: string): TaskResult {
-  return { ok: false, message: `⚠ ${message}` };
+function fail(code: TaskFailureCode, paneId?: string): TaskResult {
+  return Object.freeze({
+    ok: false,
+    code,
+    ...(paneId ? { paneId } : {}),
+    message: `⚠ herd-task: ${code}`,
+  });
 }
 
 /**
@@ -45,7 +52,7 @@ export async function runHerdTask(
   deps: { cwd: string; exec: ExecFn; base?: string },
 ): Promise<TaskResult> {
   if (!isValidAgentName(name)) {
-    return fail(`invalid name ${JSON.stringify(name)} (must match [a-z][a-z0-9_-]{0,31})`);
+    return fail("invalid-name");
   }
 
   let createOut: string;
@@ -54,8 +61,8 @@ export async function runHerdTask(
       ? buildTaskLaunch({ name, cwd: deps.cwd, base: deps.base })
       : buildTaskLaunch({ name, cwd: deps.cwd });
     createOut = (await deps.exec(createArgv)).stdout;
-  } catch (err) {
-    return fail(`worktree create failed: ${err instanceof Error ? err.message : String(err)}`);
+  } catch {
+    return fail("create-failed");
   }
 
   let paneId: string | null = null;
@@ -65,13 +72,13 @@ export async function runHerdTask(
     paneId = null;
   }
   if (paneId === null) {
-    return fail(`worktree create returned no pane id (output not parsed)`);
+    return fail("missing-pane");
   }
 
   try {
     await deps.exec(["herdr", "agent", "start", name, "--kind", "pi", "--pane", paneId]);
-  } catch (err) {
-    return fail(`agent start failed on ${paneId}: ${err instanceof Error ? err.message : String(err)}`);
+  } catch {
+    return fail("start-failed", paneId);
   }
 
   return { ok: true, paneId, message: `✓ ${name} → ${paneId}` };
