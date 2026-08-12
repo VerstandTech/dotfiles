@@ -135,6 +135,40 @@ describe("OPS-01 bounded operator control", () => {
     }
   });
 
+  test("OPS01_CLEANUP_UNKNOWN: missing merge evidence stays unknown instead of blocked or ready", () => {
+    expect(planCleanupV1({
+      repository: "VerstandTech/dotfiles",
+      worktreePath: "/workspace/task",
+      branch: "feat/task",
+      candidateSha: SHA,
+      observedCandidateSha: SHA,
+      mergeSha: null,
+      merged: null,
+      clean: true,
+      writerLeaseActive: false,
+      paneId: "w1:p2",
+      paneCurrent: true,
+    })).toEqual({ ok: true, status: "unknown", executes: false, steps: [] });
+  });
+
+  test("OPS01_PATH_BINDING: traversal and root paths are rejected", () => {
+    for (const worktreePath of ["/", "/workspace/../escape", "relative/task"]) {
+      expect(planCleanupV1({
+        repository: "VerstandTech/dotfiles",
+        worktreePath,
+        branch: "feat/task",
+        candidateSha: SHA,
+        observedCandidateSha: SHA,
+        mergeSha: MERGE,
+        merged: true,
+        clean: true,
+        writerLeaseActive: false,
+        paneId: "w1:p2",
+        paneCurrent: true,
+      })).toEqual({ ok: false, code: "invalid-operator-input" });
+    }
+  });
+
   test("OPS01_CLEANUP_ORDER: exact facts produce planner-only stop-on-failure steps", () => {
     const result = planCleanupV1({
       repository: "VerstandTech/dotfiles",
@@ -150,6 +184,7 @@ describe("OPS-01 bounded operator control", () => {
       paneCurrent: true,
     });
     expect(result).toMatchObject({ ok: true, status: "ready", executes: false });
+    expect(result.steps.every((step: { requiresPreviousSuccess?: boolean }) => step.requiresPreviousSuccess === true)).toBe(true);
     expect(result.steps.map((step: { kind: string }) => step.kind)).toEqual([
       "release-agent",
       "close-pane",

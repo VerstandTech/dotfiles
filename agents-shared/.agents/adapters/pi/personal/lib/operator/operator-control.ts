@@ -125,6 +125,15 @@ function sha(value: unknown): value is string {
   return typeof value === "string" && /^[a-f0-9]{40}$/.test(value);
 }
 
+function absoluteScopedPath(value: unknown): value is string {
+  return typeof value === "string"
+    && value.length > 1
+    && value.length <= 512
+    && value.startsWith("/")
+    && !value.split("/").includes("..")
+    && !value.includes("//");
+}
+
 export function planCleanupV1(input: unknown): Readonly<PlainRecord> | Refusal {
   const root = record(input, ["repository", "worktreePath", "branch", "candidateSha", "observedCandidateSha", "mergeSha", "merged", "clean", "writerLeaseActive", "paneId", "paneCurrent"]);
   if (!root) return refusal();
@@ -135,7 +144,9 @@ export function planCleanupV1(input: unknown): Readonly<PlainRecord> | Refusal {
   const observedCandidateSha = read(root, "observedCandidateSha");
   const mergeSha = read(root, "mergeSha");
   const paneId = read(root, "paneId");
-  if (!safeId(repository, 128) || !safeId(worktreePath, 512) || !safeId(branch, 128) || !sha(candidateSha) || !sha(observedCandidateSha) || !sha(mergeSha) || !safeId(paneId)) return refusal();
+  if (!safeId(repository, 128) || !absoluteScopedPath(worktreePath) || !safeId(branch, 128) || !sha(candidateSha) || !sha(observedCandidateSha) || !safeId(paneId)) return refusal();
+  if (mergeSha === null && read(root, "merged") === null) return freeze({ ok: true, status: "unknown", executes: false, steps: [] });
+  if (!sha(mergeSha)) return refusal();
   const booleans = ["merged", "clean", "writerLeaseActive", "paneCurrent"] as const;
   if (!booleans.every((key) => typeof read(root, key) === "boolean")) return refusal();
   const blocked = read(root, "merged") !== true || read(root, "clean") !== true || read(root, "writerLeaseActive") === true || read(root, "paneCurrent") !== true || candidateSha !== observedCandidateSha;
@@ -146,13 +157,13 @@ export function planCleanupV1(input: unknown): Readonly<PlainRecord> | Refusal {
     executes: false,
     scope: { repository, worktreePath, branch, candidateSha, mergeSha, paneId },
     steps: [
-      { kind: "release-agent", target: paneId, requiresHuman: true },
-      { kind: "close-pane", target: paneId, requiresHuman: true },
-      { kind: "remove-worktree", target: worktreePath, requiresHuman: true },
-      { kind: "delete-local-branch", target: branch, requiresHuman: true },
-      { kind: "delete-remote-branch-if-exact", target: branch, requiresHuman: true },
-      { kind: "clear-exact-lease", target: worktreePath, requiresHuman: true },
-      { kind: "verify-cleanup", target: repository, requiresHuman: true },
+      { kind: "release-agent", target: paneId, requiresHuman: true, requiresPreviousSuccess: true },
+      { kind: "close-pane", target: paneId, requiresHuman: true, requiresPreviousSuccess: true },
+      { kind: "remove-worktree", target: worktreePath, requiresHuman: true, requiresPreviousSuccess: true },
+      { kind: "delete-local-branch", target: branch, requiresHuman: true, requiresPreviousSuccess: true },
+      { kind: "delete-remote-branch-if-exact", target: branch, requiresHuman: true, requiresPreviousSuccess: true },
+      { kind: "clear-exact-lease", target: worktreePath, requiresHuman: true, requiresPreviousSuccess: true },
+      { kind: "verify-cleanup", target: repository, requiresHuman: true, requiresPreviousSuccess: true },
     ],
   });
 }
