@@ -11,6 +11,7 @@ auth.json
 *.sqlite3
 sessions/
 node_modules/
+node_modules
 .tmp/
 tmp/
 cache/
