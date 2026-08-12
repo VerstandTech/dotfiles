@@ -808,9 +808,12 @@ function classifyResultEnvelopeV1(result: unknown): ResultEnvelopeKindV1 {
 		for (const key of Reflect.ownKeys(result)) {
 			if (typeof key !== "string") return "invalid";
 			const descriptor = Object.getOwnPropertyDescriptor(result, key);
-			if (!descriptor || !("value" in descriptor) || !descriptor.enumerable) return "invalid";
+			if (!descriptor || !descriptor.enumerable) return "invalid";
 			if (key === "content" || key === "details") hasChannel = true;
-			else hasLegacy = true;
+			else {
+				if (!("value" in descriptor)) return "invalid";
+				hasLegacy = true;
+			}
 		}
 		if (hasChannel && hasLegacy) return "invalid";
 		return hasChannel || !hasLegacy ? "channels" : "legacy";
@@ -848,7 +851,7 @@ export function prepareSecurityToolResultV1(input: unknown): Readonly<PlainRecor
 		}
 		const content = readOptionalResultChannelV1(rawResult, "content");
 		const details = readOptionalResultChannelV1(rawResult, "details");
-		if (content.state === "invalid" || details.state === "invalid") return refusal("redaction-refused");
+		if (content.state === "invalid") return refusal("content-redaction-refused");
 
 		const value: PlainRecord = {};
 		if (content.state === "present") {
@@ -857,14 +860,14 @@ export function prepareSecurityToolResultV1(input: unknown): Readonly<PlainRecor
 			value.content = redactedContent.value;
 		}
 
-		let detailsRefused = false;
+		let detailsRefused = details.state === "invalid";
 		if (details.state === "present") {
 			const redactedDetails = redactForPersistence(details.value);
 			if (redactedDetails.ok) value.details = redactedDetails.value;
-			else {
-				detailsRefused = true;
-				value.details = { securityPolicy: { ok: false, code: "details-redaction-refused" } };
-			}
+			else detailsRefused = true;
+		}
+		if (detailsRefused) {
+			value.details = { securityPolicy: { ok: false, code: "details-redaction-refused" } };
 		}
 
 		const boundedValue = redactForPersistence(value);

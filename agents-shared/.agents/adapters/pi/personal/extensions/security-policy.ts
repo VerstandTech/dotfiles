@@ -65,10 +65,31 @@ function setStatus(context: unknown, value: string | undefined): void {
 	}
 }
 
-function safeToolName(event: unknown): string {
-	const candidate = eventData(event, "toolName") ?? eventData(event, "tool_name") ?? "unknown-tool";
+type EventFieldV1 =
+	| Readonly<{ state: "absent" }>
+	| Readonly<{ state: "present"; value: unknown }>
+	| Readonly<{ state: "invalid" }>;
+
+function readEventFieldV1(event: unknown, key: string): EventFieldV1 {
+	try {
+		if (!event || typeof event !== "object" || Array.isArray(event)) return Object.freeze({ state: "invalid" });
+		const descriptor = Object.getOwnPropertyDescriptor(event, key);
+		if (!descriptor) return Object.freeze({ state: "absent" });
+		if (!("value" in descriptor) || !descriptor.enumerable) return Object.freeze({ state: "invalid" });
+		if (descriptor.value === undefined) return Object.freeze({ state: "absent" });
+		return Object.freeze({ state: "present", value: descriptor.value });
+	} catch {
+		return Object.freeze({ state: "invalid" });
+	}
+}
+
+function safeToolName(event: unknown): string | undefined {
+	const primary = readEventFieldV1(event, "toolName");
+	const legacy = primary.state === "absent" ? readEventFieldV1(event, "tool_name") : primary;
+	if (legacy.state !== "present") return undefined;
+	const candidate = legacy.value;
 	if (typeof candidate === "string" && /^[a-z][a-z0-9_-]{0,63}$/.test(candidate)) return candidate;
-	return "unknown-tool";
+	return undefined;
 }
 
 function deepFreezeResult<T>(value: T): T {
@@ -92,9 +113,11 @@ function safeText(value: unknown): string {
 function safeToolResultParts(value: unknown, toolName: string): { content: unknown[]; details: PlainRecord } {
 	const content = eventData(value, "content");
 	const details = eventData(value, "details");
-	const safeContent = Array.isArray(content)
-		? content
-		: [{ type: "text", text: safeText(content) }];
+	const safeContent = content === undefined
+		? [{ type: "text", text: "" }]
+		: Array.isArray(content)
+			? content
+			: [{ type: "text", text: safeText(content) }];
 	const safeDetails: PlainRecord = {};
 	if (details && typeof details === "object" && !Array.isArray(details)) {
 		try {
@@ -109,7 +132,7 @@ function safeToolResultParts(value: unknown, toolName: string): { content: unkno
 			// RED-01 returned safe data; an unexpected shape is omitted, never echoed.
 		}
 	}
-	safeDetails.securityPolicy = { ok: true, toolName };
+	if (!safeDetails.securityPolicy) safeDetails.securityPolicy = { ok: true, toolName };
 	return { content: safeContent, details: safeDetails };
 }
 
@@ -210,15 +233,37 @@ export function createSecurityPolicyExtensionV1(options: SecurityPolicyExtension
 		});
 
 		pi.on("tool_result", async (event: unknown) => {
-			const isError = eventData(event, "isError") === true;
+			const errorField = readEventFieldV1(event, "isError");
+			const contentField = readEventFieldV1(event, "content");
+			const detailsField = readEventFieldV1(event, "details");
 			const toolName = safeToolName(event);
+			if (errorField.state !== "present" || typeof errorField.value !== "boolean" || !toolName) {
+				return deepFreezeResult({
+					isError: true,
+					content: [{ type: "text", text: "security-policy: redaction-refused" }],
+					details: { securityPolicy: { ok: false, code: "redaction-refused" } },
+				});
+			}
+			const isError = errorField.value;
+			if (contentField.state === "invalid") {
+				return deepFreezeResult({
+					isError: true,
+					content: [{ type: "text", text: "security-policy: content-redaction-refused" }],
+					details: { securityPolicy: { ok: false, code: "content-redaction-refused" } },
+				});
+			}
+			const normalizedResult: PlainRecord = {};
+			if (contentField.state === "present") normalizedResult.content = contentField.value;
+			if (detailsField.state === "present") normalizedResult.details = detailsField.value;
+			else if (detailsField.state === "invalid") {
+				const detailsRefusal: PlainRecord = {};
+				Object.defineProperty(detailsRefusal, "details", { enumerable: true, get() { return undefined; } });
+				normalizedResult.details = detailsRefusal;
+			}
 			const result = prepareSecurityToolResultV1({
 				isError,
 				toolName,
-				result: {
-					content: eventData(event, "content"),
-					details: eventData(event, "details"),
-				},
+				result: normalizedResult,
 			});
 			if (eventData(result, "ok") !== true) {
 				const code = eventData(result, "code") === "content-redaction-refused"
@@ -231,9 +276,6 @@ export function createSecurityPolicyExtensionV1(options: SecurityPolicyExtension
 				});
 			}
 			const safe = safeToolResultParts(eventData(result, "value"), toolName);
-			if (eventData(result, "detailsRefused") === true) {
-				safe.details = { securityPolicy: { ok: false, code: "details-redaction-refused" } };
-			}
 			return deepFreezeResult({
 				isError,
 				content: safe.content,

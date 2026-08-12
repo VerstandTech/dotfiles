@@ -386,6 +386,54 @@ describe("SEC-01 security-policy extension", () => {
 		expect(JSON.stringify(result)).not.toContain(SYNTHETIC_SECRET);
 	});
 
+	test("SECUX01_ADAPTER_INVALID_ERROR_STATE: malformed error authority cannot normalize to success", async () => {
+		const api = await loadExtension();
+		const harness = fakePi();
+		const view = context();
+		api.createSecurityPolicyExtensionV1({ profileInput: { machineProfile: "interactive" } })(harness.pi);
+		await harness.emit("session_start", {}, view.ctx);
+		const result = await harness.emit("tool_result", {
+			toolName: "bash",
+			isError: "yes",
+			content: [{ type: "text", text: "failed" }],
+		}, view.ctx);
+		expect(result).toMatchObject({
+			isError: true,
+			details: { securityPolicy: { ok: false, code: "redaction-refused" } },
+		});
+	});
+
+	test("SECUX01_ADAPTER_EMPTY_CONTENT: absent content renders empty text rather than null", async () => {
+		const api = await loadExtension();
+		const harness = fakePi();
+		const view = context();
+		api.createSecurityPolicyExtensionV1({ profileInput: { machineProfile: "interactive" } })(harness.pi);
+		await harness.emit("session_start", {}, view.ctx);
+		const result = await harness.emit("tool_result", {
+			toolName: "bdd_status",
+			isError: false,
+		}, view.ctx);
+		expect(result.content).toEqual([{ type: "text", text: "" }]);
+		expect(result.content[0].text).not.toBe("null");
+	});
+
+	test("SECUX01_ADAPTER_CONTENT_ACCESSOR: content getter becomes fail-closed content refusal", async () => {
+		const api = await loadExtension();
+		const harness = fakePi();
+		const view = context();
+		api.createSecurityPolicyExtensionV1({ profileInput: { machineProfile: "interactive" } })(harness.pi);
+		await harness.emit("session_start", {}, view.ctx);
+		let reads = 0;
+		const event: Record<string, unknown> = { toolName: "read", isError: false };
+		Object.defineProperty(event, "content", { enumerable: true, get() { reads += 1; return SYNTHETIC_SECRET; } });
+		const result = await harness.emit("tool_result", event, view.ctx);
+		expect(reads).toBe(0);
+		expect(result).toMatchObject({
+			isError: true,
+			details: { securityPolicy: { ok: false, code: "content-redaction-refused" } },
+		});
+	});
+
 	test("content redaction refusal replaces primary output with one non-echoing stable failure", async () => {
 		const api = await loadExtension();
 		const harness = fakePi();
