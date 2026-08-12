@@ -92,6 +92,18 @@ class PolicyTests(unittest.TestCase):
             )
             self.assertFalse(VERIFY.is_generated_claude_skill_link(foreign, deployed))
 
+    def test_pkg01_deployed_settings_target_is_required(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Path(directory) / "repo"
+            home = Path(directory) / "home"
+            expected = repo / "pi/.pi/agent/settings.json"
+            expected.parent.mkdir(parents=True)
+            expected.write_text("{}\n", encoding="utf-8")
+            home.mkdir()
+            errors: list[str] = []
+            VERIFY.validate_deployed(repo, home, errors)
+            self.assertTrue(any(".pi/agent/settings.json" in error for error in errors))
+
     def test_only_explicitly_safe_codex_rules_may_auto_allow(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             repo = Path(directory)

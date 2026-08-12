@@ -42,6 +42,10 @@ import {
 import type { FleetKind } from "../lib/fleet/personas.ts";
 import { callSubagentRpc } from "../lib/fleet/rpc.ts";
 import {
+	authorizeFleetDispatchBudgetV1,
+	deriveTrustedFleetBudgetFactsV1,
+} from "../lib/fleet/dispatch-budget.ts";
+import {
 	buildFleetRunRecord,
 	extractRunIdentity,
 	FLEET_RUN_RECORD_TYPE,
@@ -237,6 +241,29 @@ async function dispatchPlan(
 				code: containment.code,
 				reason: containment.reason,
 			},
+		};
+	}
+
+	const facts = deriveTrustedFleetBudgetFactsV1({
+		mode: ctx?.mode ?? "print",
+		configuredProfile: "strict",
+		branch: ctx ? ctx.sessionManager.getBranch() : undefined as never,
+	});
+	const budget = await authorizeFleetDispatchBudgetV1({
+		facts,
+		childCount: plan.tasks.length,
+		confirmHighCount: ctx?.mode === "tui"
+			? () => ctx.ui.confirm("Confirm fleet spend", `Dispatch ${plan.tasks.length} children under the current budget?`)
+			: undefined,
+		readCurrentFacts: ctx
+			? () => deriveTrustedFleetBudgetFactsV1({ mode: ctx.mode, configuredProfile: "strict", branch: ctx.sessionManager.getBranch() })
+			: undefined,
+	});
+	if (budget.decision !== "allow") {
+		return {
+			ok: false,
+			text: `## Fleet dispatch blocked by budget\n\n${budget.decision}`,
+			details: { ok: false, blocked: true, code: budget.decision },
 		};
 	}
 
@@ -712,6 +739,7 @@ export default function agenticFleetExtension(pi: ExtensionAPI): void {
 				{ customType: "fleet-dispatch", content: result.text, display: true },
 				{ triggerTurn: false },
 			);
+			if (!result.ok) return;
 			// Trigger a parent turn so synthesis is not fire-and-forget
 			pi.sendMessage(
 				{

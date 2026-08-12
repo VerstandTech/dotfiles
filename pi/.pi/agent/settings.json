@@ -4,9 +4,9 @@
   "defaultModel": "grok-4.5",
   "defaultThinkingLevel": "medium",
   "packages": [
-    "npm:pi-subagents",
-    "npm:context-mode",
-    "npm:pi-markdown-preview",
+    "npm:pi-subagents@0.45.2",
+    "npm:context-mode@1.0.169",
+    "npm:pi-markdown-preview@0.13.1",
     "./personal",
     "npm:pi-web-access@0.13.0"
   ],
