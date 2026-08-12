@@ -74,7 +74,7 @@ function toHerdAgent(value: unknown): HerdAgent | null {
   const meta = paneId && paneId !== name ? paneId : undefined;
   const generation = Number.isSafeInteger(a.revision) && Number(a.revision) >= 0 ? Number(a.revision) : undefined;
   const sequence = Number.isSafeInteger(a.state_change_seq) && Number(a.state_change_seq) >= 0 ? Number(a.state_change_seq) : undefined;
-  return { name, state: toState(a.agent_status), meta, paneId, generation, sequence }; 
+  return { name, state: toState(a.agent_status), meta, paneId, generation, sequence };
 }
 
 /**
