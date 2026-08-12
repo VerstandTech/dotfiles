@@ -7,6 +7,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { execFile } from "node:child_process";
 import { claimPoller, createHerdSource, type ExecFn } from "./herd-source.ts";
 import { herdLines, sameLines } from "./herd-status.ts";
+import { createHerdNotificationObserverV1, type NotificationAgentV1 } from "./herd-notification.ts";
 
 // Timeout < poll interval (R7-E2): a slow CLI call (measured 157–362ms) must
 // never overlap the next tick.
@@ -24,6 +25,14 @@ export default function (pi: ExtensionAPI) {
     if (!ctx.hasUI) return;
 
     const source = createHerdSource({ exec, env: process.env });
+    const notifications = createHerdNotificationObserverV1({
+      notify(notification) {
+        const kind = notification.kind;
+        const name = notification.agentName;
+        if (typeof kind !== "string" || typeof name !== "string") return;
+        ctx.ui.notify(`${name}: ${kind}`, kind === "attention" ? "warning" : "info");
+      },
+    });
     let lastLines: string[] | null | undefined; // undefined = never published
     let inFlight = false;
 
@@ -31,7 +40,12 @@ export default function (pi: ExtensionAPI) {
       if (inFlight) return; // serialized polls (R7-E2): never pile up
       inFlight = true;
       try {
-        const lines = herdLines(await source.getView());
+        const view = await source.getView();
+        const lines = herdLines(view);
+        const notificationAgents = view && Array.isArray((view as unknown as { agents?: unknown }).agents)
+          ? (view as unknown as { agents: NotificationAgentV1[] }).agents
+          : [];
+        notifications.observe(notificationAgents);
         // Publish only on change (R7-E2): setWidget triggers a TUI re-layout,
         // so an unchanged poll must cost nothing. undefined clears (hides).
         if (lastLines === undefined || !sameLines(lastLines, lines)) {
@@ -61,6 +75,9 @@ export default function (pi: ExtensionAPI) {
     // session switch; claimPoller additionally guarantees no stacked pollers
     // even if a previous instance's cleanup never ran.
     const dispose = claimPoller("herd:widget", () => void refresh(), POLL_MS);
-    pi.on("session_shutdown", () => dispose());
+    pi.on("session_shutdown", () => {
+      notifications.dispose();
+      dispose();
+    });
   });
 }

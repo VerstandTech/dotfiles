@@ -136,6 +136,21 @@ After deletion:
 - Never close/rehome a user-owned pane without permission.
 - Never leave a live pane rooted in a removed directory.
 
+## OPS-01 bounded recovery and cleanup
+
+Treat wait timeout as `unknown`, never completion. A later current Herdr observation may resolve it; do not infer success from elapsed time, an idle-looking terminal, or missing output.
+
+When launch or delivery is partial:
+
+1. Gather exact validated facts: repository, worktree realpath, branch, candidate SHA, merge SHA, pane id, agent generation/sequence, dirty state, and writer lease.
+2. Use the typed OPS recovery/cleanup planner; do not improvise shell commands from prose.
+3. Stop at the first failed, stale, unavailable, mismatched, or unknown prerequisite.
+4. Never auto-close a pane, remove a worktree, delete a branch, clear a lease, create/merge a PR, or claim cleanup success.
+5. Only a human-approved external cleanup workflow may execute the plan, under the cleanup lock, in this order: release agent → close pane → remove worktree → delete exact local branch → conditionally delete exact remote branch → clear exact lease → verify.
+6. Preserve safe partial identities such as a created pane id for recovery. Report failures with stable codes (`invalid-name`, `create-failed`, `missing-pane`, `start-failed`); never forward raw provider, shell, or OS messages.
+
+Notifications are observational only. They contain bounded identity/state metadata, never terminal output, prompts, diffs, tool results, or authority. OPS consumes the existing Herdr observation poller and must not register a second one.
+
 ## Supervisor report
 
 Return:

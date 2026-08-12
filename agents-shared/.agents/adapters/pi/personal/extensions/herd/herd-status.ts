@@ -8,11 +8,23 @@ export interface HerdAgent {
   name: string;
   state: HerdState;
   meta?: string;
+  paneId?: string;
+  generation?: number;
+  sequence?: number;
+}
+
+export interface HerdNotificationAgent {
+  name: string;
+  paneId: string;
+  generation: number;
+  sequence: number;
+  state: "working" | "idle" | "needs-attention" | "unknown";
 }
 
 export interface HerdView {
   summary: string;
   rows: string[];
+  agents?: HerdNotificationAgent[];
   /** True when any agent is working/blocked/unknown — rows are signal then.
    *  When false (all idle/done), adapters should render the summary only. */
   hot?: boolean;
@@ -58,9 +70,11 @@ function toHerdAgent(value: unknown): HerdAgent | null {
     (v): v is string => typeof v === "string" && v.length > 0,
   );
   if (name === undefined) return null;
-  const meta =
-    typeof a.pane_id === "string" && a.pane_id !== name ? a.pane_id : undefined;
-  return { name, state: toState(a.agent_status), meta };
+  const paneId = typeof a.pane_id === "string" && a.pane_id.length > 0 ? a.pane_id : undefined;
+  const meta = paneId && paneId !== name ? paneId : undefined;
+  const generation = Number.isSafeInteger(a.revision) && Number(a.revision) >= 0 ? Number(a.revision) : undefined;
+  const sequence = Number.isSafeInteger(a.state_change_seq) && Number(a.state_change_seq) >= 0 ? Number(a.state_change_seq) : undefined;
+  return { name, state: toState(a.agent_status), meta, paneId, generation, sequence }; 
 }
 
 /**
@@ -113,7 +127,21 @@ export function formatHerdRows(payload: unknown): HerdView | null {
 
   const hot =
     count("working") > 0 || count("blocked") > 0 || count("unknown") > 0;
-  return { summary: parts.join("  "), rows, hot };
+  const notificationAgents: HerdNotificationAgent[] = sorted.flatMap((agent) => {
+    if (!agent.paneId || agent.generation === undefined || agent.sequence === undefined) return [];
+    const state = agent.state === "blocked"
+      ? "needs-attention"
+      : agent.state === "done"
+        ? "idle"
+        : agent.state;
+    return [{ name: agent.name, paneId: agent.paneId, generation: agent.generation, sequence: agent.sequence, state }];
+  });
+  return {
+    summary: parts.join("  "),
+    rows,
+    hot,
+    ...(notificationAgents.length ? { agents: notificationAgents } : {}),
+  };
 }
 
 /**
