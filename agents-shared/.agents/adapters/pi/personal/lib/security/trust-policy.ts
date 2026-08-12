@@ -870,8 +870,13 @@ export function prepareSecurityToolResultV1(input: unknown): Readonly<PlainRecor
 			value.details = { securityPolicy: { ok: false, code: "details-redaction-refused" } };
 		}
 
-		const boundedValue = redactForPersistence(value);
-		if (!boundedValue.ok) return refusal("redaction-refused");
+		let boundedValue = redactForPersistence(value);
+		if (!boundedValue.ok && value.content !== undefined && !detailsRefused) {
+			detailsRefused = true;
+			value.details = { securityPolicy: { ok: false, code: "details-redaction-refused" } };
+			boundedValue = redactForPersistence(value);
+		}
+		if (!boundedValue.ok) return refusal(value.content === undefined ? "redaction-refused" : "content-redaction-refused");
 		return deepFreeze({
 			ok: true,
 			isError: read(root, "isError"),

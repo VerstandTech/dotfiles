@@ -133,6 +133,28 @@ describe("SEC-UX-01 precise security tool results", () => {
     })).toEqual({ ok: false, code: "redaction-refused" });
   });
 
+  test("SECUX01_AGGREGATE_DETAILS_DEGRADE: dual legal near-limit channels preserve primary content", () => {
+    const primaryText = "diagnostic-".repeat(250);
+    const primary = Array.from({ length: 12 }, (_, index) => ({ type: "text", text: `${index}:${primaryText}` }));
+    const auxiliaryText = "metadata-".repeat(300);
+    const auxiliary = Object.fromEntries(Array.from({ length: 12 }, (_, index) => [`part${index}`, `${index}:${auxiliaryText}`]));
+    const result = prepareSecurityToolResultV1({
+      isError: false,
+      toolName: "bash",
+      result: { content: primary, details: auxiliary },
+    });
+    expect(result).toMatchObject({
+      ok: true,
+      isError: false,
+      value: {
+        content: primary,
+        details: { securityPolicy: { ok: false, code: "details-redaction-refused" } },
+      },
+      detailsRefused: true,
+    });
+    expect(JSON.stringify(result)).not.toContain(auxiliaryText);
+  });
+
   test("SECUX01_BOTH_CHANNELS_UNSAFE: unsafe primary content keeps whole result non-passing", () => {
     const content: Record<string, unknown> = {};
     content.self = content;
