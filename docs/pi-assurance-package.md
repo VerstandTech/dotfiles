@@ -86,3 +86,7 @@ Package planning and staging use bounded non-echoing codes:
 - `PKG01_PACKAGE_MANIFEST_MISSING: unsafe-path`
 
 Arbitrary OS, provider, input, or dependency messages are not package authority.
+
+## CLOSE-01 live acceptance and review fleet
+
+Cross-machine install, selected-product adoption, live disable/rollback/restow, and the post-E2E three-person review fleet remain planner-only until a named human approval and current backend/security evidence exist. Missing approval is `operator-approval-required`. Lost historical OPS-01 red/green stay `missing`; they are never invented. Tests and planners must not mutate this machine's real HOME.

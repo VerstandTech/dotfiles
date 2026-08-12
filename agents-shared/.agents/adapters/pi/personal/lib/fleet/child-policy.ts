@@ -188,7 +188,7 @@ const SECRET_BASENAMES = new Set([
 const PSEUDO_PATH_RE =
 	/^\/proc(\/|$)|^\/dev\/(?:fd|stdin|stdout|stderr)(\/|$)|^\/dev\/null$|^\/sys(\/|$)/i;
 
-const AGENTS_DIR = join(import.meta.dir, "../../agents");
+const AGENTS_DIR = join(dirname(fileURLToPath(import.meta.url)), "../../agents");
 
 const PERMISSION_AUDIT_PATH_ENV = "PI_SUBAGENT_PERMISSION_AUDIT_PATH";
 const CHILD_AGENT_ENV = "PI_SUBAGENT_CHILD_AGENT";

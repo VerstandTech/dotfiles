@@ -1,7 +1,7 @@
 # Personal Pi extensions
 
 TypeScript entry files in this directory are loaded by Pi through the local
-package `../package.json` (`pi.extensions: ["./extensions/*.ts"]`).
+package `../package.json` (`pi.extensions: ["./extensions/*.ts", "!*.test.ts"]`).
 
 Settings entry (relative to `../settings.json`):
 
