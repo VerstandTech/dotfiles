@@ -2,6 +2,8 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 import {
 	approvalFailureV1,
+	canonicalizeFingerprintV1,
+	canonicalizeTimestampV1,
 	deepFreeze,
 	normalizeApprovalRequestV1,
 	requestApprovalV1,
@@ -14,6 +16,7 @@ import { parseApprovalRequestV1 } from "../lib/contracts/index.ts";
 const MIRROR_ENTRY = "assurance:approval:mirror:v1";
 const APPROVE_OPTION = "Approve exact scope";
 const DENY_OPTION = "Deny exact scope";
+const APPROVAL_KINDS = ["plan", "findings", "risky-action", "diff"] as const;
 
 type PlainRecord = Record<string, unknown>;
 type ApprovalContext = {
@@ -53,10 +56,15 @@ function asRecord(value: unknown): PlainRecord | undefined {
 	return value && typeof value === "object" && !Array.isArray(value) ? value as PlainRecord : undefined;
 }
 
+function closedResult() {
+	return deepFreeze({ ok: false, code: "APR01_STORE_CLOSED" });
+}
+
 /**
  * Effect adapter for an explicitly supplied safe persistence implementation.
  * It performs no filesystem operation itself: inspect/read/compare-and-commit
  * must be injected by the machine-local owner and are revalidated by the core.
+ * close() is terminal: later read/commit refuse with APR01_STORE_CLOSED.
  */
 export function createInjectedSafeApprovalStoreV1(
 	operations: InjectedSafeApprovalStoreOperationsV1,
@@ -64,8 +72,11 @@ export function createInjectedSafeApprovalStoreV1(
 	let closed = false;
 	return Object.freeze({
 		read: async () => {
+			if (closed) return closedResult();
 			const facts = await operations.inspect();
+			if (closed) return closedResult();
 			const payload = asRecord(await operations.readValue());
+			if (closed) return closedResult();
 			if (!payload) return { ok: false };
 			return {
 				ok: true,
@@ -75,9 +86,12 @@ export function createInjectedSafeApprovalStoreV1(
 			};
 		},
 		commit: async (input: unknown) => {
+			if (closed) return closedResult();
 			const committed = asRecord(await operations.compareAndCommit(input));
+			if (closed) return closedResult();
 			if (!committed) return { ok: false };
 			const facts = await operations.inspect();
+			if (closed) return closedResult();
 			return { ok: true, revision: committed.revision, facts };
 		},
 		close: async () => {
@@ -88,10 +102,40 @@ export function createInjectedSafeApprovalStoreV1(
 	});
 }
 
-function approvalKindFromAction(action: string): { kind: ApprovalKindV1; action: string } | undefined {
-	const match = /^(plan|findings|risky-action|diff):([A-Za-z0-9](?:[A-Za-z0-9._:-]*[A-Za-z0-9])?)$/.exec(action);
-	if (!match) return undefined;
-	return { kind: match[1] as ApprovalKindV1, action: match[2]! };
+/** Wrap any opened store so dispose/close is terminal for later read/commit. */
+function asTerminalStore(store: SafeApprovalStoreV1): SafeApprovalStoreV1 {
+	let closed = false;
+	return Object.freeze({
+		read: async () => {
+			if (closed) return closedResult();
+			const result = await store.read();
+			if (closed) return closedResult();
+			return result;
+		},
+		commit: async (input) => {
+			if (closed) return closedResult();
+			const result = await store.commit(input);
+			if (closed) return closedResult();
+			return result;
+		},
+		close: async () => {
+			if (closed) return;
+			closed = true;
+			if (typeof store.close === "function") {
+				try { await store.close(); } catch { /* terminal close remains closed */ }
+			}
+		},
+	});
+}
+
+function approvalKindFromAction(action: string): { kind: ApprovalKindV1; remainder: string } | undefined {
+	for (const kind of APPROVAL_KINDS) {
+		const prefix = `${kind}:`;
+		if (action.startsWith(prefix) && action.length > prefix.length) {
+			return { kind, remainder: action.slice(prefix.length) };
+		}
+	}
+	return undefined;
 }
 
 function unavailable(code: string): any {
@@ -167,7 +211,7 @@ export function createApprovalSeamsRuntimeV1(options: ApprovalSeamsExtensionOpti
 				}));
 				if (active && generation === currentGeneration && context === nextContext && opened &&
 					typeof opened.read === "function" && typeof opened.commit === "function") {
-					store = opened;
+					store = asTerminalStore(opened);
 				} else if (opened && typeof opened.close === "function") {
 					try { await opened.close(); } catch { /* unsupported store stays unavailable */ }
 				}
@@ -184,13 +228,19 @@ export function createApprovalSeamsRuntimeV1(options: ApprovalSeamsExtensionOpti
 		if (!active || !context) return unavailable("APR01_SESSION_INACTIVE");
 		const currentContext = context;
 		const currentGeneration = generation;
+		const currentStore = store;
 		if (!isTuiAuthority(currentContext)) return unavailable("APR01_UI_UNAVAILABLE");
-		if (!store || typeof options.clock !== "function") return unavailable("APR01_APPROVAL_AUTHORITY_MISSING");
+		if (!currentStore || typeof options.clock !== "function") return unavailable("APR01_APPROVAL_AUTHORITY_MISSING");
 
 		const parsed = parseApprovalRequestV1(input);
 		if (!parsed.ok) return unavailable("APR01_INVALID_ORC_REQUEST");
 		const kindAction = approvalKindFromAction(parsed.value.action);
 		if (!kindAction) return unavailable("APR01_INVALID_ORC_REQUEST");
+		const createdAt = canonicalizeTimestampV1(parsed.value.requestedAt);
+		const expiresAt = canonicalizeTimestampV1(parsed.value.expiresAt);
+		const fingerprint = canonicalizeFingerprintV1(parsed.value.fingerprint);
+		if (!createdAt || !expiresAt || !fingerprint) return unavailable("APR01_INVALID_ORC_REQUEST");
+
 		let sessionId: unknown;
 		try { sessionId = currentContext.sessionManager?.getSessionId?.(); } catch { sessionId = undefined; }
 		if (typeof sessionId !== "string") return unavailable("APR01_APPROVAL_AUTHORITY_MISSING");
@@ -200,24 +250,31 @@ export function createApprovalSeamsRuntimeV1(options: ApprovalSeamsExtensionOpti
 			kind: "approval-request",
 			requestId: parsed.value.requestId,
 			approvalKind: kindAction.kind,
-			action: kindAction.action,
+			action: kindAction.remainder,
 			risk: parsed.value.risk,
 			effect: "authorize-review-only",
 			paths: parsed.value.scopedPaths,
 			headSha: parsed.value.candidateSha,
-			planFingerprint: parsed.value.fingerprint,
-			actionFingerprint: parsed.value.fingerprint,
+			planFingerprint: fingerprint,
+			actionFingerprint: fingerprint,
 			sessionId,
 			generation: currentGeneration,
-			createdAt: parsed.value.requestedAt,
-			expiresAt: parsed.value.expiresAt,
+			createdAt,
+			expiresAt,
 		};
 		const normalized = normalizeApprovalRequestV1(aprRequest);
-		if (normalized.ok !== true || JSON.stringify(normalized.request.paths) !== JSON.stringify(parsed.value.scopedPaths)) {
-			return unavailable("APR01_INVALID_ORC_REQUEST");
+		if (normalized.ok !== true) {
+			return unavailable(
+				typeof normalized.code === "string" ? normalized.code : "APR01_INVALID_ORC_REQUEST",
+			);
 		}
 
-		const isCurrent = () => active && generation === currentGeneration && context === currentContext;
+		const isCurrent = () =>
+			active === true &&
+			generation === currentGeneration &&
+			context === currentContext &&
+			store === currentStore;
+
 		const ui = {
 			decide: async (metadata: any) => {
 				if (!isCurrent()) throw new Error("inactive");
@@ -245,11 +302,16 @@ export function createApprovalSeamsRuntimeV1(options: ApprovalSeamsExtensionOpti
 		const result = await requestApprovalV1(aprRequest, {
 			clock: options.clock,
 			lifecycle: { active: true, sessionId, generation: currentGeneration },
-			store,
+			store: currentStore,
 			ui,
+			isCurrent,
 			trajectory: options.trajectory,
 		});
-		if (!isCurrent()) return unavailable("APR01_SESSION_INACTIVE");
+		if (!isCurrent()) {
+			const code = asRecord(result)?.code;
+			if (code === "APR01_STORE_CLOSED" || code === "APR01_SESSION_INACTIVE") return result;
+			return unavailable("APR01_SESSION_INACTIVE");
+		}
 
 		const resultRecord = asRecord(result);
 		if (!resultRecord) return unavailable("APR01_INTERNAL_UNAVAILABLE");

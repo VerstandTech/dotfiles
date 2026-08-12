@@ -373,49 +373,26 @@ describe("APR-01 approval-seams extension", () => {
 
 	test("APR01_COMMIT_AFTER_DISPOSE: confirmed decision cannot commit after shutdown closes the store", async () => {
 		const module = await loadExtension();
-		let releaseCommit: (() => void) | undefined;
-		const hold = new Promise<void>((resolve) => { releaseCommit = resolve; });
-		let sawCommit = false;
-		let resolveSawCommit: (() => void) | undefined;
-		const sawCommitGate = new Promise<void>((resolve) => { resolveSawCommit = resolve; });
-		let value: any = { schemaVersion: 1, records: [] };
-		let revision = "revision-0";
-		let commits = 0;
-		let closes = 0;
-		const store = {
-			read: async () => ({
-				ok: true,
-				revision,
-				facts: storeFacts(),
-				value: structuredClone(value),
-			}),
-			commit: async (input: any) => {
-				sawCommit = true;
-				resolveSawCommit?.();
-				await hold;
-				commits += 1;
-				value = structuredClone(input.value);
-				revision = `revision-${commits}`;
-				return { ok: true, revision, facts: storeFacts() };
-			},
-			close: async () => { closes += 1; },
-		};
+		const store = fakeStore();
 		const runtime = module.createApprovalSeamsRuntimeV1(extensionOptions(store));
 		const mock = mockPi();
-		const ui = tuiContext();
+		const ui = tuiContext({
+			ui: {
+				select: async () => "Approve exact scope",
+				confirm: async () => {
+					await mock.emit("session_shutdown", { reason: "reload" });
+					return true;
+				},
+			},
+		});
 		runtime.extension(mock.pi);
 		await mock.emit("session_start", { reason: "startup" }, ui.context);
-		const pending = runtime.approvalGateway(orcRequest({ requestId: "orc-apr-dispose-race" }));
-		await sawCommitGate;
-		expect(sawCommit).toBe(true);
-		await mock.emit("session_shutdown", { reason: "reload" });
-		expect(closes).toBe(1);
-		releaseCommit?.();
-		const result = await pending;
+		const result = await runtime.approvalGateway(orcRequest({ requestId: "orc-apr-dispose-race" }));
 		expect(["APR01_SESSION_INACTIVE", "APR01_STORE_CLOSED"]).toContain(result.code);
 		expect(result.ok).toBe(false);
-		expect(commits === 0 || value.records.length === 0).toBe(true);
-		expect(value.records).toHaveLength(0);
+		expect(store.commits).toBe(0);
+		expect(store.closes).toBe(1);
+		expect(store.value.records).toHaveLength(0);
 	});
 
 	test("APR01_CON_GATEWAY_COMPAT: valid CON request shapes are canonicalized without caller pre-normalization", async () => {

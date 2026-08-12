@@ -126,5 +126,7 @@ export type ApprovalCoreAdaptersV1 = Readonly<{
 	lifecycle?: unknown;
 	store?: SafeApprovalStoreV1;
 	ui?: ApprovalUiV1;
+	/** Live generation gate checked immediately before authority commit. */
+	isCurrent?: () => unknown;
 	trajectory?: (metadata: ApprovalTrajectoryMetadataV1) => unknown | Promise<unknown>;
 }>;

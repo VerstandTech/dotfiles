@@ -1,5 +1,8 @@
 import { createHash } from "node:crypto";
 
+import { isIsoTimestamp } from "../contracts/issues.ts";
+import { isSafeRepoRelativePath } from "../contracts/path.ts";
+import { isSecretLeafBasenameV1 } from "../security/secret-leaf.ts";
 import {
 	APPROVAL_KINDS_V1,
 	type ApprovalAuthorityRecordV1,
@@ -51,16 +54,6 @@ const STORE_FACT_KEYS = [
 	"parentDirectorySafe",
 	"machineLocal",
 ] as const;
-
-const DENIED_PATH_LEAVES = new Set([
-	".env",
-	".npmrc",
-	"auth.json",
-	"credentials",
-	"credentials.json",
-	"id_ed25519",
-	"id_rsa",
-]);
 
 export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
 export type PlainRecord = { [key: string]: JsonValue };
@@ -155,28 +148,47 @@ function safeId(value: unknown, max = 128): value is string {
 		/^[A-Za-z0-9](?:[A-Za-z0-9._:-]*[A-Za-z0-9])?$/.test(value);
 }
 
-function strictTimestamp(value: unknown): value is string {
-	return typeof value === "string" &&
-		/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value) &&
-		Number.isFinite(Date.parse(value));
+/** CON-compatible semantic strings: non-empty, bounded, no controls; spaces allowed. */
+function boundedSemanticString(value: unknown, max = 512): value is string {
+	return typeof value === "string" && value.length > 0 && value.length <= max &&
+		!/[\u0000-\u001f\u007f]/.test(value);
+}
+
+/** Canonicalize CON whole-second or millisecond Z timestamps to strict ms form. */
+export function canonicalizeTimestampV1(value: unknown): string | undefined {
+	if (typeof value !== "string" || !isIsoTimestamp(value)) return undefined;
+	if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/.test(value)) return `${value.slice(0, -1)}.000Z`;
+	return value;
 }
 
 export function timestampMs(value: unknown): number | undefined {
-	return strictTimestamp(value) ? Date.parse(value) : undefined;
+	const canonical = canonicalizeTimestampV1(value);
+	return canonical === undefined ? undefined : Date.parse(canonical);
 }
 
 function hex(value: unknown, lengths: readonly number[]): value is string {
 	return typeof value === "string" && lengths.includes(value.length) && /^[a-fA-F0-9]+$/.test(value);
 }
 
-function normalizeRepoPath(value: unknown): string | undefined {
-	if (typeof value !== "string" || value.length === 0 || value.length > 240) return undefined;
-	if (value.startsWith("/") || value.startsWith("~") || value.includes("\\") || value.includes("\0")) return undefined;
-	if (/[*?\[\]{}]/.test(value) || /[\u0000-\u001f\u007f]/.test(value)) return undefined;
-	const parts = value.split("/");
-	if (parts.some((part) => part.length === 0 || part === "." || part === "..")) return undefined;
-	if (DENIED_PATH_LEAVES.has(parts.at(-1)!.toLowerCase())) return undefined;
-	return parts.join("/");
+/** Preserve 64-hex fingerprints; hash any other bounded CON fingerprint deterministically. */
+export function canonicalizeFingerprintV1(value: unknown): string | undefined {
+	if (!boundedSemanticString(value, MAX_STRING)) return undefined;
+	if (/^[a-fA-F0-9]{64}$/.test(value)) return value.toLowerCase();
+	return createHash("sha256").update(value, "utf8").digest("hex");
+}
+
+type PathNormalizeResult =
+	| { ok: true; path: string }
+	| { ok: false; code: "APR01_CREDENTIAL_LEAF" | "APR01_INVALID_REQUEST" };
+
+function normalizeRepoPath(value: unknown): PathNormalizeResult {
+	if (typeof value !== "string" || value.length === 0 || value.length > 240) {
+		return { ok: false, code: "APR01_INVALID_REQUEST" };
+	}
+	const leaf = value.split("/").at(-1) ?? value;
+	if (isSecretLeafBasenameV1(leaf)) return { ok: false, code: "APR01_CREDENTIAL_LEAF" };
+	if (!isSafeRepoRelativePath(value)) return { ok: false, code: "APR01_INVALID_REQUEST" };
+	return { ok: true, path: value };
 }
 
 function scopeHash(request: Omit<NormalizedApprovalRequestV1, "scopeFingerprint">): string {
@@ -212,17 +224,22 @@ export function normalizeApprovalRequestV1(input: unknown): any {
 	if (snapshot.schemaVersion !== 1 || snapshot.kind !== "approval-request") return invalid();
 	if (!safeId(snapshot.requestId, 120) || !safeId(snapshot.sessionId, 160)) return invalid();
 	if (!APPROVAL_KINDS_V1.includes(snapshot.approvalKind as never)) return invalid();
-	if (!safeId(snapshot.action) || !safeId(snapshot.risk) || !safeId(snapshot.effect)) return invalid();
-	if (!hex(snapshot.planFingerprint, [64]) || !hex(snapshot.actionFingerprint, [64])) return invalid();
+	if (!boundedSemanticString(snapshot.action) || !boundedSemanticString(snapshot.risk) ||
+		!boundedSemanticString(snapshot.effect)) return invalid();
+	const planFingerprint = canonicalizeFingerprintV1(snapshot.planFingerprint);
+	const actionFingerprint = canonicalizeFingerprintV1(snapshot.actionFingerprint);
+	if (!planFingerprint || !actionFingerprint) return invalid();
 	if (!Number.isSafeInteger(snapshot.generation) || snapshot.generation < 1 || snapshot.generation > 1_000_000_000) return invalid();
-	if (!strictTimestamp(snapshot.createdAt) || !strictTimestamp(snapshot.expiresAt)) return invalid();
-	if (!(Date.parse(snapshot.createdAt) < Date.parse(snapshot.expiresAt))) return invalid();
+	const createdAt = canonicalizeTimestampV1(snapshot.createdAt);
+	const expiresAt = canonicalizeTimestampV1(snapshot.expiresAt);
+	if (!createdAt || !expiresAt) return invalid();
+	if (!(Date.parse(createdAt) < Date.parse(expiresAt))) return invalid();
 	if (!Array.isArray(snapshot.paths) || snapshot.paths.length > 64) return invalid();
 	const paths: string[] = [];
 	for (const path of snapshot.paths) {
 		const normalized = normalizeRepoPath(path);
-		if (!normalized) return invalid();
-		paths.push(normalized);
+		if (!normalized.ok) return invalid(normalized.code);
+		paths.push(normalized.path);
 	}
 	const normalizedPaths = [...new Set(paths)].sort();
 	if ((snapshot.approvalKind === "diff" || snapshot.approvalKind === "risky-action") && !hex(snapshot.headSha, [40, 64])) {
@@ -240,12 +257,12 @@ export function normalizeApprovalRequestV1(input: unknown): any {
 		effect: snapshot.effect,
 		paths: normalizedPaths,
 		headSha: snapshot.headSha === null ? null : snapshot.headSha.toLowerCase(),
-		planFingerprint: snapshot.planFingerprint.toLowerCase(),
-		actionFingerprint: snapshot.actionFingerprint.toLowerCase(),
+		planFingerprint,
+		actionFingerprint,
 		sessionId: snapshot.sessionId,
 		generation: snapshot.generation,
-		createdAt: snapshot.createdAt,
-		expiresAt: snapshot.expiresAt,
+		createdAt,
+		expiresAt,
 	};
 	const normalized: NormalizedApprovalRequestV1 = {
 		...request,
@@ -314,8 +331,9 @@ function parseRecord(input: unknown): ApprovalAuthorityRecordV1 | undefined {
 	const request = normalizedRequestFromStored(snapshot.request);
 	if (!request || snapshot.scopeFingerprint !== request.scopeFingerprint) return undefined;
 	if (snapshot.decision !== "approved" && snapshot.decision !== "denied") return undefined;
-	if (!strictTimestamp(snapshot.decidedAt)) return undefined;
-	const decided = Date.parse(snapshot.decidedAt);
+	const decidedAt = canonicalizeTimestampV1(snapshot.decidedAt);
+	if (!decidedAt) return undefined;
+	const decided = Date.parse(decidedAt);
 	if (!(Date.parse(request.createdAt) <= decided && decided < Date.parse(request.expiresAt))) return undefined;
 	if (!isRecord(snapshot.authority) || !hasExactKeys(snapshot.authority, [
 		"source", "method", "sessionId", "generation", "machineLocal",
@@ -329,7 +347,7 @@ function parseRecord(input: unknown): ApprovalAuthorityRecordV1 | undefined {
 		request,
 		scopeFingerprint: request.scopeFingerprint,
 		decision: snapshot.decision,
-		decidedAt: snapshot.decidedAt,
+		decidedAt,
 		authority: {
 			source: "human-tui",
 			method: "pi-tui-confirm-select",

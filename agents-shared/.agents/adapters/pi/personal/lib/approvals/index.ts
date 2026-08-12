@@ -4,6 +4,8 @@ export {
 	requestApprovalV1,
 } from "./authority.ts";
 export {
+	canonicalizeFingerprintV1,
+	canonicalizeTimestampV1,
 	deepFreeze,
 	MAX_APPROVAL_RECORDS_V1,
 	normalizeApprovalRequestV1,

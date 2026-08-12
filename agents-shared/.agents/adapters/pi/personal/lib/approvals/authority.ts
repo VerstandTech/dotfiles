@@ -267,6 +267,18 @@ export async function requestApprovalV1(input: unknown, adapters: ApprovalCoreAd
 		return scopedFailure(loaded.request, "APR01_STORE_CAPACITY", "unavailable");
 	}
 
+	const stillCurrent = (): boolean => {
+		if (typeof adapters.isCurrent !== "function") return true;
+		try {
+			return adapters.isCurrent() === true;
+		} catch {
+			return false;
+		}
+	};
+	if (!stillCurrent() || !validateLifecycleV1(adapters.lifecycle, loaded.request)) {
+		return scopedFailure(loaded.request, "APR01_SESSION_INACTIVE", "unavailable");
+	}
+
 	const record = newRecord(loaded.request, selected.decision, decidedAt as string);
 	const value: ApprovalStoreEnvelopeV1 = deepFreeze({
 		schemaVersion: 1,
@@ -284,13 +296,22 @@ export async function requestApprovalV1(input: unknown, adapters: ApprovalCoreAd
 			hardLinkCount: 1 as const,
 		},
 	});
+	if (!stillCurrent()) {
+		return scopedFailure(loaded.request, "APR01_SESSION_INACTIVE", "unavailable");
+	}
 	let rawCommit: unknown;
 	try {
 		rawCommit = await loaded.store.commit(commitInput);
 	} catch {
 		return scopedFailure(loaded.request, "APR01_STORE_UNAVAILABLE", "unavailable");
 	}
+	if (!stillCurrent()) {
+		return scopedFailure(loaded.request, "APR01_SESSION_INACTIVE", "unavailable");
+	}
 	const commit = safeSnapshot(rawCommit);
+	if (isRecord(commit) && commit.ok === false && commit.code === "APR01_STORE_CLOSED") {
+		return scopedFailure(loaded.request, "APR01_STORE_CLOSED", "unavailable");
+	}
 	if (!isRecord(commit) || !exactKeys(commit, ["ok", "revision", "facts"]) || commit.ok !== true || !revision(commit.revision)) {
 		return scopedFailure(loaded.request, "APR01_STORE_UNAVAILABLE", "unavailable");
 	}
