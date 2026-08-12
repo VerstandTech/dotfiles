@@ -38,7 +38,7 @@ async function loadExtension(): Promise<ExtensionApi> {
 		return module as unknown as ExtensionApi;
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
-		if (/cannot find|module not found|resolve/i.test(message)) {
+		if (/cannot find module|module not found/i.test(message)) {
 			throw new Error("ORC01_EXTENSION_MISSING");
 		}
 		throw error;

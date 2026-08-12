@@ -403,11 +403,11 @@ describe("ORC-01 status and planning", () => {
 		const plan = await validPlan(api);
 		expect(plan).toMatchObject({
 			schemaVersion: 1,
-			planId: expect.any(String),
+			planId: "orc01-orc-01-task--implementer",
 			repoRoot: REPO_ROOT,
 			request: { taskId: "orc-01-task", role: "implementer", phase: "green" },
-			assignment: { taskId: "orc-01-task", role: "implementer", cardId: expect.any(String) },
-			caid: { taskId: "orc-01-task", role: "implementer", cardId: expect.any(String) },
+			assignment: { taskId: "orc-01-task", role: "implementer", cardId: "orc-01-task--implementer" },
+			caid: { taskId: "orc-01-task", role: "implementer", cardId: "orc-01-task--implementer" },
 		});
 		expectDeepFrozen(plan);
 	});
@@ -541,14 +541,41 @@ describe("ORC-01 spawn transaction", () => {
 		expect(calls).toEqual(["open", "register", "acquire", "start"]);
 	});
 
-	test.each(["register", "acquire", "start"])("%s failure remains partial and compensates in reverse where possible", async (stage) => {
+	test("read-only role may observe a currently held writer without becoming a second writer", async () => {
+		const api = await loadApi();
+		const request = roleRequest({
+			role: "breaker",
+			phase: "verify",
+			writeScope: "none",
+			tools: ["read", "grep", "find", "ls"],
+			ownedPaths: [],
+		});
+		const plan = await validPlan(api, request);
+		const input = spawnInput(plan);
+		input.facts.bdd.phase = "verify";
+		input.facts.workspace.writerState = "held";
+		input.facts.workspace.pathWriterCount = 1;
+		input.facts.workspace.busyWriterCount = 1;
+		const calls: string[] = [];
+		const result = await api.assurance_spawn_role(input, spawnAdapters(plan, calls, {
+			acquireLease: async (lease: any) => {
+				calls.push("acquire");
+				expect(lease.mode).toBe("read-only");
+				return { ok: true, leaseId: "lease-read-2", mode: "read-only" };
+			},
+		}));
+		expect(result).toMatchObject({ ok: true, outcome: "spawned" });
+		expect(calls).toEqual(["open", "register", "acquire", "start"]);
+	});
+
+	test.each(["register", "acquire", "start"])("%s explicit failure remains partial and compensates in reverse where possible", async (stage) => {
 		const api = await loadApi();
 		const plan = await validPlan(api);
 		const calls: string[] = [];
 		const overrides: Record<string, unknown> = {};
-		if (stage === "register") overrides.registerRole = async () => { calls.push("register"); return { ok: false, code: SYNTHETIC_SECRET }; };
-		if (stage === "acquire") overrides.acquireLease = async () => { calls.push("acquire"); return { ok: false, code: SYNTHETIC_SECRET }; };
-		if (stage === "start") overrides.startRole = async () => { calls.push("start"); throw new Error(SYNTHETIC_SECRET); };
+		if (stage === "register") overrides.registerRole = async () => { calls.push("register"); return { ok: false, partial: false, code: SYNTHETIC_SECRET }; };
+		if (stage === "acquire") overrides.acquireLease = async () => { calls.push("acquire"); return { ok: false, partial: false, code: SYNTHETIC_SECRET }; };
+		if (stage === "start") overrides.startRole = async () => { calls.push("start"); return { ok: false, partial: false, code: SYNTHETIC_SECRET }; };
 		const result = await api.assurance_spawn_role(spawnInput(plan), spawnAdapters(plan, calls, overrides));
 		expect(result).toMatchObject({
 			ok: false,
@@ -561,6 +588,25 @@ describe("ORC-01 spawn transaction", () => {
 		if (stage === "register") expect(calls).toEqual(["open", "register"]);
 		if (stage === "acquire") expect(calls).toEqual(["open", "register", "acquire", "unregister"]);
 		if (stage === "start") expect(calls).toEqual(["open", "register", "acquire", "start", "release", "unregister"]);
+	});
+
+	test("ambiguous open or start failure retains authority for operator recovery", async () => {
+		const api = await loadApi();
+		const plan = await validPlan(api);
+		const openCalls: string[] = [];
+		const openResult = await api.assurance_spawn_role(spawnInput(plan), spawnAdapters(plan, openCalls, {
+			openWorktree: async () => { openCalls.push("open"); throw new Error(SYNTHETIC_SECRET); },
+		}));
+		expect(openResult).toMatchObject({ outcome: "partial-failure", cleanupRequired: true, compensated: false });
+		expect(openCalls).toEqual(["open"]);
+
+		const startCalls: string[] = [];
+		const startResult = await api.assurance_spawn_role(spawnInput(plan), spawnAdapters(plan, startCalls, {
+			startRole: async () => { startCalls.push("start"); throw new Error(SYNTHETIC_SECRET); },
+		}));
+		expect(startResult).toMatchObject({ outcome: "partial-failure", cleanupRequired: true, compensated: false });
+		expect(startCalls).toEqual(["open", "register", "acquire", "start"]);
+		expect(JSON.stringify({ openResult, startResult })).not.toContain(SYNTHETIC_SECRET);
 	});
 });
 
@@ -631,6 +677,7 @@ describe("ORC-01 bounded wait", () => {
 			[roleResult({ status: "blocked", blockers: ["human input required"] }), "blocked"],
 			[roleResult({ status: "failed" }), "blocked"],
 			[roleResult({ status: "unknown" }), "unknown"],
+			[roleResult({ dirty: true }), "blocked"],
 			[roleResult({ taskId: "other-task" }), "blocked"],
 			[roleResult({ role: "refactorer" }), "blocked"],
 		] as const) {
@@ -679,6 +726,26 @@ describe("ORC-01 handoff persistence", () => {
 			appendEntry: async () => { appends += 1; return { ok: true, entryId: "entry" }; },
 		});
 		expect(result).toMatchObject({ ok: false, code });
+		expect(appends).toBe(0);
+	});
+
+	test("read-only result with changed paths blocks before append", async () => {
+		const api = await loadApi();
+		const request = roleRequest({
+			role: "breaker",
+			phase: "verify",
+			writeScope: "none",
+			tools: ["read", "grep", "find", "ls"],
+			ownedPaths: [],
+		});
+		const plan = await validPlan(api, request);
+		const input = handoffInput(plan, roleResult({ role: "breaker", changedPaths: [`${OWNED_ROOT}/index.ts`] }));
+		input.current.role = "breaker";
+		let appends = 0;
+		const result = await api.assurance_record_handoff(input, {
+			appendEntry: async () => { appends += 1; return { ok: true, entryId: "entry" }; },
+		});
+		expect(result).toMatchObject({ ok: false, code: "ORC01_HANDOFF_SCOPE_VIOLATION" });
 		expect(appends).toBe(0);
 	});
 
