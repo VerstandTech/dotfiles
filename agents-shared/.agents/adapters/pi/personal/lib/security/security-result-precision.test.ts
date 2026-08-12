@@ -86,4 +86,62 @@ describe("SEC-UX-01 precise security tool results", () => {
     const value = result.value as Record<string, unknown>;
     expect(Object.isFrozen(value.details)).toBe(true);
   });
+
+  test("SECUX01_DETAILS_SHAPES: binary, oversized, and proxy details preserve safe content", () => {
+    const hostileDetails = [
+      new Uint8Array([1, 2, 3]),
+      "x".repeat(70_000),
+      new Proxy({}, { ownKeys() { throw new Error("provider detail"); } }),
+    ];
+    for (const details of hostileDetails) {
+      const result = prepareSecurityToolResultV1({
+        isError: true,
+        toolName: "bash",
+        result: { content: SAFE_CONTENT, details },
+      });
+      expect(result).toMatchObject({
+        ok: true,
+        isError: true,
+        value: {
+          content: SAFE_CONTENT,
+          details: { securityPolicy: { ok: false, code: "details-redaction-refused" } },
+        },
+      });
+      expect(JSON.stringify(result)).not.toContain("provider detail");
+    }
+  });
+
+  test("SECUX01_EMPTY_CHANNELS: no optional channels produces deterministic empty value", () => {
+    expect(prepareSecurityToolResultV1({
+      isError: false,
+      toolName: "read",
+      result: {},
+    })).toEqual({
+      ok: true,
+      isError: false,
+      toolName: "read",
+      value: {},
+      detailsRefused: false,
+    });
+  });
+
+  test("SECUX01_MIXED_ENVELOPE: channel and legacy keys cannot be combined", () => {
+    expect(prepareSecurityToolResultV1({
+      isError: false,
+      toolName: "read",
+      result: { content: SAFE_CONTENT, output: "ambiguous" },
+    })).toEqual({ ok: false, code: "redaction-refused" });
+  });
+
+  test("SECUX01_BOTH_CHANNELS_UNSAFE: unsafe primary content keeps whole result non-passing", () => {
+    const content: Record<string, unknown> = {};
+    content.self = content;
+    const details: Record<string, unknown> = {};
+    details.self = details;
+    expect(prepareSecurityToolResultV1({
+      isError: false,
+      toolName: "read",
+      result: { content, details },
+    })).toEqual({ ok: false, code: "content-redaction-refused" });
+  });
 });

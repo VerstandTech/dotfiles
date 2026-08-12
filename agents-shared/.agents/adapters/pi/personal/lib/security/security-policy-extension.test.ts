@@ -360,6 +360,30 @@ describe("SEC-01 security-policy extension", () => {
 			details: { securityPolicy: { ok: false, code: "details-redaction-refused" } },
 		});
 		expect(JSON.stringify(result)).not.toContain(SYNTHETIC_SECRET);
+		expect(Object.isFrozen(result)).toBe(true);
+		expect(Object.isFrozen(result.content)).toBe(true);
+		expect(Object.isFrozen(result.details)).toBe(true);
+		expect(Object.isFrozen(result.details.securityPolicy)).toBe(true);
+		expect(() => {
+			(result.details.securityPolicy as { ok: boolean }).ok = true;
+		}).toThrow();
+	});
+
+	test("SECUX01_ADAPTER_ACCESSOR: optional getters are never invoked", async () => {
+		const api = await loadExtension();
+		const harness = fakePi();
+		const view = context();
+		api.createSecurityPolicyExtensionV1({
+			profileInput: { machineProfile: "interactive" },
+			buildPolicyRequest: () => undefined,
+		})(harness.pi);
+		await harness.emit("session_start", {}, view.ctx);
+		let reads = 0;
+		const event: Record<string, unknown> = { toolName: "read", isError: false };
+		Object.defineProperty(event, "details", { enumerable: true, get() { reads += 1; return SYNTHETIC_SECRET; } });
+		const result = await harness.emit("tool_result", event, view.ctx);
+		expect(reads).toBe(0);
+		expect(JSON.stringify(result)).not.toContain(SYNTHETIC_SECRET);
 	});
 
 	test("content redaction refusal replaces primary output with one non-echoing stable failure", async () => {

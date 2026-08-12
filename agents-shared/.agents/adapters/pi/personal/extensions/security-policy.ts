@@ -71,6 +71,16 @@ function safeToolName(event: unknown): string {
 	return "unknown-tool";
 }
 
+function deepFreezeResult<T>(value: T): T {
+	if (!value || typeof value !== "object" || Object.isFrozen(value)) return value;
+	Object.freeze(value);
+	for (const key of Reflect.ownKeys(value)) {
+		const descriptor = Object.getOwnPropertyDescriptor(value, key);
+		if (descriptor && "value" in descriptor) deepFreezeResult(descriptor.value);
+	}
+	return value;
+}
+
 function safeText(value: unknown): string {
 	try {
 		return JSON.stringify(value) ?? "null";
@@ -214,21 +224,21 @@ export function createSecurityPolicyExtensionV1(options: SecurityPolicyExtension
 				const code = eventData(result, "code") === "content-redaction-refused"
 					? "content-redaction-refused"
 					: "redaction-refused";
-				return {
+				return deepFreezeResult({
 					isError: true,
 					content: [{ type: "text", text: `security-policy: ${code}` }],
 					details: { securityPolicy: { ok: false, code } },
-				};
+				});
 			}
 			const safe = safeToolResultParts(eventData(result, "value"), toolName);
 			if (eventData(result, "detailsRefused") === true) {
 				safe.details = { securityPolicy: { ok: false, code: "details-redaction-refused" } };
 			}
-			return {
+			return deepFreezeResult({
 				isError,
 				content: safe.content,
 				details: safe.details,
-			};
+			});
 		});
 
 		pi.on("session_shutdown", async (_event: unknown, context: unknown) => {
