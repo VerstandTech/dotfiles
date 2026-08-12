@@ -200,6 +200,62 @@ describe("APR-01 pure human approval authority", () => {
 		expect(state.commits).toBe(0);
 	});
 
+	test("APR01_CREDENTIAL_LEAF: direct authority rejects shared credential families and allows ordinary source leaves", async () => {
+		const api = await loadApi();
+		const denied = [
+			"config/.env.staging",
+			"config/.env.local.bak",
+			"config/credentials.yaml",
+			"config/credentials.yaml.enc",
+			"config/auth.json.bak",
+			"config/secrets.toml",
+			"config/service-account.yml.gpg",
+			"keys/id_ed25519.bak",
+			"keys/private.pem.enc",
+		];
+		for (const [index, path] of denied.entries()) {
+			const state = fakeStore();
+			const result = await api.requestApprovalV1(
+				request({ requestId: `credential-denied-${index}`, paths: [path] }),
+				adapters(state.store),
+			);
+			expect(result).toMatchObject({ ok: false, code: "APR01_CREDENTIAL_LEAF" });
+			expect(state.reads).toBe(0);
+			expect(state.commits).toBe(0);
+		}
+
+		for (const [index, path] of [
+			"src/auth.module.ts",
+			"src/credentials.client.ts",
+			"src/secrets.service.ts",
+		].entries()) {
+			const state = fakeStore();
+			const result = await api.requestApprovalV1(
+				request({ requestId: `credential-allowed-${index}`, paths: [path] }),
+				adapters(state.store),
+			);
+			expect(result).toMatchObject({ ok: true, code: "APR01_APPROVED" });
+		}
+	});
+
+	test("APR01_COMMIT_AFTER_DISPOSE: live generation is checked immediately before commit", async () => {
+		const api = await loadApi();
+		const state = fakeStore();
+		let current = true;
+		const result = await api.requestApprovalV1(request(), adapters(state.store, {
+			isCurrent: () => current,
+			ui: {
+				decide: async () => {
+					current = false;
+					return { decision: "approved", method: "pi-tui-confirm-select" };
+				},
+			},
+		}));
+		expect(result).toMatchObject({ ok: false, code: "APR01_SESSION_INACTIVE" });
+		expect(state.commits).toBe(0);
+		expect((state.value as any).records).toHaveLength(0);
+	});
+
 	test.each([
 		["changed SHA", { headSha: SHA_B }],
 		["changed path", { paths: ["src/a.ts", "src/c.ts"] }],

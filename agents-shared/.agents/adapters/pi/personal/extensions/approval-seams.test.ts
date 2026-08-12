@@ -371,6 +371,129 @@ describe("APR-01 approval-seams extension", () => {
 		expect(store.commits).toBe(0);
 	});
 
+	test("APR01_COMMIT_AFTER_DISPOSE: confirmed decision cannot commit after shutdown closes the store", async () => {
+		const module = await loadExtension();
+		let releaseCommit: (() => void) | undefined;
+		const hold = new Promise<void>((resolve) => { releaseCommit = resolve; });
+		let sawCommit = false;
+		let resolveSawCommit: (() => void) | undefined;
+		const sawCommitGate = new Promise<void>((resolve) => { resolveSawCommit = resolve; });
+		let value: any = { schemaVersion: 1, records: [] };
+		let revision = "revision-0";
+		let commits = 0;
+		let closes = 0;
+		const store = {
+			read: async () => ({
+				ok: true,
+				revision,
+				facts: storeFacts(),
+				value: structuredClone(value),
+			}),
+			commit: async (input: any) => {
+				sawCommit = true;
+				resolveSawCommit?.();
+				await hold;
+				commits += 1;
+				value = structuredClone(input.value);
+				revision = `revision-${commits}`;
+				return { ok: true, revision, facts: storeFacts() };
+			},
+			close: async () => { closes += 1; },
+		};
+		const runtime = module.createApprovalSeamsRuntimeV1(extensionOptions(store));
+		const mock = mockPi();
+		const ui = tuiContext();
+		runtime.extension(mock.pi);
+		await mock.emit("session_start", { reason: "startup" }, ui.context);
+		const pending = runtime.approvalGateway(orcRequest({ requestId: "orc-apr-dispose-race" }));
+		await sawCommitGate;
+		expect(sawCommit).toBe(true);
+		await mock.emit("session_shutdown", { reason: "reload" });
+		expect(closes).toBe(1);
+		releaseCommit?.();
+		const result = await pending;
+		expect(["APR01_SESSION_INACTIVE", "APR01_STORE_CLOSED"]).toContain(result.code);
+		expect(result.ok).toBe(false);
+		expect(commits === 0 || value.records.length === 0).toBe(true);
+		expect(value.records).toHaveLength(0);
+	});
+
+	test("APR01_CON_GATEWAY_COMPAT: valid CON request shapes are canonicalized without caller pre-normalization", async () => {
+		const module = await loadExtension();
+		const store = fakeStore();
+		const runtime = module.createApprovalSeamsRuntimeV1(extensionOptions(store));
+		const mock = mockPi();
+		const ui = tuiContext();
+		runtime.extension(mock.pi);
+		await mock.emit("session_start", { reason: "startup" }, ui.context);
+
+		const conShapes = [
+			orcRequest({
+				requestId: "con-paths",
+				scopedPaths: ["src/b.ts", "src/a.ts", "src/a.ts"],
+			}),
+			orcRequest({
+				requestId: "con-time",
+				requestedAt: "2026-08-11T20:00:00Z",
+				expiresAt: "2026-08-11T21:00:00Z",
+			}),
+			orcRequest({
+				requestId: "con-fp",
+				fingerprint: "plan-scope-v1",
+			}),
+			orcRequest({
+				requestId: "con-risk-action",
+				action: "diff:review candidate change",
+				risk: "production write",
+			}),
+		];
+
+		for (const request of conShapes) {
+			const result = await runtime.approvalGateway(request);
+			expect(result).toMatchObject({
+				ok: true,
+				authority: "apr-01",
+				durable: true,
+				decision: {
+					requestId: request.requestId,
+					decision: "approved",
+					action: request.action,
+					risk: request.risk,
+					candidateSha: request.candidateSha,
+					fingerprint: request.fingerprint,
+				},
+			});
+			expect(result.decision.scopedPaths).toEqual(request.scopedPaths);
+			const orc = await assurance_request_approval(
+				{ schemaVersion: 1, request },
+				async () => result,
+			);
+			expect(orc).toMatchObject({ ok: true, outcome: "approved", code: "ORC01_APPROVED" });
+		}
+		expect(store.commits).toBe(conShapes.length);
+	});
+
+	test("injected safe store close is terminal and refuses later commit/read", async () => {
+		const module = await loadExtension();
+		let value: any = { schemaVersion: 1, records: [] };
+		let revision = "revision-0";
+		const adapter = module.createInjectedSafeApprovalStoreV1({
+			inspect: async () => storeFacts(),
+			readValue: async () => ({ revision, value: structuredClone(value) }),
+			compareAndCommit: async (input: any) => {
+				value = structuredClone(input.value);
+				revision = "revision-1";
+				return { revision };
+			},
+		});
+		await adapter.close?.();
+		const read = await adapter.read();
+		const committed = await adapter.commit({ expectedRevision: "revision-0", value, requirements: {} });
+		expect(read).toMatchObject({ ok: false, code: "APR01_STORE_CLOSED" });
+		expect(committed).toMatchObject({ ok: false, code: "APR01_STORE_CLOSED" });
+		expect(value.records).toHaveLength(0);
+	});
+
 	test("injected safe store adapter uses explicit operations and no ambient persistence", async () => {
 		const module = await loadExtension();
 		let value: any = { schemaVersion: 1, records: [] };
