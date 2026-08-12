@@ -211,13 +211,19 @@ export function createSecurityPolicyExtensionV1(options: SecurityPolicyExtension
 				},
 			});
 			if (eventData(result, "ok") !== true) {
+				const code = eventData(result, "code") === "content-redaction-refused"
+					? "content-redaction-refused"
+					: "redaction-refused";
 				return {
 					isError: true,
-					content: [{ type: "text", text: "security-policy: redaction-refused" }],
-					details: { securityPolicy: { ok: false, code: "redaction-refused" } },
+					content: [{ type: "text", text: `security-policy: ${code}` }],
+					details: { securityPolicy: { ok: false, code } },
 				};
 			}
 			const safe = safeToolResultParts(eventData(result, "value"), toolName);
+			if (eventData(result, "detailsRefused") === true) {
+				safe.details = { securityPolicy: { ok: false, code: "details-redaction-refused" } };
+			}
 			return {
 				isError,
 				content: safe.content,

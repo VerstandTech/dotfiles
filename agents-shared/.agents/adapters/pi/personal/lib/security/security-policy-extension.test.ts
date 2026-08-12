@@ -316,7 +316,53 @@ describe("SEC-01 security-policy extension", () => {
 		}
 	});
 
-	test("redaction refusal replaces the entire tool result with one non-echoing stable failure", async () => {
+	test("SECUX01_ADAPTER_ABSENT_DETAILS: safe content remains visible without optional details", async () => {
+		const api = await loadExtension();
+		const harness = fakePi();
+		const view = context();
+		api.createSecurityPolicyExtensionV1({
+			profileInput: { machineProfile: "interactive" },
+			buildPolicyRequest: () => undefined,
+		})(harness.pi);
+		await harness.emit("session_start", {}, view.ctx);
+		const result = await harness.emit("tool_result", {
+			toolName: "bdd_status",
+			isError: false,
+			content: [{ type: "text", text: "BDD: verify" }],
+		}, view.ctx);
+		expect(result).toEqual({
+			isError: false,
+			content: [{ type: "text", text: "BDD: verify" }],
+			details: { securityPolicy: { ok: true, toolName: "bdd_status" } },
+		});
+	});
+
+	test("SECUX01_ADAPTER_DETAILS_ISOLATION: hostile details do not hide safe content", async () => {
+		const api = await loadExtension();
+		const harness = fakePi();
+		const view = context();
+		api.createSecurityPolicyExtensionV1({
+			profileInput: { machineProfile: "interactive" },
+			buildPolicyRequest: () => undefined,
+		})(harness.pi);
+		await harness.emit("session_start", {}, view.ctx);
+		const details: Record<string, unknown> = { value: SYNTHETIC_SECRET };
+		details.self = details;
+		const result = await harness.emit("tool_result", {
+			toolName: "bash",
+			isError: false,
+			content: [{ type: "text", text: "12 tests passed" }],
+			details,
+		}, view.ctx);
+		expect(result).toEqual({
+			isError: false,
+			content: [{ type: "text", text: "12 tests passed" }],
+			details: { securityPolicy: { ok: false, code: "details-redaction-refused" } },
+		});
+		expect(JSON.stringify(result)).not.toContain(SYNTHETIC_SECRET);
+	});
+
+	test("content redaction refusal replaces primary output with one non-echoing stable failure", async () => {
 		const api = await loadExtension();
 		const harness = fakePi();
 		const view = context();
@@ -334,8 +380,8 @@ describe("SEC-01 security-policy extension", () => {
 		}, view.ctx);
 		expect(result).toEqual({
 			isError: true,
-			content: [{ type: "text", text: "security-policy: redaction-refused" }],
-			details: { securityPolicy: { ok: false, code: "redaction-refused" } },
+			content: [{ type: "text", text: "security-policy: content-redaction-refused" }],
+			details: { securityPolicy: { ok: false, code: "content-redaction-refused" } },
 		});
 		expect(JSON.stringify(result)).not.toContain(SYNTHETIC_SECRET);
 	});
