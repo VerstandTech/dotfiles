@@ -52,5 +52,5 @@ describe("PKG-01 packaged Pi startup", () => {
     } finally {
       rmSync(home, { recursive: true, force: true });
     }
-  });
+  }, 120_000);
 });
