@@ -89,6 +89,7 @@ type SandboxState = {
 	allowedCommands: readonly (readonly string[])[];
 	allowedDomains: readonly string[];
 	allowedPorts: readonly number[];
+	operatorRequestedPaths: readonly string[];
 };
 type DecisionState = {
 	profile: TrustProfileV1;
@@ -462,11 +463,44 @@ export function createSandboxCapabilityV1(input: unknown): Readonly<PlainRecord>
 			allowedCommands: deepFreeze(commands),
 			allowedDomains: Object.freeze([...normalizedDomains].sort()),
 			allowedPorts: Object.freeze([...ports].sort((a, b) => a - b)),
+			operatorRequestedPaths: Object.freeze([]),
 		});
 		return deepFreeze({ ok: true, provider, fingerprint: digest, capability });
 	} catch {
 		return refusal("invalid-sandbox-observation");
 	}
+}
+
+function isPathBreakerV1(ch: string): boolean {
+	return ch <= " " || "\"'`<>()[]{},;".includes(ch);
+}
+
+function extractOperatorRequestedPathsV1(text: string, homeRoot: string): readonly string[] {
+	if (text.length === 0 || text.length > SECURITY_POLICY_LIMITS_V1.maxSerializedBytes) return Object.freeze([]);
+	const found: string[] = [];
+	let index = 0;
+	while (index < text.length) {
+		const ch = text[index];
+		if (ch === "/" || (ch === "~" && text[index + 1] === "/")) {
+			let end = index + 1;
+			while (end < text.length && !isPathBreakerV1(text[end])) end += 1;
+			const raw = text.slice(index, end);
+			const expanded = raw.startsWith("~/") ? `${homeRoot}${raw.slice(1)}` : raw;
+			if (validAbsolutePath(expanded) && !found.includes(expanded)) found.push(expanded);
+			index = end;
+			continue;
+		}
+		index += 1;
+	}
+	return Object.freeze(found);
+}
+
+export function captureOperatorRequestedPathsV1(capability: unknown, text: unknown): Readonly<PlainRecord> | SecurityRefusalV1 {
+	const current = capabilityState(capability);
+	if (!current.state) return refusal(current.code ?? "sandbox-required");
+	if (typeof text !== "string") return refusal("invalid-policy-input");
+	current.state.operatorRequestedPaths = extractOperatorRequestedPathsV1(text, current.state.homeRoot);
+	return deepFreeze({ ok: true, count: current.state.operatorRequestedPaths.length });
 }
 
 export function disposeSandboxCapabilityV1(value: unknown): Readonly<PlainRecord> | SecurityRefusalV1 {
@@ -542,7 +576,9 @@ function evaluateRead(state: SandboxState, action: PlainRecord): string | undefi
 	const requested = read(facts, "requestedPath") as string;
 	const resolved = read(facts, "resolvedPath") as string;
 	if (isSecretPath(requested, state.homeRoot) || isSecretPath(resolved, state.homeRoot)) return "secret-read-denied";
-	if (!within(state.worktreeRoot, resolved) && !within(state.sessionTempRoot, resolved)) return "read-outside-authority";
+	const approved = state.operatorRequestedPaths;
+	const operatorApproved = requested === resolved && approved.includes(resolved);
+	if (!within(state.worktreeRoot, resolved) && !within(state.sessionTempRoot, resolved) && !operatorApproved) return "read-outside-authority";
 	if (read(facts, "linkCount") as number > 1) return "hardlink-denied";
 	if (read(facts, "symlink") === true) return "symlink-denied";
 	if (read(facts, "fileKind") !== "regular") return "unsafe-file-kind";

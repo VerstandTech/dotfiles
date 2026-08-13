@@ -1,4 +1,5 @@
 import {
+	captureOperatorRequestedPathsV1,
 	createSandboxCapabilityV1,
 	disposeSandboxCapabilityV1,
 	evaluateSecurityPolicyV1,
@@ -208,6 +209,13 @@ export function createSecurityPolicyExtensionV1(options: SecurityPolicyExtension
 			} catch {
 				state.initializationCode = "sandbox-initialization-failed";
 				setStatus(context, "security-policy: sandbox-initialization-failed");
+			}
+		});
+
+		pi.on("input", (event: unknown) => {
+			const text = eventData(event, "text");
+			if (state.sandboxCapability !== undefined && typeof text === "string") {
+				captureOperatorRequestedPathsV1(state.sandboxCapability, text);
 			}
 		});
 
