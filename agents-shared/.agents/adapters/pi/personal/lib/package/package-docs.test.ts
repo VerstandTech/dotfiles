@@ -17,6 +17,7 @@ describe("PKG-01 operator package guide", () => {
       "## Disable",
       "## Rollback",
       "## Stable failure codes",
+      "## ISSUE-25 live child-delegation probe",
     ]) expect(text).toContain(heading);
     expect(text).toContain("scripts/stage-ai-resources.py");
     expect(text).toContain("verify-ai-resources.py");
