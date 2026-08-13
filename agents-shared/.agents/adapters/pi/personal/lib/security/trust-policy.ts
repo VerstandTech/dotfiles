@@ -1,6 +1,5 @@
 import { createHash } from "node:crypto";
 import { CONTRACT_LIMITS_V1 } from "../contracts/limits.ts";
-import { redactForPersistence } from "./redact.ts";
 import { isSecretLeafBasenameV1 } from "./secret-leaf.ts";
 
 export const SECURITY_POLICY_LIMITS_V1 = Object.freeze({
@@ -826,101 +825,5 @@ export function evaluateSecurityGateSlotsV1(input: unknown): Readonly<PlainRecor
 		return deepFreeze({ ok: true, available: true, slots, evidence });
 	} catch {
 		return refusal("invalid-security-gates");
-	}
-}
-
-type OptionalResultChannelV1 =
-	| Readonly<{ state: "absent" }>
-	| Readonly<{ state: "present"; value: unknown }>
-	| Readonly<{ state: "invalid" }>;
-
-type ResultEnvelopeKindV1 = "channels" | "legacy" | "invalid";
-
-function classifyResultEnvelopeV1(result: unknown): ResultEnvelopeKindV1 {
-	try {
-		if (!result || typeof result !== "object" || Array.isArray(result) || Object.getPrototypeOf(result) !== Object.prototype) return "invalid";
-		let hasChannel = false;
-		let hasLegacy = false;
-		for (const key of Reflect.ownKeys(result)) {
-			if (typeof key !== "string") return "invalid";
-			const descriptor = Object.getOwnPropertyDescriptor(result, key);
-			if (!descriptor || !descriptor.enumerable) return "invalid";
-			if (key === "content" || key === "details") hasChannel = true;
-			else {
-				if (!("value" in descriptor)) return "invalid";
-				hasLegacy = true;
-			}
-		}
-		if (hasChannel && hasLegacy) return "invalid";
-		return hasChannel || !hasLegacy ? "channels" : "legacy";
-	} catch {
-		return "invalid";
-	}
-}
-
-function readOptionalResultChannelV1(result: unknown, key: "content" | "details"): OptionalResultChannelV1 {
-	try {
-		if (classifyResultEnvelopeV1(result) !== "channels") {
-			return Object.freeze({ state: "invalid" });
-		}
-		const descriptor = Object.getOwnPropertyDescriptor(result, key);
-		if (!descriptor) return Object.freeze({ state: "absent" });
-		if (!("value" in descriptor) || !descriptor.enumerable) return Object.freeze({ state: "invalid" });
-		if (descriptor.value === undefined) return Object.freeze({ state: "absent" });
-		return Object.freeze({ state: "present", value: descriptor.value });
-	} catch {
-		return Object.freeze({ state: "invalid" });
-	}
-}
-
-export function prepareSecurityToolResultV1(input: unknown): Readonly<PlainRecord> | SecurityRefusalV1 {
-	try {
-		const root = strictRecord(input, ["isError", "toolName", "result"]);
-		if (!root || typeof read(root, "isError") !== "boolean" || !isSafeId(read(root, "toolName"))) return refusal("redaction-refused");
-		const rawResult = read(root, "result");
-		const envelopeKind = classifyResultEnvelopeV1(rawResult);
-		if (envelopeKind === "invalid") return refusal("redaction-refused");
-		if (envelopeKind === "legacy") {
-			const redacted = redactForPersistence(rawResult);
-			if (!redacted.ok) return refusal("redaction-refused");
-			return deepFreeze({ ok: true, isError: read(root, "isError"), toolName: read(root, "toolName"), value: redacted.value });
-		}
-		const content = readOptionalResultChannelV1(rawResult, "content");
-		const details = readOptionalResultChannelV1(rawResult, "details");
-		if (content.state === "invalid") return refusal("content-redaction-refused");
-
-		const value: PlainRecord = {};
-		if (content.state === "present") {
-			const redactedContent = redactForPersistence(content.value);
-			if (!redactedContent.ok) return refusal("content-redaction-refused");
-			value.content = redactedContent.value;
-		}
-
-		let detailsRefused = details.state === "invalid";
-		if (details.state === "present") {
-			const redactedDetails = redactForPersistence(details.value);
-			if (redactedDetails.ok) value.details = redactedDetails.value;
-			else detailsRefused = true;
-		}
-		if (detailsRefused) {
-			value.details = { securityPolicy: { ok: false, code: "details-redaction-refused" } };
-		}
-
-		let boundedValue = redactForPersistence(value);
-		if (!boundedValue.ok && value.content !== undefined && !detailsRefused) {
-			detailsRefused = true;
-			value.details = { securityPolicy: { ok: false, code: "details-redaction-refused" } };
-			boundedValue = redactForPersistence(value);
-		}
-		if (!boundedValue.ok) return refusal(value.content === undefined ? "redaction-refused" : "content-redaction-refused");
-		return deepFreeze({
-			ok: true,
-			isError: read(root, "isError"),
-			toolName: read(root, "toolName"),
-			value: boundedValue.value,
-			detailsRefused,
-		});
-	} catch {
-		return refusal("redaction-refused");
 	}
 }

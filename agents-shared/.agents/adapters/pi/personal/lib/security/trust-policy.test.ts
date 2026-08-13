@@ -21,7 +21,6 @@ const REQUIRED_API = [
 	"evaluateSecurityPolicyV1",
 	"assertSecurityDecisionV1",
 	"evaluateSecurityGateSlotsV1",
-	"prepareSecurityToolResultV1",
 ] as const;
 
 type SecurityApi = Record<(typeof REQUIRED_API)[number], any> & Record<string, any>;
@@ -639,32 +638,6 @@ describe("SEC-01 trust policy", () => {
 			const features = { ...(observation().features as Record<string, boolean>), [missing]: false };
 			expectRefusal(api.createSandboxCapabilityV1(observation({ features })), "sandbox-capability-incomplete");
 		}
-	});
-
-	test("redacts successful and failed tool results before exposing safe telemetry", async () => {
-		const api = await loadApi();
-		for (const isError of [false, true]) {
-			const result = api.prepareSecurityToolResultV1({
-				isError,
-				toolName: "synthetic-tool",
-				result: { output: `Authorization: Bearer ${SYNTHETIC_SECRET}`, nested: { password: SYNTHETIC_SECRET } },
-			});
-			expect(result).toEqual(expect.objectContaining({ ok: true, isError, toolName: "synthetic-tool" }));
-			expect(JSON.stringify(result)).not.toContain(SYNTHETIC_SECRET);
-			expectDeepFrozen(result);
-		}
-	});
-
-	test("redaction refusal has no raw fallback hash preview or partial result", async () => {
-		const api = await loadApi();
-		const cyclic: Record<string, unknown> = { secret: SYNTHETIC_SECRET };
-		cyclic.self = cyclic;
-		const result = api.prepareSecurityToolResultV1({ isError: true, toolName: "synthetic-tool", result: cyclic });
-		expect(result).toEqual({ ok: false, code: "redaction-refused" });
-		const json = JSON.stringify(result);
-		expect(json).not.toContain(SYNTHETIC_SECRET);
-		expect(json).not.toContain("hash");
-		expect(json).not.toContain("preview");
 	});
 
 	test("evaluates secret SAST SCA and license slots with current trusted evidence", async () => {

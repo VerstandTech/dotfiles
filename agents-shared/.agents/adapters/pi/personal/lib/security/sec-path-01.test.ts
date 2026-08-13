@@ -4,7 +4,6 @@ import {
 	captureOperatorRequestedPathsV1,
 	createSandboxCapabilityV1,
 	evaluateSecurityPolicyV1,
-	prepareSecurityToolResultV1,
 } from "./trust-policy.ts";
 
 const POLICY_FINGERPRINT = "a".repeat(64);
@@ -129,44 +128,6 @@ describe("SEC-PATH-01 operator-requested local paths", () => {
 			})),
 			"secret-read-denied",
 		);
-	});
-
-	test("SECPATH01_HOSTILE_STILL_REFUSED: accessor primary content still refuses", () => {
-		const content: Record<string, unknown> = { value: PLAN_TEXT };
-		content.self = content;
-
-		const result = prepareSecurityToolResultV1({
-			isError: false,
-			toolName: "read",
-			result: { content, details: { count: 1 } },
-		});
-
-		expect(result).toEqual({ ok: false, code: "content-redaction-refused" });
-		expect(JSON.stringify(result)).not.toContain(PLAN_TEXT);
-	});
-
-	test("SECPATH01_OVERSIZED_DETAILS_DEGRADE: oversized details do not hide requested primary content", () => {
-		const result = prepareSecurityToolResultV1({
-			isError: false,
-			toolName: "read",
-			result: {
-				content: [{ type: "text", text: PLAN_TEXT }],
-				details: { blob: "x".repeat(70_000) },
-			},
-		});
-
-		expect(result).toMatchObject({
-			ok: true,
-			isError: false,
-			value: {
-				content: [{ type: "text", text: PLAN_TEXT }],
-				details: {
-					securityPolicy: { ok: false, code: "details-redaction-refused" },
-				},
-			},
-		});
-		expect(JSON.stringify(result)).toContain(PLAN_TEXT);
-		expect(JSON.stringify(result)).not.toContain("x".repeat(32));
 	});
 
 	test("SECPATH01_DIRECTORY_AND_SIBLING_DENIED: directory text and siblings stay blocked", () => {
