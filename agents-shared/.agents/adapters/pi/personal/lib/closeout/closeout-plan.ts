@@ -7,8 +7,9 @@ export function planOpsEvidenceV1(input: Readonly<{ packageId: string; merged: b
   return Object.freeze({
     ok: true as const,
     status: "recorded" as const,
-    red: input.historicalRedGreenAvailable ? "recorded" : "missing",
-    green: input.historicalRedGreenAvailable ? "recorded" : "missing",
+    red: "missing" as const,
+    green: "missing" as const,
+    historicalRedGreen: "unknown" as const,
     acceptanceRef: input.acceptanceRef,
     executes: false as const,
   });

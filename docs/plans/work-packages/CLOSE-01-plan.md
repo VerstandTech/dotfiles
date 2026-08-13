@@ -14,7 +14,7 @@ stack can be reviewed, adopted, and handed off without invented evidence.
 |---|---|---|---|
 | C1 | BDD worktree evidence binding | done | Worktree-local binder returns `.pi/bdd-evidence.json` and refuses parent identity |
 | C2 | Live child-delegation startup | in progress | Test files excluded from extension globs; import.meta.dir path fix applied |
-| C3 | OPS-01 evidence reconciliation | done | Planner records acceptance and leaves lost red/green missing |
+| C3 | OPS-01 evidence reconciliation | done | Planner records acceptance and leaves lost red/green missing; current package-turn handoff is `docs/plans/work-packages/OPS-01-package-turn-handoff.md` |
 | C4 | Cross-machine/live package acceptance | done | Planner-only; blocked without named approved target |
 | C5 | Post-E2E review fleet + remediation | in progress | Operator approved 2026-08-12; three-person architecture/security/operator review dispatched |
 
