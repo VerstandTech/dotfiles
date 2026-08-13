@@ -1,4 +1,9 @@
 import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+
+const repo = resolve(import.meta.dir, "../../../../../../..");
+const handoffPath = resolve(repo, "docs/plans/work-packages/OPS-01-package-turn-handoff.md");
 
 type Api = typeof import("./closeout-plan");
 let api: Api;
@@ -14,7 +19,29 @@ describe("CLOSE-01 remaining closeout planners", () => {
       historicalRedGreenAvailable: false,
       acceptanceRef: "docs/plans/work-packages/OPS-01.feature",
     });
-    expect(result).toMatchObject({ ok: true, status: "recorded", red: "missing", green: "missing", acceptanceRef: "docs/plans/work-packages/OPS-01.feature" });
+    expect(result).toMatchObject({ ok: true, status: "recorded", red: "missing", green: "missing", historicalRedGreen: "unknown", acceptanceRef: "docs/plans/work-packages/OPS-01.feature" });
+  });
+
+  test("OPS01_HISTORICAL_RED_GREEN_UNINVENTABLE: caller flag cannot mint recorded red/green", () => {
+    const result = api.planOpsEvidenceV1({
+      packageId: "OPS-01",
+      merged: true,
+      rootGreen: true,
+      historicalRedGreenAvailable: true,
+      acceptanceRef: "docs/plans/work-packages/OPS-01.feature",
+    });
+    expect(result).toMatchObject({ ok: true, status: "recorded", red: "missing", green: "missing", historicalRedGreen: "unknown" });
+    expect(result).not.toMatchObject({ red: "recorded" });
+    expect(result).not.toMatchObject({ green: "recorded" });
+  });
+
+  test("OPS01_PACKAGE_TURN_HANDOFF_HONEST: reconstruction keeps lost red/green missing", () => {
+    const handoff = readFileSync(handoffPath, "utf8");
+    expect(handoff).toContain("- **Red:** _(missing)_");
+    expect(handoff).toContain("- **Green:** _(missing)_");
+    expect(handoff).toContain("Historical package-turn red/green remain missing");
+    expect(handoff).not.toMatch(/\*\*Red:\*\* `[^`]+` → exit /);
+    expect(handoff).not.toMatch(/\*\*Green:\*\* `[^`]+` → exit /);
   });
 
   test("CLOSE01_LIVE_PACKAGE_MISSING: live package actions stay blocked without a named approved target", () => {
