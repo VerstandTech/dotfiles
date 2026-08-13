@@ -5,7 +5,7 @@
     "piPersonal": {
       "path": "agents-shared/.agents/adapters/pi/personal",
       "version": "0.7.3",
-      "manifestFingerprint": "61df8d338e3644e112237473c85c464c266cd1f05875e554572249e1cee51a5b",
+      "manifestFingerprint": "e1a437f5b5304acc6f6fc27cb90b308f203bdeb3630491c83997e34b79d64d80",
       "compatibility": {
         "pi": "0.84.1",
         "pi-subagents": "0.45.2",
@@ -20,7 +20,7 @@
         "grok/.grok/config.toml",
         "pi/.pi/agent/settings.json"
       ],
-      "resourceFingerprint": "3c38bc3b91a76f0a9194e557cb2172a6038c3e546e7efb1ac34444e02d3f486c",
+      "resourceFingerprint": "ee4a7aa304d3a9e1e1438ebf2ce2f44c3734ff003a4b77d1dfc507376a50c33b",
       "runtimePackages": [
         "npm:pi-subagents@0.45.2",
         "npm:context-mode@1.0.169",

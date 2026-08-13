@@ -13,8 +13,9 @@
  *        bdd_run_quality_gates, bdd_delegate_role, bdd_record_evidence,
  *        bdd_handoff
  */
+import { execFileSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { StringEnum, Type } from "@earendil-works/pi-ai";
 import { defineTool, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
@@ -80,6 +81,12 @@ import {
 import { formatDoctorReport, runAgenticDoctor } from "../lib/bdd/doctor.ts";
 import { formatPrBody } from "../lib/bdd/pr-handoff.ts";
 import {
+	bindWorktreeEvidenceV1,
+	handoffWorktreeEvidenceV1,
+	readWorktreeEvidenceV1,
+	resolveRecordingWorktreeV1,
+} from "../lib/bdd/worktree-evidence.ts";
+import {
 	greenCoversRed,
 	runCommand,
 	validateGreenResult,
@@ -103,6 +110,29 @@ function nowIso(): string {
 
 function cwdOf(ctx?: ExtensionContext): string {
 	return ctx?.cwd ?? process.cwd();
+}
+
+function gitPath(cwd: string, flag: "--show-toplevel" | "--git-common-dir"): string | undefined {
+	try {
+		const value = execFileSync("git", ["rev-parse", flag], {
+			cwd,
+			encoding: "utf8",
+			stdio: ["ignore", "pipe", "ignore"],
+		}).trim();
+		return value ? resolve(cwd, value) : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+function recordingWorktreeOf(cwd: string) {
+	const worktreePath = gitPath(cwd, "--show-toplevel");
+	const commonDir = gitPath(cwd, "--git-common-dir");
+	const parentPath = commonDir ? resolve(commonDir, "..") : undefined;
+	if (!worktreePath || !parentPath) {
+		return resolveRecordingWorktreeV1({ cwd, parentPath: cwd });
+	}
+	return resolveRecordingWorktreeV1({ cwd: worktreePath, parentPath });
 }
 
 function hasRedEvidence(evidence: BddEvidence): boolean {
@@ -238,8 +268,51 @@ export default function bddModeExtension(pi: ExtensionAPI): void {
 		return `${formatHandoff(state.evidence, state.phase)}\n${formatAssuranceHandoff(state.evidence.assurance)}\n`;
 	}
 
-	function persist(): void {
+	function persist(ctx?: ExtensionContext): void {
+		const cwd = cwdOf(ctx);
+		const identity = recordingWorktreeOf(cwd);
+		if (identity.ok) {
+			const closed: { red?: { command: string; exitCode: number; summary: string }; green?: { command: string; exitCode: number; summary: string } } = {};
+			if (state.evidence.red) {
+				closed.red = {
+					command: state.evidence.red.command,
+					exitCode: state.evidence.red.exitCode,
+					summary: state.evidence.red.summary,
+				};
+			}
+			if (state.evidence.green) {
+				closed.green = {
+					command: state.evidence.green.command,
+					exitCode: state.evidence.green.exitCode,
+					summary: state.evidence.green.summary,
+				};
+			}
+			bindWorktreeEvidenceV1({
+				worktreePath: identity.worktreePath,
+				parentPath: identity.parentPath,
+				evidence: closed,
+			});
+		}
 		pi.appendEntry(CUSTOM_TYPE, { ...state });
+	}
+
+	function syncWorktreeEvidence(cwd: string): void {
+		const identity = recordingWorktreeOf(cwd);
+		if (!identity.ok) return;
+		const stored = readWorktreeEvidenceV1({ worktreePath: identity.worktreePath });
+		if (!stored.ok || !stored.evidence) return;
+		if (stored.evidence.red) {
+			state.evidence.red = {
+				...(state.evidence.red ?? { at: nowIso() }),
+				...stored.evidence.red,
+			};
+		}
+		if (stored.evidence.green) {
+			state.evidence.green = {
+				...(state.evidence.green ?? { at: nowIso() }),
+				...stored.evidence.green,
+			};
+		}
 	}
 
 	function syncFleetRunsFromBranch(ctx: ExtensionContext): void {
@@ -276,6 +349,7 @@ export default function bddModeExtension(pi: ExtensionAPI): void {
 			state.phase = "discovery";
 		}
 		syncFleetRunsFromBranch(ctx);
+		syncWorktreeEvidence(cwdOf(ctx));
 		updateStatus(ctx);
 	}
 
@@ -533,7 +607,8 @@ export default function bddModeExtension(pi: ExtensionAPI): void {
 				check.assuranceEligible === true
 					? "assurance-eligible"
 					: "legacy/non-assurance";
-			persist();
+			syncWorktreeEvidence(cwdOf(extCtx));
+			persist(extCtx);
 			updateStatus(extCtx);
 			return {
 				content: [
@@ -658,7 +733,8 @@ export default function bddModeExtension(pi: ExtensionAPI): void {
 			delete state.evidence.assurance;
 			state.phase = "green";
 			state.enabled = true;
-			persist();
+			syncWorktreeEvidence(cwdOf(extCtx));
+			persist(extCtx);
 			updateStatus(extCtx);
 			return {
 				content: [
@@ -813,7 +889,38 @@ export default function bddModeExtension(pi: ExtensionAPI): void {
 			const extCtx = ctx as ExtensionContext;
 			reloadConfig(cwdOf(extCtx));
 			syncFleetRunsFromBranch(extCtx);
-			const { ok, missing } = completeHandoff(cwdOf(extCtx));
+			const cwd = cwdOf(extCtx);
+			const identity = recordingWorktreeOf(cwd);
+			const worktreeHandoff = handoffWorktreeEvidenceV1({
+				cwd: identity.ok ? identity.worktreePath : cwd,
+				parentPath: identity.ok ? identity.parentPath : cwd,
+				sessionEvidence: state.evidence,
+			});
+			if (worktreeHandoff.ok && worktreeHandoff.evidence) {
+				if (worktreeHandoff.evidence.red) {
+					state.evidence.red = {
+						...(state.evidence.red ?? { at: nowIso() }),
+						...worktreeHandoff.evidence.red,
+					};
+				}
+				if (worktreeHandoff.evidence.green) {
+					state.evidence.green = {
+						...(state.evidence.green ?? { at: nowIso() }),
+						...worktreeHandoff.evidence.green,
+					};
+				}
+			} else if (!identity.ok && !state.evidence.red && !state.evidence.green) {
+				const { ok, missing } = {
+					ok: false,
+					missing: ["unknown", ...(worktreeHandoff.missing ?? ["missing"])],
+				};
+				const body = formatExactHandoff();
+				return {
+					content: [{ type: "text", text: `${body}\n**Missing:** ${missing.join(", ")}\n` }],
+					details: { ok, missing, evidence: state.evidence, code: "unknown" },
+				};
+			}
+			const { ok, missing } = completeHandoff(cwd);
 			const body = formatExactHandoff(); // includes formatAssuranceHandoff exact results
 			const fleetLines =
 				(state.evidence.fleetRuns ?? [])
