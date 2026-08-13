@@ -22,7 +22,7 @@ A capability is process-local and bound to its policy/worktree/session observati
 
 Pure policy code receives explicit host observations; it does not read files, environment, clocks, processes, sockets, or network state.
 
-Strict/overnight reads deny repository environment files, credential leaves, private keys, home secret roots, symlink aliases, and multi-link regular files before content access. Writes require current resolved facts inside one canonical worktree or an exact task-specific session-temp root. The whole global temporary directory is never writable authority.
+Strict/overnight reads deny repository environment files, credential leaves, private keys, home secret roots, symlink aliases, and multi-link regular files before content access. An exact path captured from the current user turn may be read when requestedPath equals resolvedPath and that same path is present in the process-local capability; this is not a HOME or Downloads allowlist, does not persist across later turns, and cannot mint write, command, or egress authority. Writes require current resolved facts inside one canonical worktree or an exact task-specific session-temp root. The whole global temporary directory is never writable authority.
 
 Strict/overnight launch environments use a fixed minimal name allowlist. Removed values do not enter decisions, refusal messages, fingerprints, or audit metadata.
 

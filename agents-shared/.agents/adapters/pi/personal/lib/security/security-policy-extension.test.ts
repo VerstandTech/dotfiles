@@ -165,6 +165,7 @@ describe("SEC-01 security-policy extension", () => {
 			buildPolicyRequest: () => undefined,
 		})(harness.pi);
 		expect([...harness.handlers.keys()].sort()).toEqual([
+			"input",
 			"session_shutdown",
 			"session_start",
 			"tool_call",
@@ -200,6 +201,32 @@ describe("SEC-01 security-policy extension", () => {
 		await harness.emit("session_start", {}, view.ctx);
 		expect(await harness.emit("tool_call", { toolName: "read" }, view.ctx)).toEqual({ block: true, reason: "invalid-profile-authority" });
 		expect(built).toBe(0);
+	});
+
+	test("SECPATH01_ADAPTER_OPERATOR_READ: current-turn input permits only that exact home file", async () => {
+		const api = await loadExtension();
+		const harness = fakePi();
+		const view = context();
+		const operatorPath = `${HOME}/Downloads/GRAPHITI_PI_HERDR_MEMORY_PLAN.md`;
+		const siblingPath = `${HOME}/Downloads/other-plan.md`;
+		let requestedPath = operatorPath;
+		api.createSecurityPolicyExtensionV1({
+			profileInput: { machineProfile: "strict" },
+			initializeSandbox: async () => observation(),
+			buildPolicyRequest: (_event: unknown, _ctx: unknown, state: unknown) => safeReadRequest(state, requestedPath),
+		})(harness.pi);
+		await harness.emit("session_start", {}, view.ctx);
+		expect(await harness.emit("tool_call", { toolName: "read", input: { path: operatorPath } }, view.ctx)).toEqual({
+			block: true,
+			reason: "read-outside-authority",
+		});
+		await harness.emit("input", { text: `Please read ${operatorPath}` }, view.ctx);
+		expect(await harness.emit("tool_call", { toolName: "read", input: { path: operatorPath } }, view.ctx)).toBeUndefined();
+		requestedPath = siblingPath;
+		expect(await harness.emit("tool_call", { toolName: "read", input: { path: siblingPath } }, view.ctx)).toEqual({
+			block: true,
+			reason: "read-outside-authority",
+		});
 	});
 
 	test("strict active capability blocks a secret alias and permits a safe observed read", async () => {
