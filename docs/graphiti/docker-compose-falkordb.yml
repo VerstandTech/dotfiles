@@ -1,0 +1,61 @@
+# Local Graphiti + FalkorDB stack for Pi (`pi-graphiti`).
+# Official getzep compose binds FalkorDB Browser to host :3000.
+# That port is already used on this machine, so the UI is remapped.
+#
+# Host ports:
+#   6379  FalkorDB / Redis protocol
+#   3001  FalkorDB Browser UI  (not 3000)
+#   8000  Graphiti MCP HTTP    (http://localhost:8000/mcp/)
+#
+# Secrets stay in the environment or a gitignored `.env` next to this file.
+# Prefer `scripts/setup-graphiti.sh` over a raw compose up.
+#
+# Usage:
+#   bash scripts/setup-graphiti.sh
+#   /graph  (after /reload)
+
+services:
+  falkordb:
+    image: falkordb/falkordb:latest
+    ports:
+      - "6379:6379"
+      - "3001:3000"
+    environment:
+      - FALKORDB_PASSWORD=${FALKORDB_PASSWORD:-}
+      - BROWSER=${BROWSER:-1}
+    volumes:
+      - falkordb_data:/var/lib/falkordb/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-p", "6379", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  graphiti-mcp:
+    image: zepai/knowledge-graph-mcp:standalone
+    depends_on:
+      falkordb:
+        condition: service_healthy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      - FALKORDB_URI=${FALKORDB_URI:-redis://falkordb:6379}
+      - FALKORDB_PASSWORD=${FALKORDB_PASSWORD:-}
+      - FALKORDB_DATABASE=${FALKORDB_DATABASE:-default_db}
+      - GRAPHITI_GROUP_ID=${GRAPHITI_GROUP_ID:-main}
+      - SEMAPHORE_LIMIT=${SEMAPHORE_LIMIT:-10}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - OPENAI_API_URL=${OPENAI_API_URL:-https://api.openai.com/v1}
+      - MODEL_NAME=${MODEL_NAME:-llama3.2}
+      - EMBEDDER_MODEL=${EMBEDDER_MODEL:-nomic-embed-text}
+      - EMBEDDER_DIMENSIONS=${EMBEDDER_DIMENSIONS:-768}
+    volumes:
+      - ./config-docker-falkordb.yaml:/app/mcp/config/config.yaml:ro
+    ports:
+      - "8000:8000"
+    command: ["uv", "run", "main.py"]
+
+volumes:
+  falkordb_data:
+    driver: local

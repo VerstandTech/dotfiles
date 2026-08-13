@@ -357,6 +357,7 @@ def validate_manifest(repo: Path, errors: list[str]) -> None:
         "npm:pi-markdown-preview@0.13.1",
         "./personal",
         "npm:pi-web-access@0.13.0",
+        "npm:pi-graphiti@0.6.0",
     ]
     if package.get("runtimePackages") != expected_runtime_packages:
         errors.append("PKG01_PACKAGE_MANIFEST_MISSING: pin-mismatch")
