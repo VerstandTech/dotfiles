@@ -33,6 +33,7 @@ function validate(options: { packageVersion?: string; manifestVersion?: string; 
             "npm:pi-markdown-preview@0.13.1",
             "./personal",
             "npm:pi-web-access@0.13.0",
+            "npm:pi-graphiti@0.6.0",
           ],
           resourceRoots: [
             "agents-shared/.agents/adapters/claude",
@@ -60,6 +61,7 @@ function validate(options: { packageVersion?: string; manifestVersion?: string; 
       "npm:pi-markdown-preview@0.13.1",
       "./personal",
       "npm:pi-web-access@0.13.0",
+      "npm:pi-graphiti@0.6.0",
     ] }));
     const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
     const packageValue = manifest.packages.piPersonal;
@@ -124,6 +126,7 @@ describe("PKG-01 frozen package manifest verification", () => {
       "npm:pi-markdown-preview@0.13.1",
       "./personal",
       "npm:pi-web-access@0.13.0",
+      "npm:pi-graphiti@0.6.0",
     ]);
     expect(manifest.packages.piPersonal.runtimePackages).toEqual(settings.packages);
   });
