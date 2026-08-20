@@ -4,6 +4,8 @@ installer = "internal"
 [models]
 default = "grok-4.5"
 default_reasoning_effort = "xhigh"
+# Priority Processing: "priority" = ON, "default" = OFF.
+service_tier = "priority"
 
 [ui]
 max_thoughts_width = 120

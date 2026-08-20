@@ -6,7 +6,7 @@ import { spawnSync } from "node:child_process";
 
 const verifier = resolve(import.meta.dir, "../../../../../scripts/verify-ai-resources.py");
 const compatibility = {
-  pi: "0.84.1",
+  pi: "0.84.2",
   "pi-subagents": "0.45.2",
   "context-mode": "1.0.169",
   rulesync: "16.9.1",
@@ -34,6 +34,7 @@ function validate(options: { packageVersion?: string; manifestVersion?: string; 
             "./personal",
             "npm:pi-web-access@0.13.0",
             "npm:pi-graphiti@0.6.0",
+            "npm:pi-ponytail",
           ],
           resourceRoots: [
             "agents-shared/.agents/adapters/claude",
@@ -62,6 +63,7 @@ function validate(options: { packageVersion?: string; manifestVersion?: string; 
       "./personal",
       "npm:pi-web-access@0.13.0",
       "npm:pi-graphiti@0.6.0",
+      "npm:pi-ponytail",
     ] }));
     const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
     const packageValue = manifest.packages.piPersonal;
@@ -127,6 +129,7 @@ describe("PKG-01 frozen package manifest verification", () => {
       "./personal",
       "npm:pi-web-access@0.13.0",
       "npm:pi-graphiti@0.6.0",
+      "npm:pi-ponytail",
     ]);
     expect(manifest.packages.piPersonal.runtimePackages).toEqual(settings.packages);
   });

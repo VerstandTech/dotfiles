@@ -86,6 +86,13 @@ function detectAgent(statuses: ReadonlyMap<string, string>): string | undefined 
 	return undefined;
 }
 
+function detectPriority(statuses: ReadonlyMap<string, string>): string | undefined {
+	const raw = statuses.get("xai-priority");
+	if (!raw) return undefined;
+	const plain = raw.replace(/\x1b\[[0-9;]*m/g, "").trim().toLowerCase();
+	return plain || undefined;
+}
+
 export default function (pi: ExtensionAPI) {
 	let working = false;
 	let workStartedAt = 0;
@@ -194,6 +201,7 @@ export default function (pi: ExtensionAPI) {
 						agent: detectAgent(statuses),
 						model: shortModel(ctx.model?.id),
 						thinking: thinking || undefined,
+						priority: detectPriority(statuses),
 						path: formatPath(ctx.cwd, branch),
 					});
 					return fitLines(line ? [line] : [""], width);

@@ -54,4 +54,15 @@ describe("footer-chips", () => {
 	test("empty input yields empty line", () => {
 		expect(renderFooterChips({ width: 40 })).toBe("");
 	});
+
+	test("priority chip trails thinking", () => {
+		const line = renderFooterChips({
+			width: 80,
+			model: "grok-4.5",
+			thinking: "xhigh",
+			priority: "priority",
+		});
+		const plain = line.replace(/\x1b\[[0-9;]*m/g, "");
+		expect(plain).toBe("grok-4.5 thinking: xhigh priority");
+	});
 });

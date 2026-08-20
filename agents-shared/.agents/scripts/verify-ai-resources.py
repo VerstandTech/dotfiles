@@ -311,7 +311,7 @@ def validate_manifest(repo: Path, errors: list[str]) -> None:
         errors.append(f"{path}: canonicalSkills must be 'skills'")
 
     expected_pins = {
-        "pi": "0.84.1",
+        "pi": "0.84.2",
         "pi-subagents": "0.45.2",
         "context-mode": "1.0.169",
         "rulesync": "16.9.1",
@@ -358,6 +358,7 @@ def validate_manifest(repo: Path, errors: list[str]) -> None:
         "./personal",
         "npm:pi-web-access@0.13.0",
         "npm:pi-graphiti@0.6.0",
+        "npm:pi-ponytail",
     ]
     if package.get("runtimePackages") != expected_runtime_packages:
         errors.append("PKG01_PACKAGE_MANIFEST_MISSING: pin-mismatch")

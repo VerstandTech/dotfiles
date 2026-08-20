@@ -65,8 +65,8 @@ describe("LOCAL-CONFIG-01 curated configuration contract", () => {
   });
 
   test("keeps the deliberate Pi preference without changelog drift", () => {
-    expect(pi.defaultThinkingLevel).toBe("medium");
-    expect(pi.lastChangelogVersion).toBe("0.84.0");
+    expect(pi.defaultThinkingLevel).toBe("xhigh");
+    expect(pi.lastChangelogVersion).toBe("0.84.2");
   });
 
   test("keeps deterministic Python and lazy Node without token aliases", () => {

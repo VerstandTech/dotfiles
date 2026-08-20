@@ -28,6 +28,8 @@ export type FooterChipsInput = {
 	path?: string | null;
 	/** Optional herd summary fragment (working/blocked counts). */
 	herd?: string | null;
+	/** xAI Priority Processing: "priority" or "std". */
+	priority?: string | null;
 };
 
 export { visibleLength };
@@ -81,6 +83,14 @@ export function renderFooterChips(input: FooterChipsInput): string {
 			key: "thinking",
 			color: thinkingColor(input.thinking),
 			plain: `thinking: ${input.thinking}`,
+		});
+	}
+	if (input.priority) {
+		const prio = input.priority.toLowerCase();
+		chips.push({
+			key: "priority",
+			color: prio === "priority" ? AMBER : FOG,
+			plain: prio === "priority" ? "priority" : "std",
 		});
 	}
 

@@ -1,7 +1,21 @@
 {
   "$schema": "https://raw.githubusercontent.com/earendil-works/pi-mono/main/packages/ai/schemas/models.schema.json",
-  "comment": "Computer-scope (user-global) addition: Kimi K 2.6 on Cerebras Inference. Uses the built-in 'cerebras' provider. Set CEREBRAS_API_KEY or run /login cerebras. Hot-reloads on /model.",
+  "comment": "Computer-scope (user-global) addition: Kimi K 2.6 on Cerebras Inference. Uses the built-in 'cerebras' provider. Set CEREBRAS_API_KEY or run /login cerebras. Hot-reloads on /model. XAI Grok Priority Processing is ON; change the xai service_tier override to default to turn it OFF.",
   "providers": {
+    "xai": {
+      "modelOverrides": {
+        "grok-4.5": {
+          "samplingParams": {
+            "service_tier": "priority"
+          }
+        },
+        "grok-build-0.1": {
+          "samplingParams": {
+            "service_tier": "priority"
+          }
+        }
+      }
+    },
     "cerebras": {
       "models": [
         {
