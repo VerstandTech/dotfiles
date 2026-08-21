@@ -8,7 +8,7 @@ const RESOURCES = [
 ];
 
 function input(overrides: Record<string, unknown> = {}) {
-  return { schemaVersion: 1, packageVersion: "0.7.3", approvedPins: PINS, observedPins: PINS, resources: RESOURCES, ...overrides };
+  return { schemaVersion: 1, packageVersion: "0.7.4", approvedPins: PINS, observedPins: PINS, resources: RESOURCES, ...overrides };
 }
 
 describe("PKG-01 pure package descriptor", () => {
@@ -16,7 +16,7 @@ describe("PKG-01 pure package descriptor", () => {
     const a = api.planPackageV1(input({ resources: [...RESOURCES].reverse() }));
     const b = api.planPackageV1(input());
     expect(a).toEqual(b);
-    expect(a).toMatchObject({ ok: true, status: "valid", manifest: { schemaVersion: 1, packageVersion: "0.7.3" } });
+    expect(a).toMatchObject({ ok: true, status: "valid", manifest: { schemaVersion: 1, packageVersion: "0.7.4" } });
     expect(Object.isFrozen(a)).toBe(true);
   });
 

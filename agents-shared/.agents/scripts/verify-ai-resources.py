@@ -338,7 +338,7 @@ def validate_manifest(repo: Path, errors: list[str]) -> None:
     if package.get("compatibility") != expected_pins:
         errors.append("PKG01_PACKAGE_MANIFEST_MISSING: pin-mismatch")
         return
-    if package.get("version") != "0.7.3":
+    if package.get("version") != "0.7.4":
         errors.append("PKG01_PACKAGE_MANIFEST_MISSING: version-mismatch")
         return
     required_package_keys = {
@@ -355,6 +355,7 @@ def validate_manifest(repo: Path, errors: list[str]) -> None:
         "npm:pi-subagents@0.45.2",
         "npm:context-mode@1.0.169",
         "npm:pi-markdown-preview@0.13.1",
+        "npm:pi-cursor-sdk@0.3.6",
         "./personal",
         "npm:pi-web-access@0.13.0",
         "npm:pi-graphiti@0.6.0",

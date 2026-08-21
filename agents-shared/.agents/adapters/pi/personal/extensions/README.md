@@ -9,7 +9,7 @@ Settings entry (relative to `../settings.json`):
 "packages": ["./personal"]
 ```
 
-Package version: **0.7.3** (high-assurance v1.2 scaffolding; `/goal`; mid-prompt skills; megazord fixes).
+Package version: **0.7.4** (Cursor browser login; high-assurance v1.2 scaffolding; `/goal`; mid-prompt skills).
 
 ## Subagent: project `researcher` (olhaminha.bio only)
 
@@ -81,6 +81,19 @@ Pair with permissive tool permissions if you want long unattended runs.
 ```
 
 After pull: `/reload` in Pi (or restart).
+
+## Bundled: `cursor-login.ts`
+
+Adds official Cursor SDK browser authentication for the pinned `npm:pi-cursor-sdk@0.3.6` package.
+
+| Surface | Behavior |
+|---------|----------|
+| `/cursor-login` | Opens Cursor browser sign-in, mints a revocable API key, and saves it only in machine-local `~/.pi/agent/auth.json` |
+| Security | Accepts only Cursor HTTPS login origins; never commits or displays the key |
+| Compatibility | Removes trailing hidden custom messages for Cursor turns, avoiding the ignored-follow-up bug tracked in `pi-cursor-sdk#229` |
+| Dependency | Uses the exact `@cursor/sdk@1.0.27` installed by pinned `npm:pi-cursor-sdk@0.3.6` |
+
+After pull, run `~/dotfiles/install.sh`, restart Pi, then `/cursor-login` followed by `/cursor-refresh-models` and `/model`.
 
 ## Bundled: `anti-hang.ts`
 

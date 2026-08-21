@@ -24,13 +24,14 @@ function validate(options: { packageVersion?: string; manifestVersion?: string; 
       packages: {
         piPersonal: {
           path: options.path ?? "agents-shared/.agents/adapters/pi/personal",
-          version: options.manifestVersion ?? "0.7.3",
+          version: options.manifestVersion ?? "0.7.4",
           compatibility: options.pins ?? compatibility,
           targets: [".pi/agent/personal", ".pi/agent/settings.json"],
           runtimePackages: [
             "npm:pi-subagents@0.45.2",
             "npm:context-mode@1.0.169",
             "npm:pi-markdown-preview@0.13.1",
+            "npm:pi-cursor-sdk@0.3.6",
             "./personal",
             "npm:pi-web-access@0.13.0",
             "npm:pi-graphiti@0.6.0",
@@ -49,7 +50,7 @@ function validate(options: { packageVersion?: string; manifestVersion?: string; 
         },
       },
     }));
-    writeFileSync(packagePath, JSON.stringify({ version: options.packageVersion ?? "0.7.3" }));
+    writeFileSync(packagePath, JSON.stringify({ version: options.packageVersion ?? "0.7.4" }));
     mkdirSync(join(repo, "agents-shared/.agents/adapters/claude"), { recursive: true });
     mkdirSync(join(repo, "agents-shared/.agents/adapters/codex"), { recursive: true });
     mkdirSync(join(repo, "agents-shared/.agents/skills"), { recursive: true });
@@ -60,6 +61,7 @@ function validate(options: { packageVersion?: string; manifestVersion?: string; 
       "npm:pi-subagents@0.45.2",
       "npm:context-mode@1.0.169",
       "npm:pi-markdown-preview@0.13.1",
+      "npm:pi-cursor-sdk@0.3.6",
       "./personal",
       "npm:pi-web-access@0.13.0",
       "npm:pi-graphiti@0.6.0",
@@ -126,6 +128,7 @@ describe("PKG-01 frozen package manifest verification", () => {
       "npm:pi-subagents@0.45.2",
       "npm:context-mode@1.0.169",
       "npm:pi-markdown-preview@0.13.1",
+      "npm:pi-cursor-sdk@0.3.6",
       "./personal",
       "npm:pi-web-access@0.13.0",
       "npm:pi-graphiti@0.6.0",
@@ -152,7 +155,7 @@ describe("PKG-01 frozen package manifest verification", () => {
         expect(JSON.parse(result.stdout.trim())).toEqual(["PKG01_PACKAGE_MANIFEST_MISSING: invalid-manifest"]);
       }
       mkdirSync(join(repo, "agents-shared/.agents/adapters/pi/personal"), { recursive: true });
-      writeFileSync(manifestPath, JSON.stringify({ version: 1, canonicalSkills: "skills", packages: { piPersonal: { path: "agents-shared/.agents/adapters/pi/personal", version: "0.7.3", compatibility } } }));
+      writeFileSync(manifestPath, JSON.stringify({ version: 1, canonicalSkills: "skills", packages: { piPersonal: { path: "agents-shared/.agents/adapters/pi/personal", version: "0.7.4", compatibility } } }));
       writeFileSync(join(repo, "agents-shared/.agents/adapters/pi/personal/package.json"), "[]");
       const malformedPackage = spawnSync("python3", ["-c", code, verifier, repo], { encoding: "utf8" });
       expect(malformedPackage.status).toBe(0);
