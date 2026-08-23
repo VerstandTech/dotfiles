@@ -23,8 +23,7 @@
       "WebFetch",
       "WebSearch",
       "Write",
-      "mcp__ide__*",
-      "mcp__pencil"
+      "mcp__ide__*"
     ],
     "deny": [],
     "defaultMode": "auto"

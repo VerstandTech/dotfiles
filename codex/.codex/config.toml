@@ -65,7 +65,7 @@ SKY_CUA_SERVICE_PATH = "/Users/leonardoribeiro/.codex/computer-use/Codex Compute
 CODEX_CLI_PATH = "/Applications/ChatGPT.app/Contents/Resources/codex"
 
 [mcp_servers.pencil]
-command = "/Applications/Pencil.app/Contents/Resources/app.asar.unpacked/out/mcp-server-darwin-arm64"
+command = "/Applications/Pen.app/Contents/Resources/app.asar.unpacked/out/mcp-server-darwin-arm64"
 args = [ "--app", "desktop", "--agent", "codexCLI" ]
 
 [marketplaces.openai-bundled]
@@ -79,8 +79,8 @@ source_type = "local"
 source = "/Users/leonardoribeiro/.cache/codex-runtimes/codex-primary-runtime/plugins/openai-primary-runtime"
 
 [marketplaces.claude-plugins-official]
-last_updated = "2026-07-19T00:24:38Z"
-last_revision = "e09c3b1e5f6e8edbe2cdaf55b5dc38cf87824389"
+last_updated = "2026-08-20T17:33:42Z"
+last_revision = "0fc2bb13a805969c14b0fe9398bad41db346d84e"
 source_type = "git"
 source = "https://github.com/anthropics/claude-plugins-official.git"
 
