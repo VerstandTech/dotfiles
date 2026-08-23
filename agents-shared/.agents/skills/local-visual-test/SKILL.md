@@ -33,7 +33,8 @@ Product-specific login/generation details stay in **project** skills
 4. Prefer the project’s **tunnel origin** when callbacks/providers/cookies
    matter (olhaminha.bio default: `https://megazord.olhaminha.bio` — not
    localhost alone for webhook/AI completion paths).
-5. Prefer `data-testid` / `page.evaluate` over brittle accessibility-tree refs.
+5. Browser loop: snapshot → act on **fresh** refs or `getByRole`/`data-testid` → re-snapshot.
+   See [references/agent-loop.md](references/agent-loop.md).
 6. **After client renames or dialog/dynamic-import edits, assume stale client
    until proven otherwise.** Soft navigation is not proof the new code is running.
 
@@ -208,8 +209,10 @@ Project overlays own the exact login snippets (credentials from local env — ne
 
 ### Exercise the real user path
 
-Same clicks a user would make. Prefer `data-testid`. After any client edit in the
-same session, re-run **Phase B step 1** before declaring a control missing.
+Same clicks a user would make. Follow [references/agent-loop.md](references/agent-loop.md):
+snapshot → act → re-snapshot; dismiss overlays first; label live vs mock.
+After any client edit in the same session, re-run **Phase B step 1** before declaring
+a control missing.
 
 ### Assert at the right depth
 
@@ -281,10 +284,15 @@ Tool stubs: global `dev-browser` and `agent-browser` skills for install/CLI deta
 ## Phase E — Report honestly
 
 - What was confirmed (URL, status, dims, task status, screenshot paths).
+- Live vs mock proof lane for each claim.
 - What was **not** exercised (mocked generation, tunnel down, skipped mobile).
 - Env incidents fixed along the way (Docker restart, cache-disabled hard reload,
   `.next` wipe) so the pass is trusted against a healthy stack.
+- Filed finding issues, or the literal `no visual findings filed`.
 - If UI still diverges from source after the full cache ladder, say so explicitly.
+
+File every confirmed finding as a GitHub issue before calling the pass done
+([references/agent-loop.md](references/agent-loop.md)).
 
 ---
 
@@ -308,6 +316,10 @@ Tool stubs: global `dev-browser` and `agent-browser` skills for install/CLI deta
 ## Anti-patterns
 
 - Claiming visual pass from unit tests only.
+- Treating mocked network as live backend/DI proof.
+- Reusing stale snapshot refs or hover-only completion.
+- Calling iPhone UA / `set device` a real tap when `maxTouchPoints === 0`.
+- Narrating defects without filing GitHub issues.
 - Restarting the user’s server without asking.
 - Using localhost for webhook/AI completion flows when tunnel is required.
 - Declaring “missing UI” after soft navigate only.
