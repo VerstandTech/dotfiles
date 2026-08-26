@@ -3,7 +3,7 @@ set -euo pipefail
 
 DOTFILES_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BACKUP_DIR="$HOME/dotfiles-backup-$(date +%Y%m%d-%H%M%S)"
-PACKAGES=(zsh wezterm herdr nvim agents-shared claude codex grok opencode pi)
+PACKAGES=(zsh wezterm herdr nvim agents-shared claude codex grok opencode pi mcp)
 
 log()  { printf '\033[1;34m[dotfiles]\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m[dotfiles] WARN:\033[0m %s\n' "$*"; }

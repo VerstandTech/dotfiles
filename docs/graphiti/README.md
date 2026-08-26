@@ -7,8 +7,10 @@ Issue: [#30](https://github.com/VerstandTech/dotfiles/issues/30)
 ## Current pin
 
 - Package: `npm:pi-graphiti@0.6.0`
+- MCP adapter: `npm:pi-mcp-adapter@2.28.0`
 - Declared in `pi/.pi/agent/settings.json` and `agents-shared/.agents/manifest.json`
 - Config (created by the setup script, not committed): `~/.pi/agent/pi-graphiti-config.json`
+- Shared MCP config (stowed, no secrets): `mcp/.config/mcp/mcp.json` → `~/.config/mcp/mcp.json`
 
 ## Scoping
 
@@ -48,12 +50,14 @@ The script:
 3. Otherwise installs/starts Ollama and pulls `llama3.2` + `nomic-embed-text`.
 4. Starts the remapped compose project `graphiti`.
 5. Writes `~/.pi/agent/pi-graphiti-config.json` with `projectScoping: true` and `url: http://localhost:8000/mcp/`.
+6. Merges the Graphiti server into `~/.config/mcp/mcp.json` (Pi mcp-adapter) and `~/.cursor/mcp.json` (Cursor). Existing Cursor servers are left alone.
 
 Then in Pi:
 
 ```
 /reload
 /graph
+/mcp
 ```
 
 `/graph setup` is optional after the script. If you still run the wizard, choose **existing MCP server** and `http://localhost:8000/mcp/`. The wizard's 8431 default is wrong for this compose.

@@ -33,6 +33,7 @@ LLM/embedder:
     EMBEDDER_MODEL=nomic-embed-text
 
 Writes ~/.pi/agent/pi-graphiti-config.json (no secrets).
+Merges Graphiti into ~/.config/mcp/mcp.json and ~/.cursor/mcp.json.
 Does not claim /graph uninstall ownership of a pre-existing stack.
 EOF
 }
@@ -116,6 +117,35 @@ PY
 	fi
 }
 
+merge_graphiti_mcp() {
+	python3 - "$1" "$MCP_URL" <<'PY'
+import json, os, sys
+path, url = sys.argv[1], sys.argv[2]
+entry = {"url": url}
+try:
+    data = json.loads(open(path, encoding="utf-8").read()) if os.path.isfile(path) else {}
+    if not isinstance(data, dict):
+        data = {}
+except (OSError, UnicodeError, json.JSONDecodeError):
+    data = {}
+servers = data.get("mcpServers")
+if not isinstance(servers, dict):
+    servers = {}
+    data["mcpServers"] = servers
+if servers.get("graphiti") == entry:
+    print("unchanged")
+    raise SystemExit(0)
+servers["graphiti"] = entry
+os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+tmp = path + ".tmp"
+with open(tmp, "w", encoding="utf-8") as fh:
+    json.dump(data, fh, indent=2)
+    fh.write("\n")
+os.replace(tmp, path)
+print(path)
+PY
+}
+
 status_report() {
 	log "compose: $COMPOSE_FILE"
 	if have docker; then
@@ -135,6 +165,11 @@ status_report() {
 		log "pi-graphiti-config: present"
 	else
 		log "pi-graphiti-config: missing"
+	fi
+	if [[ -f "$HOME/.config/mcp/mcp.json" ]]; then
+		log "shared mcp.json: present"
+	else
+		log "shared mcp.json: missing"
 	fi
 }
 
@@ -244,5 +279,9 @@ fi
 
 written="$(write_pi_config "$COMPOSE_DIR")"
 log "wrote $written"
+shared_mcp="$(merge_graphiti_mcp "$HOME/.config/mcp/mcp.json")"
+cursor_mcp="$(merge_graphiti_mcp "$HOME/.cursor/mcp.json")"
+log "shared mcp: $shared_mcp"
+log "cursor mcp: $cursor_mcp"
 status_report
-log "reload Pi, then run /graph"
+log "reload Pi, then run /graph and /mcp"

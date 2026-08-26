@@ -1,5 +1,5 @@
 {
-  "lastChangelogVersion": "0.84.2",
+  "lastChangelogVersion": "0.84.3",
   "defaultProvider": "xai",
   "defaultModel": "grok-4.6",
   "defaultThinkingLevel": "xhigh",
@@ -11,6 +11,7 @@
     "./personal",
     "npm:pi-web-access@0.13.0",
     "npm:pi-graphiti@0.6.0",
+    "npm:pi-mcp-adapter@2.28.0",
     "npm:pi-ponytail"
   ],
   "terminal": {

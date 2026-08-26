@@ -359,6 +359,7 @@ def validate_manifest(repo: Path, errors: list[str]) -> None:
         "./personal",
         "npm:pi-web-access@0.13.0",
         "npm:pi-graphiti@0.6.0",
+        "npm:pi-mcp-adapter@2.28.0",
         "npm:pi-ponytail",
     ]
     if package.get("runtimePackages") != expected_runtime_packages:
