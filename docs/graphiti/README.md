@@ -50,7 +50,7 @@ The script:
 3. Otherwise installs/starts Ollama and pulls `llama3.2` + `nomic-embed-text`.
 4. Starts the remapped compose project `graphiti`.
 5. Writes `~/.pi/agent/pi-graphiti-config.json` with `projectScoping: true` and `url: http://localhost:8000/mcp/`.
-6. Merges the Graphiti server into `~/.config/mcp/mcp.json` (Pi mcp-adapter) and `~/.cursor/mcp.json` (Cursor). Existing Cursor servers are left alone.
+6. Merges the Graphiti server into `~/.config/mcp/mcp.json` (Pi mcp-adapter) and `~/.cursor/mcp.json` (Cursor). Existing Cursor servers are left alone. Codex and Grok read the same URL from their stowed config.toml; `install.sh` also upserts it into Cursor and Claude Code.
 
 Then in Pi:
 

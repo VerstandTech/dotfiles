@@ -33,3 +33,6 @@ mcps = false
 
 [skills]
 paths = ["~/.agents/skills"]
+
+[mcp_servers.graphiti]
+url = "http://localhost:8000/mcp/"

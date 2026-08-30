@@ -60,10 +60,17 @@ class SetupGraphitiTests(unittest.TestCase):
         codex = (ROOT / "codex" / ".codex" / "config.toml").read_text(
             encoding="utf-8"
         )
+        grok = (ROOT / "grok" / ".grok" / "config.toml").read_text(
+            encoding="utf-8"
+        )
         self.assertIn("[mcp_servers.mobbin]", codex)
         self.assertIn("https://api.mobbin.com/mcp", codex)
+        self.assertIn("[mcp_servers.graphiti]", codex)
+        self.assertIn("http://localhost:8000/mcp/", codex)
+        self.assertIn("[mcp_servers.graphiti]", grok)
+        self.assertIn("http://localhost:8000/mcp/", grok)
         install = INSTALL.read_text(encoding="utf-8")
-        self.assertIn("ensure_mobbin_mcp", install)
+        self.assertIn("ensure_host_mcp", install)
         self.assertIn("$HOME/.cursor/mcp.json", install)
         self.assertIn("$HOME/.claude.json", install)
 

@@ -283,6 +283,8 @@ def validate_grok_config(repo: Path, errors: list[str]) -> None:
         errors.append(f"{path}: missing [skills] section")
     if "~/.agents/skills" not in text:
         errors.append(f"{path}: [skills] paths must include ~/.agents/skills")
+    if "[mcp_servers.graphiti]" not in text or "http://localhost:8000/mcp/" not in text:
+        errors.append(f"{path}: must declare Graphiti MCP at http://localhost:8000/mcp/")
     if re.search(r'(?m)^\s*yolo\s*=\s*true\s*$', text):
         errors.append(f"{path}: yolo must not be enabled in shared config")
     if re.search(r'(?m)^\s*permission_mode\s*=\s*"always-approve"\s*$', text):

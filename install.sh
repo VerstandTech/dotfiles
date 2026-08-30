@@ -392,19 +392,24 @@ print(path)
 PY
 }
 
-ensure_mobbin_mcp() {
-  local url="https://api.mobbin.com/mcp"
-  local result
-  result="$(merge_http_mcp "$HOME/.cursor/mcp.json" mobbin "$url")" || {
-    warn "could not merge mobbin into $HOME/.cursor/mcp.json"
-    result="failed"
-  }
-  log "cursor mobbin mcp: $result"
-  result="$(merge_http_mcp "$HOME/.claude.json" mobbin "$url")" || {
-    warn "could not merge mobbin into $HOME/.claude.json"
-    result="failed"
-  }
-  log "claude mobbin mcp: $result"
+ensure_host_mcp() {
+  local name url result
+  for name in mobbin graphiti; do
+    case "$name" in
+      mobbin) url="https://api.mobbin.com/mcp" ;;
+      graphiti) url="http://localhost:8000/mcp/" ;;
+    esac
+    result="$(merge_http_mcp "$HOME/.cursor/mcp.json" "$name" "$url")" || {
+      warn "could not merge $name into $HOME/.cursor/mcp.json"
+      result="failed"
+    }
+    log "cursor $name mcp: $result"
+    result="$(merge_http_mcp "$HOME/.claude.json" "$name" "$url")" || {
+      warn "could not merge $name into $HOME/.claude.json"
+      result="failed"
+    }
+    log "claude $name mcp: $result"
+  done
 }
 
 main() {
@@ -436,7 +441,7 @@ main() {
   # directory symlink so new extension files appear without per-file restow.
   # (stow --no-folding tree-folds inside the existing ~/.pi/agent directory.)
   ensure_pi_personal_link
-  ensure_mobbin_mcp
+  ensure_host_mcp
   configure_herdr_pi
 
   python3 "$DOTFILES_DIR/agents-shared/.agents/scripts/verify-ai-resources.py" \

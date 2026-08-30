@@ -46,6 +46,9 @@ url = "https://mcp.posthog.com/mcp"
 [mcp_servers.mobbin]
 url = "https://api.mobbin.com/mcp"
 
+[mcp_servers.graphiti]
+url = "http://localhost:8000/mcp/"
+
 [mcp_servers.node_repl]
 args = []
 command = "/Applications/ChatGPT.app/Contents/Resources/cua_node/bin/node_repl"
