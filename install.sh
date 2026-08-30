@@ -355,6 +355,58 @@ PY
 }
 
 
+# Cursor/Claude MCP files are machine-local (tokens). Upsert this key only.
+merge_http_mcp() {
+  python3 - "$1" "$2" "$3" <<'PY'
+import json, os, sys
+path, name, url = sys.argv[1], sys.argv[2], sys.argv[3]
+entry = {"type": "http", "url": url}
+if not os.path.isfile(path):
+    data = {}
+else:
+    try:
+        data = json.loads(open(path, encoding="utf-8").read())
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        print(f"invalid: {exc}", file=sys.stderr)
+        raise SystemExit(1)
+    if not isinstance(data, dict):
+        print("invalid: not an object", file=sys.stderr)
+        raise SystemExit(1)
+servers = data.get("mcpServers")
+if not isinstance(servers, dict):
+    servers = {}
+    data["mcpServers"] = servers
+existing = servers.get(name)
+if isinstance(existing, dict) and existing.get("url") == url:
+    print("unchanged")
+    raise SystemExit(0)
+servers[name] = entry
+os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+tmp = path + ".tmp"
+with open(tmp, "w", encoding="utf-8") as fh:
+    json.dump(data, fh, indent=2)
+    fh.write("\n")
+os.replace(tmp, path)
+os.chmod(path, 0o600)
+print(path)
+PY
+}
+
+ensure_mobbin_mcp() {
+  local url="https://api.mobbin.com/mcp"
+  local result
+  result="$(merge_http_mcp "$HOME/.cursor/mcp.json" mobbin "$url")" || {
+    warn "could not merge mobbin into $HOME/.cursor/mcp.json"
+    result="failed"
+  }
+  log "cursor mobbin mcp: $result"
+  result="$(merge_http_mcp "$HOME/.claude.json" mobbin "$url")" || {
+    warn "could not merge mobbin into $HOME/.claude.json"
+    result="failed"
+  }
+  log "claude mobbin mcp: $result"
+}
+
 main() {
   local host_os
   host_os="$(uname -s)"
@@ -384,6 +436,7 @@ main() {
   # directory symlink so new extension files appear without per-file restow.
   # (stow --no-folding tree-folds inside the existing ~/.pi/agent directory.)
   ensure_pi_personal_link
+  ensure_mobbin_mcp
   configure_herdr_pi
 
   python3 "$DOTFILES_DIR/agents-shared/.agents/scripts/verify-ai-resources.py" \

@@ -43,6 +43,9 @@ goals = true
 [mcp_servers.posthog]
 url = "https://mcp.posthog.com/mcp"
 
+[mcp_servers.mobbin]
+url = "https://api.mobbin.com/mcp"
+
 [mcp_servers.node_repl]
 args = []
 command = "/Applications/ChatGPT.app/Contents/Resources/cua_node/bin/node_repl"

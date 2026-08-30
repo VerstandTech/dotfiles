@@ -41,16 +41,31 @@ class SetupGraphitiTests(unittest.TestCase):
         self.assertTrue(CONFIG.is_file())
         self.assertIn("setup-graphiti.sh", README.read_text(encoding="utf-8"))
 
-    def test_shared_mcp_json_is_graphiti_only(self) -> None:
+    def test_shared_mcp_json_has_graphiti_and_mobbin(self) -> None:
         data = json.loads(SHARED_MCP.read_text(encoding="utf-8"))
         self.assertEqual(
             data["mcpServers"]["graphiti"]["url"],
             "http://localhost:8000/mcp/",
         )
-        self.assertEqual(list(data["mcpServers"]), ["graphiti"])
+        self.assertEqual(
+            data["mcpServers"]["mobbin"]["url"],
+            "https://api.mobbin.com/mcp",
+        )
+        self.assertEqual(list(data["mcpServers"]), ["graphiti", "mobbin"])
         raw = SHARED_MCP.read_text(encoding="utf-8")
         self.assertNotIn("sk-", raw)
         self.assertNotIn("github_pat_", raw)
+
+    def test_codex_and_install_wire_mobbin(self) -> None:
+        codex = (ROOT / "codex" / ".codex" / "config.toml").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("[mcp_servers.mobbin]", codex)
+        self.assertIn("https://api.mobbin.com/mcp", codex)
+        install = INSTALL.read_text(encoding="utf-8")
+        self.assertIn("ensure_mobbin_mcp", install)
+        self.assertIn("$HOME/.cursor/mcp.json", install)
+        self.assertIn("$HOME/.claude.json", install)
 
     def test_setup_merges_shared_and_cursor_mcp(self) -> None:
         text = SCRIPT.read_text(encoding="utf-8")

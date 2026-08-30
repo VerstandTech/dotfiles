@@ -32,7 +32,7 @@ Each top-level directory is a stow package mirroring `$HOME`:
 | `grok` | `~/.grok/` | native config with `~/.agents/skills` as an extra skill path |
 | `opencode` | `~/.config/opencode/` | native configuration only |
 | `pi` | `~/.pi/agent/` | native settings/models + one local-package adapter |
-| `mcp` | `~/.config/mcp/mcp.json` | shared Graphiti MCP config (Pi mcp-adapter + any host that reads the standard path) |
+| `mcp` | `~/.config/mcp/mcp.json` | shared MCP config (Graphiti + Mobbin; Pi mcp-adapter + any host that reads the standard path) |
 | `agents-shared` | `~/.agents/` | **canonical AI resource hub**: portable skills, vendor adapters, manifest, validation |
 
 **`~/.agents` is the single source of truth for AI resources.** All resource
