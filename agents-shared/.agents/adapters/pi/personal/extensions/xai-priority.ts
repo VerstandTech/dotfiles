@@ -10,6 +10,7 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import {
 	applyServiceTier,
+	DEFAULT_PRIORITY_ON,
 	isXaiModel,
 	parsePriorityArgs,
 	statusLabel,
@@ -20,7 +21,7 @@ const STATUS_KEY = "xai-priority";
 
 export default function (pi: ExtensionAPI) {
 	// ponytail: session-scoped; persist to settings if you want it sticky across /reload
-	let on = true;
+	let on = DEFAULT_PRIORITY_ON;
 
 	const paint = (ctx: ExtensionContext) => {
 		if (!ctx.hasUI) return;

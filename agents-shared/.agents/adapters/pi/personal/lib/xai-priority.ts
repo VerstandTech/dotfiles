@@ -1,5 +1,8 @@
 export type ServiceTier = "priority" | "default";
 
+/** New sessions start with Priority Processing off. `/priority on` to enable. */
+export const DEFAULT_PRIORITY_ON = false;
+
 export function isXaiModel(model: { provider?: string; baseUrl?: string } | undefined): boolean {
 	if (!model) return false;
 	if (model.provider === "xai") return true;

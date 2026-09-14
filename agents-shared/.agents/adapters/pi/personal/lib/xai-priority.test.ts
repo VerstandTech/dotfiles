@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
 	applyServiceTier,
+	DEFAULT_PRIORITY_ON,
 	isXaiModel,
 	parsePriorityArgs,
 	statusLabel,
@@ -36,5 +37,10 @@ describe("xai-priority", () => {
 	test("statusLabel", () => {
 		expect(statusLabel(true)).toBe("priority");
 		expect(statusLabel(false)).toBe("std");
+	});
+
+	test("new sessions default priority off", () => {
+		expect(DEFAULT_PRIORITY_ON).toBe(false);
+		expect(statusLabel(DEFAULT_PRIORITY_ON)).toBe("std");
 	});
 });
