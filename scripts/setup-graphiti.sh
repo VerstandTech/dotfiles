@@ -1,12 +1,16 @@
 #!/usr/bin/env bash
 # Portable Graphiti + FalkorDB + pi-graphiti bring-up.
 # Safe to rerun on another machine. Does not print secret values.
+#
+# One machine-global stack. Templates live in the repo; the running bind
+# is always $HOME/.pi/graphiti so a deleted worktree cannot kill MCP.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-COMPOSE_DIR="$ROOT/docs/graphiti"
-COMPOSE_FILE="$COMPOSE_DIR/docker-compose-falkordb.yml"
-CONFIG_FILE="$COMPOSE_DIR/config-docker-falkordb.yaml"
+TEMPLATE_DIR="$ROOT/docs/graphiti"
+RUNTIME_DIR="${PI_GRAPHITI_RUNTIME_DIR:-$HOME/.pi/graphiti}"
+COMPOSE_FILE="$RUNTIME_DIR/docker-compose-falkordb.yml"
+CONFIG_FILE="$RUNTIME_DIR/config-docker-falkordb.yaml"
 PI_CONFIG="${PI_GRAPHITI_CONFIG:-$HOME/.pi/agent/pi-graphiti-config.json}"
 PROJECT="graphiti"
 MCP_URL="${PI_GRAPHITI_URL:-http://localhost:8000/mcp/}"
@@ -19,10 +23,16 @@ usage() {
 	cat <<'EOF'
 Usage: bash scripts/setup-graphiti.sh [--status] [--no-wait]
 
-Starts FalkorDB + Graphiti MCP with host ports:
+Starts one machine-global FalkorDB + Graphiti MCP stack:
   6379  FalkorDB
   3001  FalkorDB Browser (not 3000)
   8000  Graphiti MCP
+
+Runtime (not a git worktree):
+  ~/.pi/graphiti
+
+All projects/worktrees share that stack. Isolation is group IDs
+(projectScoping), not extra containers.
 
 LLM/embedder:
   If OPENAI_API_KEY is set and is not the local placeholder, use that
@@ -53,8 +63,49 @@ port_in_use() {
 }
 
 http_code() {
-	local url="$1"
-	curl -sS -o /dev/null -w '%{http_code}' --connect-timeout 2 --max-time 5 "$url" 2>/dev/null || printf '000'
+	local url="$1" code
+	code="$(curl -sS -o /dev/null -w '%{http_code}' --connect-timeout 2 --max-time 5 "$url" 2>/dev/null || true)"
+	if [[ "$code" =~ ^[0-9]{3}$ ]]; then
+		printf '%s' "$code"
+	else
+		printf '000'
+	fi
+}
+
+mcp_reachable() {
+	[[ "$(http_code "$MCP_URL")" != "000" ]]
+}
+
+# Docker turns a missing bind file into a directory. Never mount that.
+ensure_config_file() {
+	if [[ -d "$CONFIG_FILE" ]]; then
+		rm -rf "$CONFIG_FILE"
+	fi
+	[[ -f "$CONFIG_FILE" ]] || die "missing $CONFIG_FILE"
+}
+
+sync_runtime() {
+	local src_compose="$TEMPLATE_DIR/docker-compose-falkordb.yml"
+	local src_config="$TEMPLATE_DIR/config-docker-falkordb.yaml"
+	[[ -f "$src_compose" ]] || die "missing $src_compose"
+	[[ -f "$src_config" ]] || die "missing $src_config"
+	mkdir -p "$RUNTIME_DIR"
+	if [[ -d "$CONFIG_FILE" ]]; then
+		rm -rf "$CONFIG_FILE"
+	fi
+	cp "$src_compose" "$COMPOSE_FILE"
+	cp "$src_config" "$CONFIG_FILE"
+	ensure_config_file
+}
+
+mcp_bind_source() {
+	docker inspect "${PROJECT}-graphiti-mcp-1" \
+		--format '{{range .HostConfig.Binds}}{{println .}}{{end}}' 2>/dev/null \
+		| awk -F: '/\/app\/mcp\/config\/config.yaml/{print $1; exit}'
+}
+
+stack_uses_runtime() {
+	[[ "$(mcp_bind_source)" == "$CONFIG_FILE" ]]
 }
 
 write_pi_config() {
@@ -147,9 +198,16 @@ PY
 }
 
 status_report() {
+	log "template: $TEMPLATE_DIR"
+	log "runtime: $RUNTIME_DIR"
 	log "compose: $COMPOSE_FILE"
 	if have docker; then
-		docker compose -p "$PROJECT" -f "$COMPOSE_FILE" ps || true
+		if [[ -f "$COMPOSE_FILE" ]]; then
+			docker compose -p "$PROJECT" -f "$COMPOSE_FILE" ps || true
+		else
+			docker compose -p "$PROJECT" ps || true
+		fi
+		log "mcp bind: $(mcp_bind_source || true)"
 	else
 		log "docker: missing"
 	fi
@@ -184,8 +242,7 @@ ensure_ports() {
 		log "note: host :3000 is already in use; using remapped FalkorDB UI :3001"
 	fi
 	if port_in_use 8000; then
-		if [[ "$(http_code "$MCP_URL")" != "000" ]]; then
-			log "note: :8000 already answers; leaving existing MCP in place"
+		if mcp_reachable; then
 			return 0
 		fi
 		die "host :8000 is in use but is not the Graphiti MCP URL"
@@ -238,14 +295,29 @@ ensure_llm() {
 wait_for_mcp() {
 	local i
 	for i in $(seq 1 60); do
-		if [[ "$(http_code "$MCP_URL")" != "000" ]]; then
+		if mcp_reachable; then
 			log "mcp reachable after ${i}s"
 			return 0
 		fi
 		sleep 2
 	done
-	docker compose -p "$PROJECT" -f "$COMPOSE_FILE" logs --no-color --tail 80 graphiti-mcp >&2 || true
+	docker compose -p "$PROJECT" --project-directory "$RUNTIME_DIR" -f "$COMPOSE_FILE" logs --no-color --tail 80 graphiti-mcp >&2 || true
 	die "Graphiti MCP did not become reachable at $MCP_URL"
+}
+
+compose_up() {
+	log "starting compose project $PROJECT from $RUNTIME_DIR"
+	docker compose -p "$PROJECT" --project-directory "$RUNTIME_DIR" -f "$COMPOSE_FILE" up -d --force-recreate
+}
+
+write_client_config() {
+	local written shared_mcp cursor_mcp
+	written="$(write_pi_config "$RUNTIME_DIR")"
+	log "wrote $written"
+	shared_mcp="$(merge_graphiti_mcp "$HOME/.config/mcp/mcp.json")"
+	cursor_mcp="$(merge_graphiti_mcp "$HOME/.cursor/mcp.json")"
+	log "shared mcp: $shared_mcp"
+	log "cursor mcp: $cursor_mcp"
 }
 
 while [[ $# -gt 0 ]]; do
@@ -258,30 +330,25 @@ while [[ $# -gt 0 ]]; do
 	shift
 done
 
-[[ -f "$COMPOSE_FILE" ]] || die "missing $COMPOSE_FILE"
-[[ -f "$CONFIG_FILE" ]] || die "missing $CONFIG_FILE"
-
 if [[ "$STATUS_ONLY" -eq 1 ]]; then
 	status_report
 	exit 0
 fi
 
 ensure_docker
-ensure_ports
-ensure_llm
+sync_runtime
 
-log "starting compose project $PROJECT"
-docker compose -p "$PROJECT" --project-directory "$COMPOSE_DIR" -f "$COMPOSE_FILE" up -d
-
-if [[ "$NO_WAIT" -eq 0 ]]; then
-	wait_for_mcp
+if mcp_reachable && stack_uses_runtime; then
+	log "mcp already healthy on $CONFIG_FILE; leaving stack running"
+else
+	ensure_ports
+	ensure_llm
+	compose_up
+	if [[ "$NO_WAIT" -eq 0 ]]; then
+		wait_for_mcp
+	fi
 fi
 
-written="$(write_pi_config "$COMPOSE_DIR")"
-log "wrote $written"
-shared_mcp="$(merge_graphiti_mcp "$HOME/.config/mcp/mcp.json")"
-cursor_mcp="$(merge_graphiti_mcp "$HOME/.cursor/mcp.json")"
-log "shared mcp: $shared_mcp"
-log "cursor mcp: $cursor_mcp"
+write_client_config
 status_report
 log "reload Pi, then run /graph and /mcp"

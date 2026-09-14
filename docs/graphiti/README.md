@@ -25,7 +25,10 @@ With `projectScoping: true` (required):
 
 ## Backend
 
-Tracked compose: `docs/graphiti/docker-compose-falkordb.yml`
+One machine-global Docker stack. Every project and git worktree talks to `http://localhost:8000/mcp/`. Isolation is `projectScoping` group IDs, not extra containers.
+
+Tracked templates: `docs/graphiti/`
+Runtime (bind-mount source): `~/.pi/graphiti` — created by the setup script. **Do not** `docker compose up` from a worktree; that is what killed MCP when the worktree disappeared.
 
 This is the official FalkorDB + Graphiti MCP pair with **host port 3000 remapped to 3001** so it does not collide with other local apps.
 
@@ -48,8 +51,8 @@ The script:
 1. Requires Docker.
 2. Uses `OPENAI_API_KEY` when it is a real cloud/OpenAI-compatible key.
 3. Otherwise installs/starts Ollama and pulls `llama3.2` + `nomic-embed-text`.
-4. Starts the remapped compose project `graphiti`.
-5. Writes `~/.pi/agent/pi-graphiti-config.json` with `projectScoping: true` and `url: http://localhost:8000/mcp/`.
+4. Copies compose + config to `~/.pi/graphiti` and starts project `graphiti` from there. If MCP is already healthy on that runtime bind, it leaves the stack running.
+5. Writes `~/.pi/agent/pi-graphiti-config.json` with `projectScoping: true`, `backendDir: ~/.pi/graphiti`, and `url: http://localhost:8000/mcp/`.
 6. Merges the Graphiti server into `~/.config/mcp/mcp.json` (Pi mcp-adapter) and `~/.cursor/mcp.json` (Cursor). Existing Cursor servers are left alone. Codex and Grok read the same URL from their stowed config.toml; `install.sh` also upserts it into Cursor and Claude Code.
 
 Then in Pi:

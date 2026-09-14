@@ -32,14 +32,24 @@ class SetupGraphitiTests(unittest.TestCase):
         self.assertNotIn("xai-", text)
         self.assertIn("startedBySetup", text)
         self.assertIn("projectScoping", text)
+        self.assertIn("--force-recreate", text)
+        self.assertIn("$HOME/.pi/graphiti", text)
+        self.assertIn("PI_GRAPHITI_RUNTIME_DIR", text)
+        self.assertIn("sync_runtime", text)
+        self.assertIn("stack_uses_runtime", text)
+        self.assertIn('--project-directory "$RUNTIME_DIR"', text)
+        self.assertNotIn("COMPOSE_DIR", text)
 
     def test_compose_keeps_host_3000_free(self) -> None:
         text = COMPOSE.read_text(encoding="utf-8")
         self.assertIn("3001:3000", text)
         self.assertNotIn('"3000:3000"', text)
         self.assertIn("8000:8000", text)
+        self.assertGreaterEqual(text.count("restart: unless-stopped"), 2)
         self.assertTrue(CONFIG.is_file())
-        self.assertIn("setup-graphiti.sh", README.read_text(encoding="utf-8"))
+        readme = README.read_text(encoding="utf-8")
+        self.assertIn("setup-graphiti.sh", readme)
+        self.assertIn("~/.pi/graphiti", readme)
 
     def test_shared_mcp_json_has_graphiti_and_mobbin(self) -> None:
         data = json.loads(SHARED_MCP.read_text(encoding="utf-8"))

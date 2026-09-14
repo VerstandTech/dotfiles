@@ -14,6 +14,7 @@ describe("SEC-PATH-adjacent Graphiti compose contract", () => {
 		expect(text).not.toContain("8431");
 		expect(text).toContain("falkordb/falkordb");
 		expect(text).toContain("zepai/knowledge-graph-mcp:standalone");
+		expect(text.split("restart: unless-stopped").length - 1).toBeGreaterThanOrEqual(2);
 	});
 
 	test("GRAPHITI30_NO_SECRETS_IN_COMPOSE: compose does not embed credential values", () => {

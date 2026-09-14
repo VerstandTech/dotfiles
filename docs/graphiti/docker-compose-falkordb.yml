@@ -2,12 +2,16 @@
 # Official getzep compose binds FalkorDB Browser to host :3000.
 # That port is already used on this machine, so the UI is remapped.
 #
+# This file is a template. scripts/setup-graphiti.sh copies it to
+# ~/.pi/graphiti and runs compose from there. Do not `docker compose up`
+# from a git worktree — that bind-mount dies when the worktree is deleted.
+#
 # Host ports:
 #   6379  FalkorDB / Redis protocol
 #   3001  FalkorDB Browser UI  (not 3000)
 #   8000  Graphiti MCP HTTP    (http://localhost:8000/mcp/)
 #
-# Secrets stay in the environment or a gitignored `.env` next to this file.
+# Secrets stay in the environment or a gitignored `.env` next to the runtime copy.
 # Prefer `scripts/setup-graphiti.sh` over a raw compose up.
 #
 # Usage:
@@ -25,6 +29,7 @@ services:
       - BROWSER=${BROWSER:-1}
     volumes:
       - falkordb_data:/var/lib/falkordb/data
+    restart: unless-stopped
     healthcheck:
       test: ["CMD", "redis-cli", "-p", "6379", "ping"]
       interval: 10s
@@ -54,6 +59,7 @@ services:
       - ./config-docker-falkordb.yaml:/app/mcp/config/config.yaml:ro
     ports:
       - "8000:8000"
+    restart: unless-stopped
     command: ["uv", "run", "main.py"]
 
 volumes:
