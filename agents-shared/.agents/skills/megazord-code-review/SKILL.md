@@ -1,6 +1,6 @@
 ---
 name: megazord-code-review
-description: Use when asked to review a branch, pull request, commit, patch, diff, or implementation; when another expert or multi-agent review is requested; or when prior reviews may have missed correctness, performance, security, complexity, test-realism, maintainability, or AI-generated-code risks.
+description: Use when asked to review a branch, pull request, commit, patch, diff, or implementation; when another expert or multi-agent review is requested; or when prior reviews may have missed correctness, performance, security, complexity, test-realism, maintainability, or AI-generated-code risks. When the target is a GitHub pull request, post a single review with concise human inline comments after findings are verified.
 ---
 
 # Megazord Code Review
@@ -45,6 +45,13 @@ Run a read-only, evidence-first review. Preserve the requested scope and do not 
    - Keep one root cause per finding. Merge duplicates across reviewers and credit the strongest evidence, not the number of reviewers.
    - Separate confirmed findings from outdated or already-addressed observations, non-actionable questions, and unrelated CI noise.
    - State the exact reviewed range or file set and which tests or diagnostics ran. If no findings remain, say so explicitly and identify any validation gap.
+
+6. Post GitHub comments when the target is a live pull request.
+   - After the chat report, post one review on the current head SHA unless the user said not to comment.
+   - Follow [references/pr-comments.md](references/pr-comments.md). Write as a teammate: what is wrong, what it causes, what to change. Keep comments short and human. Do not paste P0–P3 labels, lens names, or the chat report.
+   - One inline comment per confirmed root cause, on a line that is in the current head diff. Prefer P0–P2. Skip already-open threads that cover the same claim.
+   - Use `event: COMMENT`. Do not approve or request changes unless the user asked.
+   - If nothing confirmed survives, do not open an empty review.
 
 ## Common Review Traps
 
